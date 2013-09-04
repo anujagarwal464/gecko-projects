@@ -16,13 +16,14 @@ if CONFIG['JS_NATIVE_EDITLINE']:
 if not CONFIG['JS_DISABLE_SHELL']:
     DIRS += ['shell']
 
-# FIXME: bug 530688 covers getting these working on Android
-if CONFIG['OS_ARCH'] != 'ANDROID':
-    TEST_DIRS += ['jsapi-tests']
-
-TEST_DIRS += ['tests', 'gdb']
+TEST_DIRS += ['jsapi-tests', 'tests', 'gdb']
 
 MODULE = 'js'
+
+if CONFIG['JS_STANDALONE']:
+    LIBRARY_NAME = 'mozjs-%s.%s%s' % (CONFIG['MOZJS_MAJOR_VERSION'], CONFIG['MOZJS_MINOR_VERSION'], CONFIG['MOZJS_ALPHA'])
+else:
+    LIBRARY_NAME = 'mozjs'
 
 CONFIGURE_SUBST_FILES += ['devtools/rootAnalysis/Makefile']
 
@@ -37,7 +38,6 @@ EXPORTS += [
     'jsbytecode.h',
     'jsclist.h',
     'jscpucfg.h',
-    'jsdbgapi.h',
     'jsfriendapi.h',
     'jsprf.h',
     'jsprototypes.h',
@@ -60,6 +60,7 @@ if CONFIG['HAVE_DTRACE']:
 EXPORTS.js += [
     '../public/Anchor.h',
     '../public/CallArgs.h',
+    '../public/CallNonGenericMethod.h',
     '../public/CharacterEncoding.h',
     '../public/Class.h',
     '../public/Date.h',
@@ -67,14 +68,15 @@ EXPORTS.js += [
     '../public/HashTable.h',
     '../public/HeapAPI.h',
     '../public/Id.h',
-    '../public/IdForward.h',
     '../public/LegacyIntTypes.h',
     '../public/MemoryMetrics.h',
+    '../public/OldDebugAPI.h',
     '../public/ProfilingStack.h',
     '../public/PropertyKey.h',
     '../public/RequiredDefines.h',
     '../public/RootingAPI.h',
     '../public/StructuredClone.h',
+    '../public/TypeDecls.h',
     '../public/Utility.h',
     '../public/Value.h',
     '../public/Vector.h',
@@ -85,6 +87,7 @@ CPP_SOURCES += [
     'BinaryData.cpp',
     'BytecodeCompiler.cpp',
     'BytecodeEmitter.cpp',
+    'CallNonGenericMethod.cpp',
     'CharacterEncoding.cpp',
     'DateTime.cpp',
     'Debugger.cpp',
@@ -107,6 +110,7 @@ CPP_SOURCES += [
     'Nursery.cpp',
     'Object.cpp',
     'ObjectImpl.cpp',
+    'OldDebugAPI.cpp',
     'PageBlock.cpp',
     'ParallelArray.cpp',
     'ParseMaps.cpp',
@@ -134,6 +138,7 @@ CPP_SOURCES += [
     'TestingFunctions.cpp',
     'ThreadPool.cpp',
     'TokenStream.cpp',
+    'TypeRepresentation.cpp',
     'TypedArrayObject.cpp',
     'Unicode.cpp',
     'Value.cpp',
@@ -154,7 +159,6 @@ CPP_SOURCES += [
     'jscompartment.cpp',
     'jscrashreport.cpp',
     'jsdate.cpp',
-    'jsdbgapi.cpp',
     'jsdtoa.cpp',
     'jsexn.cpp',
     'jsfriendapi.cpp',

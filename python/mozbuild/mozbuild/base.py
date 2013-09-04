@@ -164,11 +164,12 @@ class MozbuildObject(ProcessExecutionMixin):
         # not another one. This prevents accidental usage of the wrong objdir
         # when the current objdir is ambiguous.
         if topobjdir and config_topobjdir \
-            and not samepath(topobjdir, config_topobjdir):
+            and not samepath(topobjdir, config_topobjdir) \
+            and not samepath(topobjdir, os.path.join(config_topobjdir, "mozilla")):
 
             raise ObjdirMismatchException(topobjdir, config_topobjdir)
 
-        topobjdir = config_topobjdir or topobjdir
+        topobjdir = topobjdir or config_topobjdir
         if topobjdir:
             topobjdir = os.path.normpath(topobjdir)
 
@@ -510,6 +511,17 @@ class MachCommandBase(MozbuildObject):
                     print(line)
 
             sys.exit(1)
+
+
+class MachCommandConditions(object):
+    """A series of commonly used condition functions which can be applied to
+    mach commands with providers deriving from MachCommandBase.
+    """
+
+    @staticmethod
+    def is_b2g(cls):
+        """Must have a Boot to Gecko build."""
+        return cls.substs.get('MOZ_WIDGET_TOOLKIT') == 'gonk'
 
 
 class PathArgument(object):

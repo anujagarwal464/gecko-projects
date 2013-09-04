@@ -143,8 +143,6 @@ var BrowserUI = {
 
       // Login Manager and Form History initialization
       Cc["@mozilla.org/login-manager;1"].getService(Ci.nsILoginManager);
-      Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
-
       messageManager.addMessageListener("Browser:MozApplicationManifest", OfflineApps);
 
       try {
@@ -648,8 +646,8 @@ var BrowserUI = {
 
   _adjustDOMforViewState: function(aState) {
     let currViewState = aState;
-    if (!currViewState && MetroUtils.immersive) {
-      switch (MetroUtils.snappedState) {
+    if (!currViewState && Services.metro.immersive) {
+      switch (Services.metro.snappedState) {
         case Ci.nsIWinMetroUtils.fullScreenLandscape:
           currViewState = "landscape";
           break;
@@ -1080,6 +1078,8 @@ var BrowserUI = {
         break;
       case "cmd_newTab":
         this.newTab(null, null, true);
+        // Make sure navbar is displayed before setting focus on url bar. Bug 907244
+        ContextUI.displayNavbar();
         this._edit.beginEditing(false);
         break;
       case "cmd_closeTab":
@@ -1284,7 +1284,7 @@ var SettingsCharm = {
    */
   addEntry: function addEntry(aEntry) {
     try {
-      let id = MetroUtils.addSettingsPanelEntry(aEntry.label);
+      let id = Services.metro.addSettingsPanelEntry(aEntry.label);
       this._entries.set(id, aEntry);
     } catch (e) {
       // addSettingsPanelEntry does not work on non-Metro platforms
@@ -1302,7 +1302,7 @@ var SettingsCharm = {
     });
     // Sync
     this.addEntry({
-        label: Strings.browser.GetStringFromName("syncCharm"),
+        label: Strings.brand.GetStringFromName("syncBrandShortName"),
         onselected: function() FlyoutPanelsUI.show('SyncFlyoutPanel')
     });
     // About

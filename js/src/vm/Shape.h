@@ -9,6 +9,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/GuardObjects.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TemplateLib.h"
 
@@ -91,8 +92,6 @@
  * called a BaseShape that holds some of a Shape's data.  Many shapes can share
  * a single BaseShape.
  */
-
-class JSObject;
 
 namespace js {
 

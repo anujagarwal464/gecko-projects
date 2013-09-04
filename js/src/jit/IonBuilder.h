@@ -16,7 +16,7 @@
 #include "jit/MIRGraph.h"
 
 namespace js {
-namespace ion {
+namespace jit {
 
 class CodeGenerator;
 class CallInfo;
@@ -439,12 +439,12 @@ class IonBuilder : public MIRGenerator
     bool jsop_bindname(PropertyName *name);
     bool jsop_getelem();
     bool jsop_getelem_dense(MDefinition *obj, MDefinition *index);
-    bool jsop_getelem_typed(MDefinition *obj, MDefinition *index, int arrayType);
+    bool jsop_getelem_typed(MDefinition *obj, MDefinition *index, ScalarTypeRepresentation::Type arrayType);
     bool jsop_setelem();
     bool jsop_setelem_dense(types::StackTypeSet::DoubleConversion conversion,
                             SetElemSafety safety,
                             MDefinition *object, MDefinition *index, MDefinition *value);
-    bool jsop_setelem_typed(int arrayType,
+    bool jsop_setelem_typed(ScalarTypeRepresentation::Type arrayType,
                             SetElemSafety safety,
                             MDefinition *object, MDefinition *index, MDefinition *value);
     bool jsop_length();
@@ -529,7 +529,8 @@ class IonBuilder : public MIRGenerator
     // Array intrinsics.
     InliningStatus inlineUnsafePutElements(CallInfo &callInfo);
     bool inlineUnsafeSetDenseArrayElement(CallInfo &callInfo, uint32_t base);
-    bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base, int arrayType);
+    bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base,
+                                          ScalarTypeRepresentation::Type arrayType);
     InliningStatus inlineNewDenseArray(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForSequentialExecution(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForParallelExecution(CallInfo &callInfo);
@@ -855,7 +856,7 @@ bool TypeSetIncludes(types::TypeSet *types, MIRType input, types::TypeSet *input
 
 bool NeedsPostBarrier(CompileInfo &info, MDefinition *value);
 
-} // namespace ion
+} // namespace jit
 } // namespace js
 
 #endif // JS_ION

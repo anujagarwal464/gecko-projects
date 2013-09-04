@@ -21,7 +21,7 @@
 #include "jit/shared/Lowering-shared-inl.h"
 
 using namespace js;
-using namespace ion;
+using namespace jit;
 
 bool
 LIRGenerator::visitParameter(MParameter *param)
@@ -559,9 +559,14 @@ ReorderCommutative(MDefinition **lhsp, MDefinition **rhsp)
     if (rhs->isConstant())
         return;
 
-    if (lhs->isConstant() ||
-        (rhs->defUseCount() == 1 && lhs->defUseCount() > 1))
-    {
+    // lhs and rhs are used by the commutative operator. If they have any
+    // *other* uses besides, try to reorder to avoid clobbering them. To
+    // be fully precise, we should check whether this is the *last* use,
+    // but checking hasOneDefUse() is a decent approximation which doesn't
+    // require any extra analysis.
+    JS_ASSERT(lhs->defUseCount() > 0);
+    JS_ASSERT(rhs->defUseCount() > 0);
+    if (lhs->isConstant() || (rhs->hasOneDefUse() && !lhs->hasOneDefUse())) {
         *rhsp = lhs;
         *lhsp = rhs;
     }
@@ -1118,7 +1123,7 @@ LIRGenerator::visitSqrt(MSqrt *ins)
     MDefinition *num = ins->num();
     JS_ASSERT(num->type() == MIRType_Double);
     LSqrtD *lir = new LSqrtD(useRegisterAtStart(num));
-    return defineReuseInput(lir, ins, 0);
+    return define(lir, ins);
 }
 
 bool
@@ -2214,7 +2219,7 @@ LIRGenerator::visitLoadTypedArrayElement(MLoadTypedArrayElement *ins)
 
     // We need a temp register for Uint32Array with known double result.
     LDefinition tempDef = LDefinition::BogusTemp();
-    if (ins->arrayType() == TypedArrayObject::TYPE_UINT32 && ins->type() == MIRType_Double)
+    if (ins->arrayType() == ScalarTypeRepresentation::TYPE_UINT32 && ins->type() == MIRType_Double)
         tempDef = temp();
 
     LLoadTypedArrayElement *lir = new LLoadTypedArrayElement(elements, index, tempDef);

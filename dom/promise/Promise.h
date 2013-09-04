@@ -15,8 +15,7 @@
 #include "nsWrapperCache.h"
 #include "nsAutoPtr.h"
 #include "nsPIDOMWindow.h"
-
-struct JSContext;
+#include "js/TypeDecls.h"
 
 namespace mozilla {
 namespace dom {
@@ -101,6 +100,10 @@ private:
   void AppendCallbacks(PromiseCallback* aResolveCallback,
                        PromiseCallback* aRejectCallback);
 
+  // If we have been rejected and our mResult is a JS exception,
+  // report it to the error console.
+  void MaybeReportRejected();
+
   nsRefPtr<nsPIDOMWindow> mWindow;
 
   nsRefPtr<PromiseResolver> mResolver;
@@ -111,6 +114,7 @@ private:
   JS::Heap<JS::Value> mResult;
   PromiseState mState;
   bool mTaskPending;
+  bool mHadRejectCallback;
 };
 
 } // namespace dom

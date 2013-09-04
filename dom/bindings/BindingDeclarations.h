@@ -16,15 +16,13 @@
 #include "nsStringGlue.h"
 #include "js/Value.h"
 #include "js/RootingAPI.h"
-#include "mozilla/Util.h"
+#include "mozilla/Maybe.h"
 #include "nsCOMPtr.h"
 #include "nsDOMString.h"
 #include "nsStringBuffer.h"
 #include "nsTArray.h"
 #include "nsAutoPtr.h" // for nsRefPtr member variables
 
-struct JSContext;
-class JSObject;
 class nsWrapperCache;
 
 // nsGlobalWindow implements nsWrapperCache, but doesn't always use it. Don't

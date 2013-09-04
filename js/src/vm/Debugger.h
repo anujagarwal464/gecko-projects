@@ -365,7 +365,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
      * Allocate and initialize a Debugger.Source instance whose referent is
      * |source|.
      */
-    JSObject *newDebuggerSource(JSContext *cx, JS::HandleScriptSource source);
+    JSObject *newDebuggerSource(JSContext *cx, js::HandleScriptSource source);
 
     /*
      * Receive a "new script" event from the engine. A new script was compiled
@@ -422,7 +422,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static inline void onNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global);
     static JSTrapStatus onTrap(JSContext *cx, MutableHandleValue vp);
     static JSTrapStatus onSingleStep(JSContext *cx, MutableHandleValue vp);
-    static bool handleBaselineOsr(JSContext *cx, StackFrame *from, ion::BaselineFrame *to);
+    static bool handleBaselineOsr(JSContext *cx, StackFrame *from, jit::BaselineFrame *to);
 
     /************************************* Functions for use by Debugger.cpp. */
 
@@ -528,7 +528,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
      * needed. The context |cx| must be in the debugger compartment; |source|
      * must be a script source object in a debuggee compartment.
      */
-    JSObject *wrapSource(JSContext *cx, JS::HandleScriptSource source);
+    JSObject *wrapSource(JSContext *cx, js::HandleScriptSource source);
 
   private:
     Debugger(const Debugger &) MOZ_DELETE;
@@ -548,7 +548,7 @@ class BreakpointSite {
   private:
     JSCList breakpoints;  /* cyclic list of all js::Breakpoints at this instruction */
     size_t enabledCount;  /* number of breakpoints in the list that are enabled */
-    JSTrapHandler trapHandler;  /* jsdbgapi trap state */
+    JSTrapHandler trapHandler;  /* trap state */
     HeapValue trapClosure;
 
     void recompile(FreeOp *fop);

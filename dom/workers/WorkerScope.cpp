@@ -7,7 +7,7 @@
 #include "WorkerScope.h"
 
 #include "jsapi.h"
-#include "jsdbgapi.h"
+#include "js/OldDebugAPI.h"
 #include "mozilla/Util.h"
 #include "mozilla/dom/DOMJSClass.h"
 #include "mozilla/dom/EventTargetBinding.h"
@@ -853,7 +853,12 @@ private:
       return false;
     }
 
-    return scope->mWorker->PostMessageToParent(aCx, message, transferable);
+    if (!scope->mWorker->PostMessageToParent(aCx, message, transferable)) {
+      return false;
+    }
+
+    JS_RVAL(aCx, aVp).setUndefined();
+    return true;
   }
 };
 

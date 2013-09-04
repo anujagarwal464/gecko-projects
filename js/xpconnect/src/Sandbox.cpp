@@ -9,9 +9,9 @@
  */
 
 #include "AccessCheck.h"
-#include "jsdbgapi.h"
 #include "jsfriendapi.h"
 #include "jsproxy.h"
+#include "js/OldDebugAPI.h"
 #include "js/StructuredClone.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
@@ -36,6 +36,7 @@
 #include "mozilla/dom/BindingUtils.h"
 
 using namespace mozilla;
+using namespace JS;
 using namespace js;
 using namespace xpc;
 

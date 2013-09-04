@@ -8,11 +8,10 @@
 #define jswatchpoint_h
 
 #include "jsalloc.h"
-#include "jsapi.h"
-#include "jsdbgapi.h"
 
 #include "gc/Barrier.h"
 #include "js/HashTable.h"
+#include "js/OldDebugAPI.h"
 
 namespace js {
 

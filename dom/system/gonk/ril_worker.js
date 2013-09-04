@@ -1063,9 +1063,9 @@ let RIL = {
   /**
    * Request the radio's network selection mode
    */
-  getNetworkSelectionMode: function getNetworkSelectionMode(options) {
+  getNetworkSelectionMode: function getNetworkSelectionMode() {
     if (DEBUG) debug("Getting network selection mode");
-    Buf.simpleRequest(REQUEST_QUERY_NETWORK_SELECTION_MODE, options);
+    Buf.simpleRequest(REQUEST_QUERY_NETWORK_SELECTION_MODE);
   },
 
   /**
@@ -2325,6 +2325,25 @@ let RIL = {
   setCallBarring: function setCallBarring(options) {
     options.facility = CALL_BARRING_PROGRAM_TO_FACILITY[options.program];
     this.setICCFacilityLock(options);
+  },
+
+  /**
+   * Change call barring facility password.
+   *
+   * @param pin
+   *        Old password.
+   * @param newPin
+   *        New password.
+   */
+  changeCallBarringPassword: function changeCallBarringPassword(options) {
+    Buf.newParcel(REQUEST_CHANGE_BARRING_PASSWORD, options);
+    Buf.writeUint32(3);
+    // Set facility to ICC_CB_FACILITY_BA_ALL by following TS.22.030 clause
+    // 6.5.4 and Table B.1.
+    Buf.writeString(ICC_CB_FACILITY_BA_ALL);
+    Buf.writeString(options.pin);
+    Buf.writeString(options.newPin);
+    Buf.sendParcel();
   },
 
   /**
@@ -5318,7 +5337,13 @@ RIL[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_LOCK(length, opti
   }
   this.sendChromeMessage(options);
 };
-RIL[REQUEST_CHANGE_BARRING_PASSWORD] = null;
+RIL[REQUEST_CHANGE_BARRING_PASSWORD] =
+  function REQUEST_CHANGE_BARRING_PASSWORD(length, options) {
+  if (options.rilRequestError) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
+  this.sendChromeMessage(options);
+};
 RIL[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, options) {
   if (options.rilRequestError) {
     options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
@@ -5359,8 +5384,6 @@ RIL[REQUEST_QUERY_NETWORK_SELECTION_MODE] = function REQUEST_QUERY_NETWORK_SELEC
   this._receivedNetworkInfo(NETWORK_INFO_NETWORK_SELECTION_MODE);
 
   if (options.rilRequestError) {
-    options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
-    this.sendChromeMessage(options);
     return;
   }
 
@@ -6000,7 +6023,11 @@ RIL[UNSOLICITED_CDMA_CALL_WAITING] = function UNSOLICITED_CDMA_CALL_WAITING(leng
   this.sendChromeMessage({rilMessageType: "cdmaCallWaiting",
                           number: call.number});
 };
-RIL[UNSOLICITED_CDMA_OTA_PROVISION_STATUS] = null;
+RIL[UNSOLICITED_CDMA_OTA_PROVISION_STATUS] = function UNSOLICITED_CDMA_OTA_PROVISION_STATUS() {
+  let status = Buf.readUint32List()[0];
+  this.sendChromeMessage({rilMessageType: "otastatuschange",
+                          status: status});
+};
 RIL[UNSOLICITED_CDMA_INFO_REC] = null;
 RIL[UNSOLICITED_OEM_HOOK_RAW] = null;
 RIL[UNSOLICITED_RINGBACK_TONE] = null;

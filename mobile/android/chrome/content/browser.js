@@ -35,8 +35,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "UserAgentOverrides",
 XPCOMUtils.defineLazyModuleGetter(this, "LoginManagerContent",
                                   "resource://gre/modules/LoginManagerContent.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
-                                  "resource://gre/modules/NetUtil.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
 #ifdef MOZ_SAFE_BROWSING
 XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
@@ -2862,6 +2862,7 @@ Tab.prototype = {
       this.browser.focus();
       this.browser.docShellIsActive = true;
       Reader.updatePageAction(this);
+      HelperApps.updatePageAction(this.browser.currentURI);
     } else {
       this.browser.setAttribute("type", "content-targetable");
       this.browser.docShellIsActive = false;
@@ -6514,12 +6515,14 @@ var SearchEngines = {
 
     let suggestTemplate = null;
     let suggestEngine = null;
-    let engine = this.getSuggestionEngine();
-    if (engine != null) {
+
+    // Check to see if the default engine supports search suggestions. We only need to check
+    // the default engine because we only show suggestions for the default engine in the UI.
+    let engine = Services.search.defaultEngine;
+    if (engine.supportsResponseType("application/x-suggestions+json")) {
       suggestEngine = engine.name;
       suggestTemplate = engine.getSubmission("__searchTerms__", "application/x-suggestions+json").uri.spec;
     }
-
 
     // By convention, the currently configured default engine is at position zero in searchEngines.
     sendMessageToJava({
@@ -6574,19 +6577,6 @@ var SearchEngines = {
         dump("Unexpected message type observed: " + aTopic);
         break;
     }
-  },
-
-  getSuggestionEngine: function () {
-    let engines = [ Services.search.currentEngine,
-                    Services.search.defaultEngine ];
-
-    for (let i = 0; i < engines.length; i++) {
-      let engine = engines[i];
-      if (engine && engine.supportsResponseType("application/x-suggestions+json"))
-        return engine;
-    }
-
-    return null;
   },
 
   addEngine: function addEngine(aElement) {
@@ -6713,16 +6703,14 @@ var WebappsUI = {
 
     Services.obs.addObserver(this, "webapps-ask-install", false);
     Services.obs.addObserver(this, "webapps-launch", false);
-    Services.obs.addObserver(this, "webapps-sync-install", false);
-    Services.obs.addObserver(this, "webapps-sync-uninstall", false);
+    Services.obs.addObserver(this, "webapps-uninstall", false);
     Services.obs.addObserver(this, "webapps-install-error", false);
   },
 
   uninit: function unint() {
     Services.obs.removeObserver(this, "webapps-ask-install");
     Services.obs.removeObserver(this, "webapps-launch");
-    Services.obs.removeObserver(this, "webapps-sync-install");
-    Services.obs.removeObserver(this, "webapps-sync-uninstall");
+    Services.obs.removeObserver(this, "webapps-uninstall");
     Services.obs.removeObserver(this, "webapps-install-error");
   },
 
@@ -6758,27 +6746,7 @@ var WebappsUI = {
       case "webapps-launch":
         this.openURL(data.manifestURL, data.origin);
         break;
-      case "webapps-sync-install":
-        // Create a system notification allowing the user to launch the app
-        DOMApplicationRegistry.getManifestFor(data.origin, (function(aManifest) {
-          if (!aManifest)
-            return;
-          let manifest = new ManifestHelper(aManifest, data.origin);
-
-          let observer = {
-            observe: function (aSubject, aTopic) {
-              if (aTopic == "alertclickcallback") {
-                WebappsUI.openURL(data.manifestURL, data.origin);
-              }
-            }
-          };
-
-          let message = Strings.browser.GetStringFromName("webapps.alertSuccess");
-          let alerts = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
-          alerts.showAlertNotification("drawable://alert_app", manifest.name, message, true, "", observer, "webapp");
-        }).bind(this));
-        break;
-      case "webapps-sync-uninstall":
+      case "webapps-uninstall":
         sendMessageToJava({
           type: "WebApps:Uninstall",
           origin: data.origin
@@ -6839,7 +6807,7 @@ var WebappsUI = {
         file.initWithPath(profilePath);
 
         let self = this;
-        DOMApplicationRegistry.confirmInstall(aData, false, file, null,
+        DOMApplicationRegistry.confirmInstall(aData, file,
           function (aManifest) {
             let localeManifest = new ManifestHelper(aManifest, aData.app.origin);
 
@@ -6878,6 +6846,19 @@ var WebappsUI = {
                       }
                     }, "webapp");
                   }
+
+                  // Create a system notification allowing the user to launch the app
+                  let observer = {
+                    observe: function (aSubject, aTopic) {
+                      if (aTopic == "alertclickcallback") {
+                        WebappsUI.openURL(aData.app.manifestURL, origin);
+                      }
+                    }
+                  };
+
+                  let message = Strings.browser.GetStringFromName("webapps.alertSuccess");
+                  let alerts = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
+                  alerts.showAlertNotification("drawable://alert_app", localeManifest.name, message, true, "", observer, "webapp");
                 } catch(ex) {
                   console.log(ex);
                 }
@@ -6907,18 +6888,9 @@ var WebappsUI = {
 
   _writeData: function(aFile, aPrefs) {
     if (aPrefs.length > 0) {
-      let data = JSON.stringify(aPrefs);
-
-      let ostream = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
-      ostream.init(aFile, -1, -1, 0);
-
-      let istream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(Ci.nsIStringInputStream);
-      istream.setData(data, data.length);
-
-      NetUtil.asyncCopy(istream, ostream, function(aResult) {
-        if (!Components.isSuccessCode(aResult)) {
-          console.log("Error writing default prefs: " + aResult);
-        }
+      let array = new TextEncoder().encode(JSON.stringify(aPrefs));
+      OS.File.writeAtomic(aFile.path, array, { tmpPath: aFile.path + ".tmp" }).then(null, function onError(reason) {
+        console.log("Error writing default prefs: " + reason);
       });
     }
   },
@@ -7738,16 +7710,9 @@ var Distribution = {
           return;
         }
 
-        // Save the data for the later sessions
-        let ostream = Cc["@mozilla.org/network/safe-file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
-        ostream.init(this._file, 0x02 | 0x08 | 0x20, parseInt("600", 8), ostream.DEFER_OPEN);
-
-        let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].createInstance(Ci.nsIScriptableUnicodeConverter);
-        converter.charset = "UTF-8";
-
         // Asynchronously copy the data to the file.
-        let istream = converter.convertToInputStream(aData);
-        NetUtil.asyncCopy(istream, ostream, function(rc) { });
+        let array = new TextEncoder().encode(aData);
+        OS.File.writeAtomic(this._file.path, array, { tmpPath: this._file.path + ".tmp" });
         break;
       }
     }
@@ -7837,24 +7802,18 @@ var Distribution = {
   // aFile is an nsIFile
   // aCallback takes the parsed JSON object as a parameter
   readJSON: function dc_readJSON(aFile, aCallback) {
-    if (!aFile.exists())
-      return;
-
-    let channel = NetUtil.newChannel(aFile);
-    channel.contentType = "application/json";
-    NetUtil.asyncFetch(channel, function(aStream, aResult) {
-      if (!Components.isSuccessCode(aResult)) {
-        Cu.reportError("Distribution: Could not read from " + aFile.leafName + " file");
-        return;
-      }
-
-      let raw = NetUtil.readInputStreamToString(aStream, aStream.available(), { charset : "UTF-8" }) || "";
-      aStream.close();
+    Task.spawn(function() {
+      let bytes = yield OS.File.read(aFile.path);
+      let raw = new TextDecoder().decode(bytes) || "";
 
       try {
         aCallback(JSON.parse(raw));
       } catch (e) {
         Cu.reportError("Distribution: Could not parse JSON: " + e);
+      }
+    }).then(null, function onError(reason) {
+      if (!(reason instanceof OS.File.Error && reason.becauseNoSuchFile)) {
+        Cu.reportError("Distribution: Could not read from " + aFile.leafName + " file");
       }
     });
   }

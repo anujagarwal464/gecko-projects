@@ -158,8 +158,9 @@ this.Social = {
       return;
     }
     this.initialized = true;
-
-    if (SocialService.enabled) {
+    // if SocialService.hasEnabledProviders, retreive the providers so the
+    // front-end can generate UI
+    if (SocialService.hasEnabledProviders) {
       // Retrieve the current set of providers, and set the current provider.
       SocialService.getOrderedProviderList(function (providers) {
         Social._updateProviderCache(providers);
@@ -262,8 +263,8 @@ this.Social = {
     SocialService.installProvider(doc, data, installCallback);
   },
 
-  uninstallProvider: function(origin) {
-    SocialService.uninstallProvider(origin);
+  uninstallProvider: function(origin, aCallback) {
+    SocialService.uninstallProvider(origin, aCallback);
   },
 
   // Activation functionality

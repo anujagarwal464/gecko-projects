@@ -334,19 +334,26 @@ CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, un
 }
 
 inline uintptr_t
-GetNativeStackLimit(ExclusiveContext *cx)
+GetNativeStackLimit(ThreadSafeContext *cx)
 {
-    return cx->perThreadData->nativeStackLimit;
+    StackKind kind;
+    if (cx->isJSContext()) {
+        kind = cx->asJSContext()->runningWithTrustedPrincipals()
+                 ? StackForTrustedScript : StackForUntrustedScript;
+    } else {
+        // For other threads, we just use the trusted stack depth, since it's
+        // unlikely that we'll be mixing trusted and untrusted code together.
+        kind = StackForTrustedScript;
+    }
+    return cx->perThreadData->nativeStackLimit[kind];
 }
 
 inline void
 ExclusiveContext::maybePause() const
 {
 #ifdef JS_WORKER_THREADS
-    if (workerThread && runtime_->workerThreadState->shouldPause) {
-        AutoLockWorkerThreadState lock(*runtime_->workerThreadState);
-        workerThread->pause();
-    }
+    if (workerThread)
+        workerThread->maybePause();
 #endif
 }
 
@@ -520,7 +527,7 @@ JSContext::currentScript(jsbytecode **ppc,
 #ifdef JS_ION
     if (act->isJit()) {
         JSScript *script = NULL;
-        js::ion::GetPcScript(const_cast<JSContext *>(this), &script, ppc);
+        js::jit::GetPcScript(const_cast<JSContext *>(this), &script, ppc);
         if (!allowCrossCompartment && script->compartment() != compartment())
             return NULL;
         return script;

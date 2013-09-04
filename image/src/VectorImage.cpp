@@ -29,6 +29,7 @@
 #include "nsSVGUtils.h"  // for nsSVGUtils::ConvertToSurfaceSize
 #include "Orientation.h"
 #include "SVGDocumentWrapper.h"
+#include "nsIDOMEventListener.h"
 
 namespace mozilla {
 
@@ -391,10 +392,12 @@ VectorImage::OnImageDataComplete(nsIRequest* aRequest,
 
   // Actually fire OnStopRequest.
   if (mStatusTracker) {
+    // XXX(seth): Is this seriously the least insane way to do this?
     nsRefPtr<imgStatusTracker> clone = mStatusTracker->CloneForRecording();
     imgDecoderObserver* observer = clone->GetDecoderObserver();
     observer->OnStopRequest(aLastPart, finalStatus);
-    imgStatusTracker::StatusDiff diff = mStatusTracker->CalculateAndApplyDifference(clone);
+    ImageStatusDiff diff = mStatusTracker->Difference(clone);
+    mStatusTracker->ApplyDifference(diff);
     mStatusTracker->SyncNotifyDifference(diff);
   }
   return finalStatus;
@@ -861,7 +864,8 @@ VectorImage::OnStartRequest(nsIRequest* aRequest, nsISupports* aCtxt)
     nsRefPtr<imgStatusTracker> clone = mStatusTracker->CloneForRecording();
     imgDecoderObserver* observer = clone->GetDecoderObserver();
     observer->OnStartDecode();
-    imgStatusTracker::StatusDiff diff = mStatusTracker->CalculateAndApplyDifference(clone);
+    ImageStatusDiff diff = mStatusTracker->Difference(clone);
+    mStatusTracker->ApplyDifference(diff);
     mStatusTracker->SyncNotifyDifference(diff);
   }
 
@@ -949,7 +953,8 @@ VectorImage::OnSVGDocumentLoaded()
     observer->OnStopFrame();
     observer->OnStopDecode(NS_OK); // Unblock page load.
 
-    imgStatusTracker::StatusDiff diff = mStatusTracker->CalculateAndApplyDifference(clone);
+    ImageStatusDiff diff = mStatusTracker->Difference(clone);
+    mStatusTracker->ApplyDifference(diff);
     mStatusTracker->SyncNotifyDifference(diff);
   }
 
@@ -972,7 +977,8 @@ VectorImage::OnSVGDocumentError()
 
     // Unblock page load.
     observer->OnStopDecode(NS_ERROR_FAILURE);
-    imgStatusTracker::StatusDiff diff = mStatusTracker->CalculateAndApplyDifference(clone);
+    ImageStatusDiff diff = mStatusTracker->Difference(clone);
+    mStatusTracker->ApplyDifference(diff);
     mStatusTracker->SyncNotifyDifference(diff);
   }
 }

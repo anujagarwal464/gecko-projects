@@ -25,7 +25,7 @@
 #include "vm/ObjectImpl-inl.h"
 
 using mozilla::DebugOnly;
-using mozilla::Move;
+using mozilla::OldMove;
 using mozilla::MoveRef;
 using mozilla::PodEqual;
 
@@ -374,11 +374,11 @@ StatsCellCallback(JSRuntime *rt, void *data, void *thing, JSGCTraceKind traceKin
         cStats->scriptData += script->sizeOfData(rtStats->mallocSizeOf_);
 #ifdef JS_ION
         size_t baselineData = 0, baselineStubsFallback = 0;
-        ion::SizeOfBaselineData(script, rtStats->mallocSizeOf_, &baselineData,
+        jit::SizeOfBaselineData(script, rtStats->mallocSizeOf_, &baselineData,
                                 &baselineStubsFallback);
         cStats->baselineData += baselineData;
         cStats->baselineStubsFallback += baselineStubsFallback;
-        cStats->ionData += ion::SizeOfIonData(script, rtStats->mallocSizeOf_);
+        cStats->ionData += jit::SizeOfIonData(script, rtStats->mallocSizeOf_);
 #endif
 
         ScriptSource *ss = script->scriptSource();
@@ -439,7 +439,7 @@ FindNotableStrings(ZoneStats &zStats)
             !zStats.notableStrings.growBy(1))
             continue;
 
-        zStats.notableStrings.back() = Move(NotableStringInfo(str, info));
+        zStats.notableStrings.back() = OldMove(NotableStringInfo(str, info));
 
         // We're moving this string from a non-notable to a notable bucket, so
         // subtract it out of the non-notable tallies.

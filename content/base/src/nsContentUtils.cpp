@@ -20,8 +20,8 @@
 #include "imgLoader.h"
 #include "imgRequestProxy.h"
 #include "jsapi.h"
-#include "jsdbgapi.h"
 #include "jsfriendapi.h"
+#include "js/OldDebugAPI.h"
 #include "js/Value.h"
 #include "Layers.h"
 #include "MediaDecoder.h"
@@ -141,7 +141,6 @@
 #include "nsIWordBreaker.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
-#include "nsLayoutStatics.h"
 #include "nsLWBrkCIID.h"
 #include "nsMutationEvent.h"
 #include "nsNetCID.h"
@@ -1747,6 +1746,7 @@ nsContentUtils::GetDocumentFromContext()
 bool
 nsContentUtils::IsCallerChrome()
 {
+  MOZ_ASSERT(NS_IsMainThread());
   bool is_caller_chrome = false;
   nsresult rv = sSecurityManager->SubjectPrincipalIsSystem(&is_caller_chrome);
   if (NS_FAILED(rv)) {
@@ -1758,6 +1758,22 @@ nsContentUtils::IsCallerChrome()
 
   // If the check failed, look for UniversalXPConnect on the cx compartment.
   return xpc::IsUniversalXPConnectEnabled(GetCurrentJSContext());
+}
+
+namespace mozilla {
+namespace dom {
+namespace workers {
+extern bool IsCurrentThreadRunningChromeWorker();
+}
+}
+}
+
+bool
+nsContentUtils::ThreadsafeIsCallerChrome()
+{
+  return NS_IsMainThread() ?
+    IsCallerChrome() :
+    mozilla::dom::workers::IsCurrentThreadRunningChromeWorker();
 }
 
 bool
@@ -4792,11 +4808,40 @@ nsContentUtils::AddScriptRunner(nsIRunnable* aRunnable)
 }
 
 void
+nsContentUtils::EnterMicroTask()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  ++sMicroTaskLevel;
+}
+
+void
 nsContentUtils::LeaveMicroTask()
 {
+  MOZ_ASSERT(NS_IsMainThread());
   if (--sMicroTaskLevel == 0) {
     nsDOMMutationObserver::HandleMutations();
   }
+}
+
+bool
+nsContentUtils::IsInMicroTask()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  return sMicroTaskLevel != 0;
+}
+
+uint32_t
+nsContentUtils::MicroTaskLevel()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  return sMicroTaskLevel;
+}
+
+void
+nsContentUtils::SetMicroTaskLevel(uint32_t aLevel)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  sMicroTaskLevel = aLevel;
 }
 
 /* 
@@ -5612,35 +5657,14 @@ nsContentUtils::WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
 
   NS_ENSURE_TRUE(sXPConnect, NS_ERROR_UNEXPECTED);
 
-  // Keep sXPConnect alive. If we're on the main
-  // thread then this can be done simply and cheaply by adding a reference to
-  // nsLayoutStatics. If we're not on the main thread then we need to add a
-  // more expensive reference sXPConnect directly. We have to use manual
-  // AddRef and Release calls so don't early-exit from this function after we've
-  // added the reference!
-  bool isMainThread = NS_IsMainThread();
-
-  if (isMainThread) {
-    nsLayoutStatics::AddRef();
-  }
-  else {
-    sXPConnect->AddRef();
+  if (!NS_IsMainThread()) {
+    MOZ_CRASH();
   }
 
   nsresult rv = NS_OK;
-  {
-    AutoPushJSContext context(cx);
-    rv = sXPConnect->WrapNativeToJSVal(context, scope, native, cache, aIID,
-                                       aAllowWrapping, vp, aHolder);
-  }
-
-  if (isMainThread) {
-    nsLayoutStatics::Release();
-  }
-  else {
-    sXPConnect->Release();
-  }
-
+  AutoPushJSContext context(cx);
+  rv = sXPConnect->WrapNativeToJSVal(context, scope, native, cache, aIID,
+                                     aAllowWrapping, vp, aHolder);
   return rv;
 }
 

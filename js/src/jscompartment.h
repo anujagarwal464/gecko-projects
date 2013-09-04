@@ -9,12 +9,13 @@
 
 #include "mozilla/MemoryReporting.h"
 
+#include "builtin/TypeRepresentation.h"
 #include "gc/Zone.h"
 #include "vm/GlobalObject.h"
 
 namespace js {
 
-namespace ion {
+namespace jit {
 class IonCompartment;
 }
 
@@ -207,6 +208,9 @@ struct JSCompartment
 
     js::RegExpCompartment        regExps;
 
+    /* Set of all currently living type representations. */
+    js::TypeRepresentationSet    typeReprs;
+
   private:
     void sizeOfTypeInferenceData(JS::TypeInferenceSizes *stats, mozilla::MallocSizeOf mallocSizeOf);
 
@@ -384,11 +388,11 @@ struct JSCompartment
 
 #ifdef JS_ION
   private:
-    js::ion::IonCompartment *ionCompartment_;
+    js::jit::IonCompartment *ionCompartment_;
 
   public:
     bool ensureIonCompartmentExists(JSContext *cx);
-    js::ion::IonCompartment *ionCompartment() {
+    js::jit::IonCompartment *ionCompartment() {
         return ionCompartment_;
     }
 #endif
