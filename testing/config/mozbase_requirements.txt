@@ -8,5 +8,6 @@
 ../mozbase/mozlog
 ../mozbase/moznetwork
 ../mozbase/mozprocess
+../mozbase/mozprofile
 ../mozbase/mozrunner
 ../mozbase/moztest
