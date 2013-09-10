@@ -76,6 +76,7 @@ namespace jit {
     _(GuardString)                                                          \
     _(AssertRange)                                                          \
     _(ToDouble)                                                             \
+    _(ToFloat32)                                                            \
     _(ToInt32)                                                              \
     _(TruncateToInt32)                                                      \
     _(ToString)                                                             \
@@ -152,6 +153,7 @@ namespace jit {
     _(CallSetProperty)                                                      \
     _(CallInitElementArray)                                                 \
     _(DeleteProperty)                                                       \
+    _(DeleteElement)                                                        \
     _(SetPropertyCache)                                                     \
     _(IteratorStart)                                                        \
     _(IteratorNext)                                                         \

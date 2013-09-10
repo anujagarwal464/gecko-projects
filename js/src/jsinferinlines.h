@@ -1407,20 +1407,28 @@ TypeSet::getTypeObject(unsigned i) const
     return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;
 }
 
-inline TypeObject *
-TypeSet::getTypeOrSingleObject(JSContext *cx, unsigned i) const
+inline bool
+TypeSet::getTypeOrSingleObject(JSContext *cx, unsigned i, TypeObject **result) const
 {
+    JS_ASSERT(result);
     JS_ASSERT(cx->compartment()->activeAnalysis);
+
+    *result = NULL;
+
     TypeObject *type = getTypeObject(i);
     if (!type) {
         JSObject *singleton = getSingleObject(i);
         if (!singleton)
-            return NULL;
+            return true;
+
         type = singleton->uninlinedGetType(cx);
-        if (!type)
+        if (!type) {
             cx->compartment()->types.setPendingNukeTypes(cx);
+            return false;
+        }
     }
-    return type;
+    *result = type;
+    return true;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1554,33 +1562,12 @@ TypeObject::getProperty(unsigned i)
     return propertySet[i];
 }
 
-inline void
-TypeObject::writeBarrierPre(TypeObject *type)
+inline int
+TypeObject::getTypedArrayType()
 {
-#ifdef JSGC_INCREMENTAL
-    if (!type || !type->runtimeFromAnyThread()->needsBarrier())
-        return;
-
-    JS::Zone *zone = type->zone();
-    if (zone->needsBarrier()) {
-        TypeObject *tmp = type;
-        MarkTypeObjectUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
-        JS_ASSERT(tmp == type);
-    }
-#endif
-}
-
-inline void
-TypeObject::readBarrier(TypeObject *type)
-{
-#ifdef JSGC_INCREMENTAL
-    JS::Zone *zone = type->zone();
-    if (zone->needsBarrier()) {
-        TypeObject *tmp = type;
-        MarkTypeObjectUnbarriered(zone->barrierTracer(), &tmp, "read barrier");
-        JS_ASSERT(tmp == type);
-    }
-#endif
+    if (IsTypedArrayClass(clasp))
+        return clasp - &TypedArrayObject::classes[0];
+    return ScalarTypeRepresentation::TYPE_MAX;
 }
 
 inline void
@@ -1594,8 +1581,8 @@ TypeObjectAddendum::writeBarrierPre(TypeObjectAddendum *type)
       case NewScript:
         return TypeNewScript::writeBarrierPre(type->asNewScript());
 
-      case BinaryData:
-        return TypeBinaryData::writeBarrierPre(type->asNewScript());
+      case TypedObject:
+        return TypeTypedObject::writeBarrierPre(type->asTypedObject());
     }
 #endif
 }

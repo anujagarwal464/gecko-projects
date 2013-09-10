@@ -153,6 +153,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitOsrValue(MOsrValue *value);
     bool visitOsrScopeChain(MOsrScopeChain *object);
     bool visitToDouble(MToDouble *convert);
+    bool visitToFloat32(MToFloat32 *convert);
     bool visitToInt32(MToInt32 *convert);
     bool visitTruncateToInt32(MTruncateToInt32 *truncate);
     bool visitToString(MToString *convert);
@@ -195,6 +196,8 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitLoadTypedArrayElement(MLoadTypedArrayElement *ins);
     bool visitLoadTypedArrayElementHole(MLoadTypedArrayElementHole *ins);
     bool visitLoadTypedArrayElementStatic(MLoadTypedArrayElementStatic *ins);
+    bool visitStoreTypedArrayElement(MStoreTypedArrayElement *ins);
+    bool visitStoreTypedArrayElementHole(MStoreTypedArrayElementHole *ins);
     bool visitClampToUint8(MClampToUint8 *ins);
     bool visitLoadFixedSlot(MLoadFixedSlot *ins);
     bool visitStoreFixedSlot(MStoreFixedSlot *ins);
@@ -209,6 +212,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitAssertRange(MAssertRange *ins);
     bool visitCallGetProperty(MCallGetProperty *ins);
     bool visitDeleteProperty(MDeleteProperty *ins);
+    bool visitDeleteElement(MDeleteElement *ins);
     bool visitGetNameCache(MGetNameCache *ins);
     bool visitCallGetIntrinsicValue(MCallGetIntrinsicValue *ins);
     bool visitCallsiteCloneCache(MCallsiteCloneCache *ins);
@@ -236,7 +240,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitFunctionBoundary(MFunctionBoundary *ins);
     bool visitIsCallable(MIsCallable *ins);
     bool visitHaveSameClass(MHaveSameClass *ins);
-    bool visitAsmJSLoadHeap(MAsmJSLoadHeap *ins);
     bool visitAsmJSLoadGlobalVar(MAsmJSLoadGlobalVar *ins);
     bool visitAsmJSStoreGlobalVar(MAsmJSStoreGlobalVar *ins);
     bool visitAsmJSLoadFFIFunc(MAsmJSLoadFFIFunc *ins);

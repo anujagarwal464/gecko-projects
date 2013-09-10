@@ -25,6 +25,8 @@
 #include "js/Value.h"
 #include "Layers.h"
 #include "MediaDecoder.h"
+// nsNPAPIPluginInstance must be included before nsIDocument.h, which is included in mozAutoDocUpdate.h.
+#include "nsNPAPIPluginInstance.h"
 #include "mozAutoDocUpdate.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
@@ -574,11 +576,11 @@ nsContentUtils::InitializeEventTable() {
     { nullptr }
   };
 
-  sAtomEventTable = new nsDataHashtable<nsISupportsHashKey, EventNameMapping>;
-  sStringEventTable = new nsDataHashtable<nsStringHashKey, EventNameMapping>;
+  sAtomEventTable = new nsDataHashtable<nsISupportsHashKey, EventNameMapping>(
+      int(ArrayLength(eventArray) / 0.75) + 1);
+  sStringEventTable = new nsDataHashtable<nsStringHashKey, EventNameMapping>(
+      int(ArrayLength(eventArray) / 0.75) + 1);
   sUserDefinedEvents = new nsCOMArray<nsIAtom>(64);
-  sAtomEventTable->Init(int(ArrayLength(eventArray) / 0.75) + 1);
-  sStringEventTable->Init(int(ArrayLength(eventArray) / 0.75) + 1);
 
   // Subtract one from the length because of the trailing null
   for (uint32_t i = 0; i < ArrayLength(eventArray) - 1; ++i) {
@@ -1764,6 +1766,7 @@ namespace mozilla {
 namespace dom {
 namespace workers {
 extern bool IsCurrentThreadRunningChromeWorker();
+extern JSContext* GetCurrentThreadJSContext();
 }
 }
 }
@@ -5183,6 +5186,7 @@ nsContentUtils::GetContextForEventHandlers(nsINode* aNode,
 JSContext *
 nsContentUtils::GetCurrentJSContext()
 {
+  MOZ_ASSERT(NS_IsMainThread());
   return sXPConnect->GetCurrentJSContext();
 }
 
@@ -5190,7 +5194,19 @@ nsContentUtils::GetCurrentJSContext()
 JSContext *
 nsContentUtils::GetSafeJSContext()
 {
+  MOZ_ASSERT(NS_IsMainThread());
   return sXPConnect->GetSafeJSContext();
+}
+
+/* static */
+JSContext *
+nsContentUtils::GetDefaultJSContextForThread()
+{
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    return GetSafeJSContext();
+  } else {
+    return workers::GetCurrentThreadJSContext();
+  }
 }
 
 /* static */
@@ -5514,6 +5530,19 @@ nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsString& aOrigin)
   }
   
   return NS_OK;
+}
+
+/* static */
+void
+nsContentUtils::GetUTFNonNullOrigin(nsIURI* aURI, nsString& aOrigin)
+{
+  aOrigin.Truncate();
+
+  nsString origin;
+  nsresult rv = GetUTFOrigin(aURI, origin);
+  if (NS_SUCCEEDED(rv) && !origin.EqualsLiteral("null")) {
+    aOrigin.Assign(origin);
+  }
 }
 
 /* static */

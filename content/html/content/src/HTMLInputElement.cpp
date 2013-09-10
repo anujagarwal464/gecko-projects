@@ -87,6 +87,7 @@
 #include "nsContentUtils.h"
 #include "mozilla/dom/DirectionalityUtils.h"
 #include "nsRadioVisitor.h"
+#include "nsTextEditorState.h"
 
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Util.h" // DebugOnly
@@ -375,9 +376,10 @@ public:
     nsAutoString leafName;
     mNextFile->GetLeafName(leafName);
     MOZ_ASSERT(leafName.Length() <= path.Length());
-    int32_t length = path.Length() - leafName.Length() - 1; // -1 for "/"
-    MOZ_ASSERT(length >= -1);
+    int32_t length = path.Length() - leafName.Length();
+    MOZ_ASSERT(length >= 0);
     if (length > 0) {
+      // Note that we leave the trailing "/" on the path.
       domFile->SetPath(Substring(path, 0, uint32_t(length)));
     }
     *aResult = static_cast<nsIDOMFile*>(domFile.forget().get());
@@ -1537,6 +1539,13 @@ HTMLInputElement::IsValueEmpty() const
   GetValueInternal(value);
 
   return value.IsEmpty();
+}
+
+void
+HTMLInputElement::ClearFiles(bool aSetValueChanged)
+{
+  nsTArray<nsCOMPtr<nsIDOMFile> > files;
+  SetFiles(files, aSetValueChanged);
 }
 
 static Decimal StringToDecimal(nsAString& aValue)

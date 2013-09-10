@@ -12,6 +12,7 @@
 #include "mozilla/gfx/ScaleFactor.h"
 #include "nsDeviceContext.h"
 #include "nsRect.h"
+#include "mozilla/AppUnits.h"
 
 namespace mozilla {
 
@@ -78,59 +79,59 @@ struct CSSPixel {
   // Conversions from app units
 
   static CSSPoint FromAppUnits(const nsPoint& aPoint) {
-    return CSSPoint(NSAppUnitsToFloatPixels(aPoint.x, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                    NSAppUnitsToFloatPixels(aPoint.y, float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return CSSPoint(NSAppUnitsToFloatPixels(aPoint.x, float(AppUnitsPerCSSPixel())),
+                    NSAppUnitsToFloatPixels(aPoint.y, float(AppUnitsPerCSSPixel())));
   }
 
   static CSSRect FromAppUnits(const nsRect& aRect) {
-    return CSSRect(NSAppUnitsToFloatPixels(aRect.x, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                   NSAppUnitsToFloatPixels(aRect.y, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                   NSAppUnitsToFloatPixels(aRect.width, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                   NSAppUnitsToFloatPixels(aRect.height, float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return CSSRect(NSAppUnitsToFloatPixels(aRect.x, float(AppUnitsPerCSSPixel())),
+                   NSAppUnitsToFloatPixels(aRect.y, float(AppUnitsPerCSSPixel())),
+                   NSAppUnitsToFloatPixels(aRect.width, float(AppUnitsPerCSSPixel())),
+                   NSAppUnitsToFloatPixels(aRect.height, float(AppUnitsPerCSSPixel())));
   }
 
   static CSSIntPoint FromAppUnitsRounded(const nsPoint& aPoint) {
-    return CSSIntPoint(NSAppUnitsToIntPixels(aPoint.x, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                       NSAppUnitsToIntPixels(aPoint.y, float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return CSSIntPoint(NSAppUnitsToIntPixels(aPoint.x, float(AppUnitsPerCSSPixel())),
+                       NSAppUnitsToIntPixels(aPoint.y, float(AppUnitsPerCSSPixel())));
   }
 
   static CSSIntSize FromAppUnitsRounded(const nsSize& aSize)
   {
-    return CSSIntSize(NSAppUnitsToIntPixels(aSize.width, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                      NSAppUnitsToIntPixels(aSize.height, float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return CSSIntSize(NSAppUnitsToIntPixels(aSize.width, float(AppUnitsPerCSSPixel())),
+                      NSAppUnitsToIntPixels(aSize.height, float(AppUnitsPerCSSPixel())));
   }
 
   static CSSIntRect FromAppUnitsRounded(const nsRect& aRect) {
-    return CSSIntRect(NSAppUnitsToIntPixels(aRect.x, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                      NSAppUnitsToIntPixels(aRect.y, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                      NSAppUnitsToIntPixels(aRect.width, float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                      NSAppUnitsToIntPixels(aRect.height, float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return CSSIntRect(NSAppUnitsToIntPixels(aRect.x, float(AppUnitsPerCSSPixel())),
+                      NSAppUnitsToIntPixels(aRect.y, float(AppUnitsPerCSSPixel())),
+                      NSAppUnitsToIntPixels(aRect.width, float(AppUnitsPerCSSPixel())),
+                      NSAppUnitsToIntPixels(aRect.height, float(AppUnitsPerCSSPixel())));
   }
 
   // Conversions to app units
 
   static nsPoint ToAppUnits(const CSSPoint& aPoint) {
-    return nsPoint(NSToCoordRoundWithClamp(aPoint.x * float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                   NSToCoordRoundWithClamp(aPoint.y * float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return nsPoint(NSToCoordRoundWithClamp(aPoint.x * float(AppUnitsPerCSSPixel())),
+                   NSToCoordRoundWithClamp(aPoint.y * float(AppUnitsPerCSSPixel())));
   }
 
   static nsPoint ToAppUnits(const CSSIntPoint& aPoint) {
-    return nsPoint(NSToCoordRoundWithClamp(float(aPoint.x) * float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                   NSToCoordRoundWithClamp(float(aPoint.y) * float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return nsPoint(NSToCoordRoundWithClamp(float(aPoint.x) * float(AppUnitsPerCSSPixel())),
+                   NSToCoordRoundWithClamp(float(aPoint.y) * float(AppUnitsPerCSSPixel())));
   }
 
   static nsRect ToAppUnits(const CSSRect& aRect) {
-    return nsRect(NSToCoordRoundWithClamp(aRect.x * float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                  NSToCoordRoundWithClamp(aRect.y * float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                  NSToCoordRoundWithClamp(aRect.width * float(nsDeviceContext::AppUnitsPerCSSPixel())),
-                  NSToCoordRoundWithClamp(aRect.height * float(nsDeviceContext::AppUnitsPerCSSPixel())));
+    return nsRect(NSToCoordRoundWithClamp(aRect.x * float(AppUnitsPerCSSPixel())),
+                  NSToCoordRoundWithClamp(aRect.y * float(AppUnitsPerCSSPixel())),
+                  NSToCoordRoundWithClamp(aRect.width * float(AppUnitsPerCSSPixel())),
+                  NSToCoordRoundWithClamp(aRect.height * float(AppUnitsPerCSSPixel())));
   }
 };
 
 /*
  * The pixels that are referred to as "device pixels" in layout code. In
  * general this is obtained by converting a value in app units value by the
- * nsDeviceContext::AppUnitsPerDevPixel() value. The size of these pixels
+ * AppUnitsPerDevPixel() value. The size of these pixels
  * are affected by:
  * 1) the "full zoom" (see nsPresContext::SetFullZoom)
  * 2) the "widget scale" (see nsIWidget::GetDefaultScale)
@@ -148,17 +149,24 @@ struct LayoutDevicePixel {
     return LayoutDeviceIntRect(aRect.x, aRect.y, aRect.width, aRect.height);
   }
 
-  static LayoutDeviceIntPoint FromAppUnits(const nsPoint& aPoint, nscoord aAppUnitsPerDevPixel) {
+  static LayoutDeviceRect FromAppUnits(const nsRect& aRect, nscoord aAppUnitsPerDevPixel) {
+    return LayoutDeviceRect(NSAppUnitsToFloatPixels(aRect.x, float(aAppUnitsPerDevPixel)),
+                            NSAppUnitsToFloatPixels(aRect.y, float(aAppUnitsPerDevPixel)),
+                            NSAppUnitsToFloatPixels(aRect.width, float(aAppUnitsPerDevPixel)),
+                            NSAppUnitsToFloatPixels(aRect.height, float(aAppUnitsPerDevPixel)));
+  }
+
+  static LayoutDeviceIntPoint FromAppUnitsRounded(const nsPoint& aPoint, nscoord aAppUnitsPerDevPixel) {
     return LayoutDeviceIntPoint(NSAppUnitsToIntPixels(aPoint.x, aAppUnitsPerDevPixel),
                                 NSAppUnitsToIntPixels(aPoint.y, aAppUnitsPerDevPixel));
   }
 
-  static LayoutDeviceIntPoint FromAppUnitsToNearest(const nsPoint& aPoint, nscoord appUnitsPerDevPixel) {
-    return FromUntyped(aPoint.ToNearestPixels(appUnitsPerDevPixel));
+  static LayoutDeviceIntPoint FromAppUnitsToNearest(const nsPoint& aPoint, nscoord aAppUnitsPerDevPixel) {
+    return FromUntyped(aPoint.ToNearestPixels(aAppUnitsPerDevPixel));
   }
 
-  static LayoutDeviceIntRect FromAppUnitsToNearest(const nsRect& aRect, nscoord appUnitsPerDevPixel) {
-    return FromUntyped(aRect.ToNearestPixels(appUnitsPerDevPixel));
+  static LayoutDeviceIntRect FromAppUnitsToNearest(const nsRect& aRect, nscoord aAppUnitsPerDevPixel) {
+    return FromUntyped(aRect.ToNearestPixels(aAppUnitsPerDevPixel));
   }
 };
 

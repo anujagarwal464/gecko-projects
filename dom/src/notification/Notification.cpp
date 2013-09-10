@@ -4,6 +4,7 @@
 
 #include "PCOMContentPermissionRequestChild.h"
 #include "mozilla/dom/Notification.h"
+#include "mozilla/dom/OwningNonNull.h"
 #include "mozilla/Preferences.h"
 #include "TabChild.h"
 #include "nsContentUtils.h"
@@ -179,7 +180,9 @@ NotificationPermissionRequest::GetWindow(nsIDOMWindow** aRequestingWindow)
 NS_IMETHODIMP
 NotificationPermissionRequest::GetElement(nsIDOMElement** aElement)
 {
-  return NS_ERROR_FAILURE;
+  NS_ENSURE_ARG_POINTER(aElement);
+  *aElement = nullptr;
+  return NS_OK;
 }
 
 NS_IMETHODIMP

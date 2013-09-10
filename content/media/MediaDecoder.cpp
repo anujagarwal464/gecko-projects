@@ -8,11 +8,7 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MathAlgorithms.h"
 #include <limits>
-#include "nsNetUtil.h"
-#include "AudioStream.h"
-#include "mozilla/dom/HTMLVideoElement.h"
 #include "nsIObserver.h"
-#include "nsIObserverService.h"
 #include "nsTArray.h"
 #include "VideoUtils.h"
 #include "MediaDecoderStateMachine.h"
@@ -22,6 +18,9 @@
 #include "MediaResource.h"
 #include "nsError.h"
 #include "mozilla/Preferences.h"
+#include "nsIMemoryReporter.h"
+#include "nsComponentManagerUtils.h"
+#include "nsITimer.h"
 #include <algorithm>
 
 #ifdef MOZ_WMF
@@ -362,7 +361,6 @@ MediaDecoder::MediaDecoder() :
   mInitialVolume(0.0),
   mInitialPlaybackRate(1.0),
   mInitialPreservesPitch(true),
-  mRequestedSeekTime(-1.0),
   mDuration(-1),
   mTransportSeekable(true),
   mMediaSeekable(true),
@@ -372,6 +370,7 @@ MediaDecoder::MediaDecoder() :
   mIsExitingDormant(false),
   mPlayState(PLAY_STATE_PAUSED),
   mNextState(PLAY_STATE_PAUSED),
+  mRequestedSeekTime(-1.0),
   mCalledResourceLoaded(false),
   mIgnoreProgressData(false),
   mInfiniteStream(false),
@@ -708,8 +707,7 @@ bool
 MediaDecoder::IsDataCachedToEndOfResource()
 {
   NS_ASSERTION(!mShuttingDown, "Don't call during shutdown!");
-  GetReentrantMonitor().AssertCurrentThreadIn();
-
+  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   return (mResource &&
           mResource->IsDataCachedToEndOfResource(mDecoderPosition));
 }
@@ -755,7 +753,6 @@ void MediaDecoder::MetadataLoaded(int aChannels, int aRate, bool aHasAudio, bool
 
   // Only inform the element of FirstFrameLoaded if not doing a load() in order
   // to fulfill a seek, otherwise we'll get multiple loadedfirstframe events.
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   bool notifyResourceIsLoaded = !mCalledResourceLoaded &&
                                 IsDataCachedToEndOfResource();
   if (mOwner) {
@@ -1275,10 +1272,14 @@ void MediaDecoder::SetMediaDuration(int64_t aDuration)
   GetStateMachine()->SetDuration(aDuration);
 }
 
-void MediaDecoder::UpdateMediaDuration(int64_t aDuration)
+void MediaDecoder::UpdateEstimatedMediaDuration(int64_t aDuration)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+  if (mPlayState <= PLAY_STATE_LOADING) {
+    return;
+  }
   NS_ENSURE_TRUE_VOID(GetStateMachine());
-  GetStateMachine()->UpdateDuration(aDuration);
+  GetStateMachine()->UpdateEstimatedDuration(aDuration);
 }
 
 void MediaDecoder::SetMediaSeekable(bool aMediaSeekable) {

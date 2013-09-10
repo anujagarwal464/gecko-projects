@@ -24,6 +24,7 @@
 #include "mozilla/layers/GrallocTextureHost.h"
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsRegion.h"                   // for nsIntRegion
+#include "GfxTexturesReporter.h"        // for GfxTexturesReporter
 #ifdef XP_MACOSX
 #include "SharedSurfaceIO.h"
 #endif
@@ -292,7 +293,7 @@ SharedTextureSourceOGL::gl() const
 
 SharedTextureHostOGL::SharedTextureHostOGL(uint64_t aID,
                                            TextureFlags aFlags,
-                                           gl::GLContext::SharedTextureShareType aShareType,
+                                           gl::SharedTextureShareType aShareType,
                                            gl::SharedTextureHandle aSharedHandle,
                                            gfx::IntSize aSize,
                                            bool inverted)
@@ -639,11 +640,8 @@ SurfaceStreamHostOGL::UpdateImpl(const SurfaceDescriptor& aImage,
   const SurfaceStreamDescriptor& streamDesc =
       aImage.get_SurfaceStreamDescriptor();
 
-  SurfaceStream *stream = SurfaceStream::FromHandle(streamDesc.handle());
-  if (stream == mStream) {
-    return;
-  }
-  mStream = stream;
+
+  mStream = SurfaceStream::FromHandle(streamDesc.handle());
   MOZ_ASSERT(mStream);
   mStreamGL = dont_AddRef(mStream->GLContext());
 }
@@ -741,6 +739,14 @@ SurfaceStreamHostOGL::Lock()
   return true;
 }
 
+void
+SurfaceStreamHostOGL::BindTexture(GLenum activetex)
+{
+  MOZ_ASSERT(mGL);
+  mGL->fActiveTexture(activetex);
+  mGL->fBindTexture(mTextureTarget, mTextureHandle);
+}
+
 
 void
 YCbCrDeprecatedTextureHostOGL::SetCompositor(Compositor* aCompositor)
@@ -824,6 +830,13 @@ YCbCrDeprecatedTextureHostOGL::Lock()
 TiledDeprecatedTextureHostOGL::~TiledDeprecatedTextureHostOGL()
 {
   DeleteTextures();
+}
+
+void
+TiledDeprecatedTextureHostOGL::BindTexture(GLenum aTextureUnit)
+{
+  mGL->fActiveTexture(aTextureUnit);
+  mGL->fBindTexture(LOCAL_GL_TEXTURE_2D, mTextureHandle);
 }
 
 static void

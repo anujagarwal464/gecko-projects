@@ -1033,10 +1033,6 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
 {
   nsLayoutStatics::AddRef();
 
-#ifdef MOZ_GAMEPAD
-  mGamepads.Init();
-#endif
-
   // Initialize the PRCList (this).
   PR_INIT_CLIST(this);
 
@@ -1124,8 +1120,6 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
   if (sWindowsById) {
     sWindowsById->Put(mWindowID, this);
   }
-
-  mEventTargetObjects.Init();
 }
 
 /* static */
@@ -1142,7 +1136,6 @@ nsGlobalWindow::Init()
 #endif
 
   sWindowsById = new WindowByIdTable();
-  sWindowsById->Init();
 }
 
 static PLDHashOperator
@@ -1283,9 +1276,9 @@ nsGlobalWindow::ShutDown()
 void
 nsGlobalWindow::CleanupCachedXBLHandlers(nsGlobalWindow* aWindow)
 {
-  if (aWindow->mCachedXBLPrototypeHandlers.IsInitialized() &&
-      aWindow->mCachedXBLPrototypeHandlers.Count() > 0) {
-    aWindow->mCachedXBLPrototypeHandlers.Clear();
+  if (aWindow->mCachedXBLPrototypeHandlers &&
+      aWindow->mCachedXBLPrototypeHandlers->Count() > 0) {
+    aWindow->mCachedXBLPrototypeHandlers->Clear();
     mozilla::DropJSObjects(aWindow);
   }
 }
@@ -1566,14 +1559,14 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(nsGlobalWindow)
 static PLDHashOperator
 MarkXBLHandlers(nsXBLPrototypeHandler* aKey, JS::Heap<JSObject*>& aData, void* aClosure)
 {
-  xpc_UnmarkGrayObject(aData);
+  JS::ExposeObjectToActiveJS(aData);
   return PL_DHASH_NEXT;
 }
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGlobalWindow)
   if (tmp->IsBlackForCC()) {
-    if (tmp->mCachedXBLPrototypeHandlers.IsInitialized()) {
-      tmp->mCachedXBLPrototypeHandlers.Enumerate(MarkXBLHandlers, nullptr);
+    if (tmp->mCachedXBLPrototypeHandlers) {
+      tmp->mCachedXBLPrototypeHandlers->Enumerate(MarkXBLHandlers, nullptr);
     }
     nsEventListenerManager* elm = tmp->GetListenerManager(false);
     if (elm) {
@@ -1739,9 +1732,9 @@ TraceXBLHandlers(nsXBLPrototypeHandler* aKey, JS::Heap<JSObject*>& aData, void* 
 }
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsGlobalWindow)
-  if (tmp->mCachedXBLPrototypeHandlers.IsInitialized()) {
+  if (tmp->mCachedXBLPrototypeHandlers) {
     TraceData data = { aCallbacks, aClosure };
-    tmp->mCachedXBLPrototypeHandlers.Enumerate(TraceXBLHandlers, &data);
+    tmp->mCachedXBLPrototypeHandlers->Enumerate(TraceXBLHandlers, &data);
   }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
@@ -2049,8 +2042,9 @@ nsGlobalWindow::SetOuterObject(JSContext* aCx, JS::Handle<JSObject*> aOuterObjec
 {
   JSAutoCompartment ac(aCx, aOuterObject);
 
-  // Indicate the default compartment object associated with this cx.
-  js::SetDefaultObjectForContext(aCx, aOuterObject);
+  // Inform the nsJSContext, which is the canonical holder of the outer.
+  MOZ_ASSERT(IsOuterWindow());
+  mContext->SetWindowProxy(aOuterObject);
 
   // Set up the prototype for the outer object.
   JS::Rooted<JSObject*> inner(aCx, JS_GetParent(aOuterObject));
@@ -2254,13 +2248,13 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
 
     if (aDocument != oldDoc) {
       JS::Rooted<JSObject*> obj(cx, currentInner->mJSObject);
-      xpc_UnmarkGrayObject(obj);
+      JS::ExposeObjectToActiveJS(obj);
     }
 
     // We're reusing the inner window, but this still counts as a navigation,
     // so all expandos and such defined on the outer window should go away. Force
     // all Xray wrappers to be recomputed.
-    xpc_UnmarkGrayObject(mJSObject);
+    JS::ExposeObjectToActiveJS(mJSObject);
     if (!JS_RefreshCrossCompartmentWrappers(cx, mJSObject)) {
       return NS_ERROR_FAILURE;
     }
@@ -2362,11 +2356,11 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
       CreateOuterObject(newInnerWindow);
       mContext->DidInitializeContext();
 
-      mJSObject = mContext->GetNativeGlobal();
+      mJSObject = mContext->GetWindowProxy();
       SetWrapper(mJSObject);
     } else {
-      JS::Rooted<JSObject*> global(cx,
-        xpc_UnmarkGrayObject(newInnerWindow->mJSObject));
+      JS::ExposeObjectToActiveJS(newInnerWindow->mJSObject);
+      JS::Rooted<JSObject*> global(cx, newInnerWindow->mJSObject);
       JS::Rooted<JSObject*> outerObject(cx,
         NewOuterWindowProxy(cx, global, thisChrome));
       if (!outerObject) {
@@ -2446,11 +2440,7 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
         newInnerWindow->FastGetGlobalJSObject());
 #endif
 
-    // Now that we're connecting the outer global to the inner one,
-    // we must have transplanted it. The JS engine tries to maintain
-    // the global object's compartment as its default compartment,
-    // so update that now since it might have changed.
-    js::SetDefaultObjectForContext(cx, mJSObject);
+    MOZ_ASSERT(mContext->GetWindowProxy() == mJSObject);
 #ifdef DEBUG
     JS::Rooted<JSObject*> rootedJSObject(cx, mJSObject);
     JS::Rooted<JSObject*> proto1(cx), proto2(cx);
@@ -7614,8 +7604,8 @@ nsGlobalWindow::GetCachedXBLPrototypeHandler(nsXBLPrototypeHandler* aKey)
 {
   AutoSafeJSContext cx;
   JS::Rooted<JSObject*> handler(cx);
-  if (mCachedXBLPrototypeHandlers.IsInitialized()) {
-    mCachedXBLPrototypeHandlers.Get(aKey, handler.address());
+  if (mCachedXBLPrototypeHandlers) {
+    mCachedXBLPrototypeHandlers->Get(aKey, handler.address());
   }
   return handler;
 }
@@ -7624,15 +7614,15 @@ void
 nsGlobalWindow::CacheXBLPrototypeHandler(nsXBLPrototypeHandler* aKey,
                                          JS::Handle<JSObject*> aHandler)
 {
-  if (!mCachedXBLPrototypeHandlers.IsInitialized()) {
-    mCachedXBLPrototypeHandlers.Init();
+  if (!mCachedXBLPrototypeHandlers) {
+    mCachedXBLPrototypeHandlers = new nsJSThingHashtable<nsPtrHashKey<nsXBLPrototypeHandler>, JSObject*>();
   }
 
-  if (!mCachedXBLPrototypeHandlers.Count()) {
+  if (!mCachedXBLPrototypeHandlers->Count()) {
     mozilla::HoldJSObjects(this);
   }
 
-  mCachedXBLPrototypeHandlers.Put(aKey, aHandler);
+  mCachedXBLPrototypeHandlers->Put(aKey, aHandler);
 }
 
 /**

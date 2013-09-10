@@ -137,23 +137,6 @@ xpc_IsGrayGCThing(void *thing)
 extern bool
 xpc_GCThingIsGrayCCThing(void *thing);
 
-// Unmark gray for known-nonnull cases
-MOZ_ALWAYS_INLINE void
-xpc_UnmarkNonNullGrayObject(JSObject *obj)
-{
-    JS::ExposeGCThingToActiveJS(obj, JSTRACE_OBJECT);
-}
-
-// Remove the gray color from the given JSObject and any other objects that can
-// be reached through it.
-MOZ_ALWAYS_INLINE JSObject *
-xpc_UnmarkGrayObject(JSObject *obj)
-{
-    if (obj)
-        xpc_UnmarkNonNullGrayObject(obj);
-    return obj;
-}
-
 inline JSScript *
 xpc_UnmarkGrayScript(JSScript *script)
 {
@@ -161,21 +144,6 @@ xpc_UnmarkGrayScript(JSScript *script)
         JS::ExposeGCThingToActiveJS(script, JSTRACE_SCRIPT);
 
     return script;
-}
-
-inline JSContext *
-xpc_UnmarkGrayContext(JSContext *cx)
-{
-    if (cx) {
-        JSObject *global = js::DefaultObjectForContextOrNull(cx);
-        xpc_UnmarkGrayObject(global);
-        if (global && JS_IsInRequest(JS_GetRuntime(cx))) {
-            JSObject *scope = JS::CurrentGlobalOrNull(cx);
-            if (scope != global)
-                xpc_UnmarkGrayObject(scope);
-        }
-    }
-    return cx;
 }
 
 // If aVariant is an XPCVariant, this marks the object to be in aGeneration.
