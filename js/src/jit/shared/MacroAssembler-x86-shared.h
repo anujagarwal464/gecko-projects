@@ -205,6 +205,9 @@ class MacroAssemblerX86Shared : public Assembler
         framePushed_ += sizeof(word.value);
         return pushWithPatch(word);
     }
+    CodeOffsetLabel PushWithPatch(const ImmPtr &imm) {
+        return PushWithPatch(ImmWord(uintptr_t(imm.value)));
+    }
 
     template <typename T>
     void Pop(const T &t) {
@@ -423,26 +426,15 @@ class MacroAssemblerX86Shared : public Assembler
         }
     }
 
-    void clampIntToUint8(Register src, Register dest) {
-        Label inRange, done;
-        branchTest32(Assembler::Zero, src, Imm32(0xffffff00), &inRange);
+    void clampIntToUint8(Register reg) {
+        Label inRange;
+        branchTest32(Assembler::Zero, reg, Imm32(0xffffff00), &inRange);
         {
-            Label negative;
-            branchTest32(Assembler::Signed, src, src, &negative);
-            {
-                movl(Imm32(255), dest);
-                jump(&done);
-            }
-            bind(&negative);
-            {
-                xorl(dest, dest);
-                jump(&done);
-            }
+            sarl(Imm32(31), reg);
+            notl(reg);
+            andl(Imm32(255), reg);
         }
         bind(&inRange);
-        if (src != dest)
-            movl(src, dest);
-        bind(&done);
     }
 
     bool maybeInlineDouble(double d, const FloatRegister &dest) {
@@ -539,7 +531,7 @@ class MacroAssemblerX86Shared : public Assembler
     bool buildOOLFakeExitFrame(void *fakeReturnAddr) {
         uint32_t descriptor = MakeFrameDescriptor(framePushed(), IonFrame_OptimizedJS);
         Push(Imm32(descriptor));
-        Push(ImmWord(fakeReturnAddr));
+        Push(ImmPtr(fakeReturnAddr));
         return true;
     }
 

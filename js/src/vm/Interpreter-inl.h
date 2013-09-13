@@ -24,6 +24,7 @@
 #include "jsobjinlines.h"
 
 #include "vm/Stack-inl.h"
+#include "vm/String-inl.h"
 
 namespace js {
 
@@ -48,11 +49,12 @@ ComputeThis(JSContext *cx, AbstractFramePtr frame)
          */
         JS_ASSERT_IF(frame.isEvalFrame(), thisv.isUndefined() || thisv.isNull());
     }
-    bool modified;
-    if (!BoxNonStrictThis(cx, &thisv, &modified))
+
+    JSObject *thisObj = BoxNonStrictThis(cx, thisv);
+    if (!thisObj)
         return false;
 
-    frame.thisValue() = thisv;
+    frame.thisValue().setObject(*thisObj);
     return true;
 }
 
@@ -470,10 +472,17 @@ GetElementOperation(JSContext *cx, JSOp op, MutableHandleValue lref, HandleValue
 }
 
 static JS_ALWAYS_INLINE JSString *
-TypeOfOperation(JSContext *cx, HandleValue v)
+TypeOfOperation(const Value &v, JSRuntime *rt)
 {
-    JSType type = JS_TypeOfValue(cx, v);
-    return TypeName(type, cx);
+    JSType type = js::TypeOfValue(v);
+    return TypeName(type, rt);
+}
+
+static inline JSString *
+TypeOfObjectOperation(JSObject *obj, JSRuntime *rt)
+{
+    JSType type = js::TypeOfObject(obj);
+    return TypeName(type, rt);
 }
 
 static JS_ALWAYS_INLINE bool

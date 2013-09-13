@@ -10,12 +10,8 @@
 #include "mozilla/Util.h"
 
 #include "xpcprivate.h"
-#include "nsString.h"
 #include "nsIAtom.h"
-#include "XPCWrapper.h"
-#include "nsJSPrincipals.h"
 #include "nsWrapperCache.h"
-#include "AccessCheck.h"
 #include "nsJSUtils.h"
 #include "WrapperFactory.h"
 
@@ -83,7 +79,7 @@ UnwrapNativeCPOW(nsISupports* wrapper)
 bool
 XPCConvert::GetISupportsFromJSObject(JSObject* obj, nsISupports** iface)
 {
-    JSClass* jsclass = js::GetObjectJSClass(obj);
+    const JSClass* jsclass = js::GetObjectJSClass(obj);
     MOZ_ASSERT(jsclass, "obj has no class");
     if (jsclass &&
         (jsclass->flags & JSCLASS_HAS_PRIVATE) &&

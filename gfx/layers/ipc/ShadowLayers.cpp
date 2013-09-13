@@ -79,7 +79,10 @@ public:
     mClientBounds = aClientBounds;
     mTargetOrientation = aOrientation;
   }
-
+  void MarkSyncTransaction()
+  {
+    mSwapRequired = true;
+  }
   void AddEdit(const Edit& aEdit)
   {
     NS_ABORT_IF_FALSE(!Finished(), "forgot BeginTransaction?");
@@ -405,10 +408,12 @@ ShadowLayerForwarder::RemoveTexture(CompositableClient* aCompositable,
                                     uint64_t aTexture,
                                     TextureFlags aFlags)
 {
-  mTxn->AddEdit(OpRemoveTexture(nullptr,
-                aCompositable->GetIPDLActor(),
-                aTexture,
-                aFlags));
+  mTxn->AddEdit(OpRemoveTexture(nullptr, aCompositable->GetIPDLActor(),
+                                aTexture,
+                                aFlags));
+  if (!(aFlags & TEXTURE_DEALLOCATE_HOST)) {
+    mTxn->MarkSyncTransaction();
+  }
 }
 
 void
@@ -426,7 +431,6 @@ ShadowLayerForwarder::UpdatedTexture(CompositableClient* aCompositable,
     mTxn->AddNoSwapPaint(OpUpdateTexture(nullptr, aCompositable->GetIPDLActor(),
                                          aTexture->GetID(),
                                          region));
-
   }
 }
 
@@ -492,6 +496,12 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies)
     common.isFixedPosition() = mutant->GetIsFixedPosition();
     common.fixedPositionAnchor() = mutant->GetFixedPositionAnchor();
     common.fixedPositionMargin() = mutant->GetFixedPositionMargins();
+    common.isStickyPosition() = mutant->GetIsStickyPosition();
+    if (mutant->GetIsStickyPosition()) {
+      common.stickyScrollContainerId() = mutant->GetStickyScrollContainerId();
+      common.stickyScrollRangeOuter() = mutant->GetStickyScrollRangeOuter();
+      common.stickyScrollRangeInner() = mutant->GetStickyScrollRangeInner();
+    }
     if (Layer* maskLayer = mutant->GetMaskLayer()) {
       common.maskLayerChild() = Shadow(maskLayer->AsShadowableLayer());
     } else {

@@ -1358,10 +1358,7 @@ let RIL = {
    */
   dial: function dial(options) {
     let onerror = (function onerror(errorMsg) {
-      options.callIndex = -1;
-      options.rilMessageType = "callError";
-      options.errorMsg = errorMsg;
-      this.sendChromeMessage(options);
+      this._sendCallError(-1, errorMsg);
     }).bind(this);
 
     if (this._isEmergencyNumber(options.number)) {
@@ -3652,7 +3649,15 @@ let RIL = {
     this.sendChromeMessage(message);
   },
 
+  _sendCallError: function _sendCallError(callIndex, errorMsg) {
+    this.sendChromeMessage({rilMessageType: "callError",
+                           callIndex: callIndex,
+                           errorMsg: errorMsg});
+  },
+
   _sendDataCallError: function _sendDataCallError(message, errorCode) {
+    // Should not include token for unsolicited response.
+    delete message.rilMessageToken;
     message.rilMessageType = "datacallerror";
     if (errorCode == ERROR_GENERIC_FAILURE) {
       message.errorMsg = RIL_ERROR_TO_GECKO_ERROR[errorCode];
@@ -4979,9 +4984,8 @@ RIL[REQUEST_LAST_CALL_FAIL_CAUSE] = function REQUEST_LAST_CALL_FAIL_CAUSE(length
       this._handleDisconnectedCall(options);
       break;
     default:
-      options.rilMessageType = "callError";
-      options.errorMsg = RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[failCause];
-      this.sendChromeMessage(options);
+      this._sendCallError(options.callIndex,
+                          RIL_CALL_FAILCAUSE_TO_GECKO_CALL_ERROR[failCause]);
       break;
   }
 };
@@ -6149,7 +6153,11 @@ RIL[UNSOLICITED_CDMA_OTA_PROVISION_STATUS] = function UNSOLICITED_CDMA_OTA_PROVI
   this.sendChromeMessage({rilMessageType: "otastatuschange",
                           status: status});
 };
-RIL[UNSOLICITED_CDMA_INFO_REC] = null;
+RIL[UNSOLICITED_CDMA_INFO_REC] = function UNSOLICITED_CDMA_INFO_REC(length) {
+  let record = CdmaPDUHelper.decodeInformationRecord();
+  record.rilMessageType = "cdma-info-rec-received";
+  this.sendChromeMessage(record);
+};
 RIL[UNSOLICITED_OEM_HOOK_RAW] = null;
 RIL[UNSOLICITED_RINGBACK_TONE] = null;
 RIL[UNSOLICITED_RESEND_INCALL_MUTE] = null;
@@ -9254,6 +9262,118 @@ let CdmaPDUHelper = {
     }
 
     return result;
+  },
+
+  /**
+   * Decode information record parcel.
+   */
+  decodeInformationRecord: function cdma_decodeInformationRecord() {
+    let record = {};
+    let numOfRecords = Buf.readUint32();
+
+    let type;
+    for (let i = 0; i < numOfRecords; i++) {
+      type = Buf.readUint32();
+
+      switch (type) {
+        /*
+         * Every type is encaped by ril, except extended display
+         */
+        case PDU_CDMA_INFO_REC_TYPE_DISPLAY:
+          record.display = Buf.readString();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_CALLED_PARTY_NUMBER:
+          record.calledNumber = {};
+          record.calledNumber.number = Buf.readString();
+          record.calledNumber.type = Buf.readUint32();
+          record.calledNumber.plan = Buf.readUint32();
+          record.calledNumber.pi = Buf.readUint32();
+          record.calledNumber.si = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_CALLING_PARTY_NUMBER:
+          record.callingNumber = {};
+          record.callingNumber.number = Buf.readString();
+          record.callingNumber.type = Buf.readUint32();
+          record.callingNumber.plan = Buf.readUint32();
+          record.callingNumber.pi = Buf.readUint32();
+          record.callingNumber.si = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_CONNECTED_NUMBER:
+          record.connectedNumber = {};
+          record.connectedNumber.number = Buf.readString();
+          record.connectedNumber.type = Buf.readUint32();
+          record.connectedNumber.plan = Buf.readUint32();
+          record.connectedNumber.pi = Buf.readUint32();
+          record.connectedNumber.si = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_SIGNAL:
+          record.signal = {};
+          record.signal.present = Buf.readUint32();
+          record.signal.type = Buf.readUint32();
+          record.signal.alertPitch = Buf.readUint32();
+          record.signal.signal = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_REDIRECTING_NUMBER:
+          record.redirect = {};
+          record.redirect.number = Buf.readString();
+          record.redirect.type = Buf.readUint32();
+          record.redirect.plan = Buf.readUint32();
+          record.redirect.pi = Buf.readUint32();
+          record.redirect.si = Buf.readUint32();
+          record.redirect.reason = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_LINE_CONTROL:
+          record.lineControl = {};
+          record.lineControl.polarityIncluded = Buf.readUint32();
+          record.lineControl.toggle = Buf.readUint32();
+          record.lineControl.recerse = Buf.readUint32();
+          record.lineControl.powerDenial = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_EXTENDED_DISPLAY:
+          let length = Buf.readUint32();
+          /*
+           * Extended display is still in format defined in
+           * C.S0005-F v1.0, 3.7.5.16
+           */
+          record.extendedDisplay = {};
+
+          let headerByte = Buf.readUint32();
+          length--;
+          // Based on spec, headerByte must be 0x80 now
+          record.extendedDisplay.indicator = (headerByte >> 7);
+          record.extendedDisplay.type = (headerByte & 0x7F);
+          record.extendedDisplay.records = [];
+
+          while (length > 0) {
+            let display = {};
+
+            display.tag = Buf.readUint32();
+            length--;
+            if (display.tag !== INFO_REC_EXTENDED_DISPLAY_BLANK &&
+                display.tag !== INFO_REC_EXTENDED_DISPLAY_SKIP) {
+              display.content = Buf.readString();
+              length -= (display.content.length + 1);
+            }
+
+            record.extendedDisplay.records.push(display);
+          }
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_T53_CLIR:
+          record.cause = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_T53_AUDIO_CONTROL:
+          record.audioControl = {};
+          record.audioControl.upLink = Buf.readUint32();
+          record.audioControl.downLink = Buf.readUint32();
+          break;
+        case PDU_CDMA_INFO_REC_TYPE_T53_RELEASE:
+          // Fall through
+        default:
+          throw new Error("UNSOLICITED_CDMA_INFO_REC(), Unsupported information record type " + record.type + "\n");
+      }
+    }
+
+    return record;
   }
 };
 

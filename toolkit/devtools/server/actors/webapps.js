@@ -149,6 +149,11 @@ WebappsActor.prototype = {
     let reg = DOMApplicationRegistry;
     let self = this;
 
+    // Clean up the deprecated manifest cache if needed.
+    if (aId in reg._manifestCache) {
+      delete reg._manifestCache[aId];
+    }
+
     aApp.installTime = Date.now();
     aApp.installState = "installed";
     aApp.removable = true;
@@ -167,12 +172,24 @@ WebappsActor.prototype = {
 
       reg._saveApps(function() {
         aApp.manifest = manifest;
+
+        // Needed to evict manifest cache on content side
+        // (has to be dispatched first, otherwise other messages like
+        // Install:Return:OK are going to use old manifest version)
+        reg.broadcastMessage("Webapps:PackageEvent",
+                             { type: "installed",
+                               manifestURL: aApp.manifestURL,
+                               app: aApp,
+                               manifest: manifest
+                             });
+
         reg.broadcastMessage("Webapps:AddApp", { id: aId, app: aApp });
         reg.broadcastMessage("Webapps:Install:Return:OK",
                              { app: aApp,
                                oid: "foo",
                                requestID: "bar"
                              });
+
         delete aApp.manifest;
         self.conn.send({ from: self.actorID,
                          type: "webappsEvent",
@@ -185,7 +202,8 @@ WebappsActor.prototype = {
         }
       });
       // Cleanup by removing the temporary directory.
-      aDir.remove(true);
+      if (aDir.exists())
+        aDir.remove(true);
     });
   },
 
@@ -259,14 +277,7 @@ WebappsActor.prototype = {
       }
     }
     function checkSideloading(aManifest) {
-      let appType = self._getAppType(aManifest.type);
-
-      // In production builds, don't allow installation of certified apps.
-      if (!DOMApplicationRegistry.allowSideloadingCertified &&
-          appType == Ci.nsIPrincipal.APP_STATUS_CERTIFIED) {
-        throw new Error("Installing certified apps is not allowed.");
-      }
-      return appType;
+      return self._getAppType(aManifest.type);
     }
     function writeManifest(aAppType) {
       // Move manifest.webapp to the destination directory.
@@ -312,8 +323,8 @@ WebappsActor.prototype = {
       run: function run() {
         try {
           readManifest().
-            then(checkSideloading).
             then(writeManifest).
+            then(checkSideloading).
             then(readMetadata).
             then(function ({ metadata, appType }) {
               let origin = metadata.origin;
@@ -372,14 +383,6 @@ WebappsActor.prototype = {
             }
 
             let appType = self._getAppType(aManifest.type);
-
-            // In production builds, don't allow installation of certified apps.
-            if (!DOMApplicationRegistry.allowSideloadingCertified &&
-                appType == Ci.nsIPrincipal.APP_STATUS_CERTIFIED) {
-              self._sendError("Installing certified apps is not allowed.", aId);
-              return;
-            }
-
             let origin = "app://" + aId;
 
             // Create a fake app object with the minimum set of properties we need.

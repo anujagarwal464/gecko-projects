@@ -92,7 +92,8 @@ DesktopNotification::PostDesktopNotification()
       return appNotifier->ShowAppNotification(mIconURL, mTitle, mDescription,
                                               true,
                                               manifestUrl,
-                                              mObserver);
+                                              mObserver,
+                                              EmptyString());
     }
   }
 #endif
@@ -160,7 +161,7 @@ DesktopNotification::Init()
 
     // because owner implements nsITabChild, we can assume that it is
     // the one and only TabChild for this docshell.
-    TabChild* child = GetTabChildFrom(GetOwner()->GetDocShell());
+    TabChild* child = TabChild::GetFrom(GetOwner()->GetDocShell());
 
     // Retain a reference so the object isn't deleted without IPDL's knowledge.
     // Corresponding release occurs in DeallocPContentPermissionRequest.

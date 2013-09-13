@@ -980,7 +980,8 @@ nsJSContext::EvaluateString(const nsAString& aScript,
                             JS::Handle<JSObject*> aScopeObject,
                             JS::CompileOptions& aCompileOptions,
                             bool aCoerceToString,
-                            JS::Value* aRetValue)
+                            JS::Value* aRetValue,
+                            void **aOffThreadToken)
 {
   NS_ENSURE_TRUE(mIsInitialized, NS_ERROR_NOT_INITIALIZED);
   if (!mScriptsEnabled) {
@@ -991,7 +992,8 @@ nsJSContext::EvaluateString(const nsAString& aScript,
   nsJSUtils::EvaluateOptions evalOptions;
   evalOptions.setCoerceToString(aCoerceToString);
   return nsJSUtils::EvaluateString(mContext, aScript, aScopeObject,
-                                   aCompileOptions, evalOptions, aRetValue);
+                                   aCompileOptions, evalOptions, aRetValue,
+                                   aOffThreadToken);
 }
 
 #ifdef DEBUG
@@ -1124,7 +1126,7 @@ nsJSContext::GetGlobalObject()
   }
 #endif
 
-  JSClass *c = JS_GetClass(global);
+  const JSClass *c = JS_GetClass(global);
 
   // Whenever we end up with globals that are JSCLASS_IS_DOMJSCLASS
   // and have an nsISupports DOM object, we will need to modify this
@@ -2341,7 +2343,7 @@ nsJSContext::LoadEnd()
 void
 nsJSContext::PokeGC(JS::gcreason::Reason aReason, int aDelay)
 {
-  if (sGCTimer || sShuttingDown) {
+  if (sGCTimer || sInterSliceGCTimer || sShuttingDown) {
     // There's already a timer for GC'ing, just return
     return;
   }

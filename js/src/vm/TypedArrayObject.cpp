@@ -40,6 +40,8 @@
 #include "jsinferinlines.h"
 #include "jsobjinlines.h"
 
+#include "vm/Shape-inl.h"
+
 #if JS_USE_NEW_OBJECT_REPRESENTATION
 // See the comment above OldObjectRepresentationHack.
 #  error "TypedArray support for new object representation unimplemented."
@@ -1336,12 +1338,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject
 
     static const size_t BYTES_PER_ELEMENT = sizeof(ThisType);
 
-    static inline Class *protoClass()
+    static inline const Class *protoClass()
     {
         return &TypedArrayObject::protoClasses[ArrayTypeID()];
     }
 
-    static inline Class *fastClass()
+    static inline const Class *fastClass()
     {
         return &TypedArrayObject::classes[ArrayTypeID()];
     }
@@ -3338,7 +3340,7 @@ TypedArrayObject::copyTypedArrayElement(uint32_t index, MutableHandleValue vp)
  * ArrayBufferObject (base)
  */
 
-Class ArrayBufferObject::protoClass = {
+const Class ArrayBufferObject::protoClass = {
     "ArrayBufferPrototype",
     JSCLASS_HAS_PRIVATE |
     JSCLASS_HAS_RESERVED_SLOTS(ARRAYBUFFER_RESERVED_SLOTS) |
@@ -3352,7 +3354,7 @@ Class ArrayBufferObject::protoClass = {
     JS_ConvertStub
 };
 
-Class ArrayBufferObject::class_ = {
+const Class ArrayBufferObject::class_ = {
     "ArrayBuffer",
     JSCLASS_HAS_PRIVATE |
     JSCLASS_IMPLEMENTS_BARRIERS |
@@ -3451,7 +3453,7 @@ const JSFunctionSpec _typedArray##Object::jsfuncs[] = {                         
   {                                                                                          \
       if (!(obj = CheckedUnwrap(obj)))                                                       \
           return false;                                                                      \
-      Class *clasp = obj->getClass();                                                        \
+      const Class *clasp = obj->getClass();                                                  \
       return (clasp == &TypedArrayObject::classes[TypedArrayObjectTemplate<NativeType>::ArrayTypeID()]); \
   }
 
@@ -3473,7 +3475,7 @@ IMPL_TYPED_ARRAY_JSAPI_CONSTRUCTORS(Float64, double)
       if (!(obj = CheckedUnwrap(obj)))                                                      \
           return NULL;                                                                      \
                                                                                             \
-      Class *clasp = obj->getClass();                                                       \
+      const Class *clasp = obj->getClass();                                                 \
       if (clasp != &TypedArrayObject::classes[TypedArrayObjectTemplate<InternalType>::ArrayTypeID()]) \
           return NULL;                                                                      \
                                                                                             \
@@ -3627,7 +3629,7 @@ IMPL_TYPED_ARRAY_STATICS(Float32Array);
 IMPL_TYPED_ARRAY_STATICS(Float64Array);
 IMPL_TYPED_ARRAY_STATICS(Uint8ClampedArray);
 
-Class TypedArrayObject::classes[ScalarTypeRepresentation::TYPE_MAX] = {
+const Class TypedArrayObject::classes[ScalarTypeRepresentation::TYPE_MAX] = {
     IMPL_TYPED_ARRAY_FAST_CLASS(Int8Array),
     IMPL_TYPED_ARRAY_FAST_CLASS(Uint8Array),
     IMPL_TYPED_ARRAY_FAST_CLASS(Int16Array),
@@ -3639,7 +3641,7 @@ Class TypedArrayObject::classes[ScalarTypeRepresentation::TYPE_MAX] = {
     IMPL_TYPED_ARRAY_FAST_CLASS(Uint8ClampedArray)
 };
 
-Class TypedArrayObject::protoClasses[ScalarTypeRepresentation::TYPE_MAX] = {
+const Class TypedArrayObject::protoClasses[ScalarTypeRepresentation::TYPE_MAX] = {
     IMPL_TYPED_ARRAY_PROTO_CLASS(Int8Array),
     IMPL_TYPED_ARRAY_PROTO_CLASS(Uint8Array),
     IMPL_TYPED_ARRAY_PROTO_CLASS(Int16Array),
@@ -3705,7 +3707,7 @@ InitArrayBufferClass(JSContext *cx)
     return arrayBufferProto;
 }
 
-Class DataViewObject::protoClass = {
+const Class DataViewObject::protoClass = {
     "DataViewPrototype",
     JSCLASS_HAS_PRIVATE |
     JSCLASS_HAS_RESERVED_SLOTS(DataViewObject::RESERVED_SLOTS) |
@@ -3719,7 +3721,7 @@ Class DataViewObject::protoClass = {
     JS_ConvertStub
 };
 
-Class DataViewObject::class_ = {
+const Class DataViewObject::class_ = {
     "DataView",
     JSCLASS_HAS_PRIVATE |
     JSCLASS_IMPLEMENTS_BARRIERS |

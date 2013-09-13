@@ -511,7 +511,7 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
   char name[72];
   if (aTraceKind == JSTRACE_OBJECT) {
     JSObject* obj = static_cast<JSObject*>(aThing);
-    js::Class* clasp = js::GetObjectClass(obj);
+    const js::Class* clasp = js::GetObjectClass(obj);
 
     // Give the subclass a chance to do something
     if (DescribeCustomObjects(obj, clasp, name)) {
@@ -562,7 +562,7 @@ CycleCollectedJSRuntime::NoteGCThingJSChildren(void* aThing,
 }
 
 void
-CycleCollectedJSRuntime::NoteGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+CycleCollectedJSRuntime::NoteGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                                                   nsCycleCollectionTraversalCallback& aCb) const
 {
   MOZ_ASSERT(aClasp);
@@ -724,7 +724,7 @@ CycleCollectedJSRuntime::ContextCallback(JSContext* aContext,
 
   MOZ_ASSERT(JS_GetRuntime(aContext) == self->Runtime());
 
-  return self->OnContext(aContext, aOperation);
+  return self->CustomContextCallback(aContext, aOperation);
 }
 
 struct JsGcTracer : public TraceCallbacks
@@ -1132,10 +1132,4 @@ CycleCollectedJSRuntime::OnGC(JSGCStatus aStatus)
   }
 
   CustomGCCallback(aStatus);
-}
-
-bool
-CycleCollectedJSRuntime::OnContext(JSContext* aCx, unsigned aOperation)
-{
-  return CustomContextCallback(aCx, aOperation);
 }

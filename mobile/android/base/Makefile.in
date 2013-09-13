@@ -76,7 +76,9 @@ FENNEC_JAVA_FILES = \
   DoorHanger.java \
   DoorHangerPopup.java \
   EditBookmarkDialog.java \
-  Favicons.java \
+  favicons/Favicons.java \
+  favicons/LoadFaviconTask.java \
+  favicons/OnFaviconLoadedListener.java \
   FilePickerResultHandler.java \
   FilePickerResultHandlerSync.java \
   FindInPageBar.java \
@@ -1395,7 +1397,7 @@ $(RESOURCES): $(call mkdir_deps,$(RES_DIRS)) $(subst res/,$(srcdir)/resources/,$
 	@echo "creating $@"
 	$(NSINSTALL) $(subst res/,$(srcdir)/resources/,$@) $(dir $@)
 
-res/values/strings.xml: $(call mkdir_deps,$(RES_DIRS))
+res/values/strings.xml: $(call mkdir_deps,res/values)
 	$(MAKE) -C locales
 
 # With multilocale builds, there will be multiple strings.xml files. We need to

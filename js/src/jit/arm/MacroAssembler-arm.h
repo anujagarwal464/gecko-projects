@@ -95,6 +95,8 @@ class MacroAssemblerARM : public Assembler
     void ma_nop();
     void ma_movPatchable(Imm32 imm, Register dest, Assembler::Condition c,
                          RelocStyle rs, Instruction *i = NULL);
+    void ma_movPatchable(ImmPtr imm, Register dest, Assembler::Condition c,
+                         RelocStyle rs, Instruction *i = NULL);
     // These should likely be wrapped up as a set of macros
     // or something like that.  I cannot think of a good reason
     // to explicitly have all of this code.
@@ -507,6 +509,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void mov(ImmWord imm, Register dest) {
         ma_mov(Imm32(imm.value), dest);
     }
+    void mov(ImmPtr imm, Register dest) {
+        mov(ImmWord(uintptr_t(imm.value)), dest);
+    }
     void mov(Register src, Address dest) {
         MOZ_ASSUME_UNREACHABLE("NYI-IC");
     }
@@ -526,6 +531,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         BufferOffset bo = m_buffer.nextOffset();
         addPendingJump(bo, (void*)word.value, Relocation::HARDCODED);
         ma_call((void *) word.value);
+    }
+    void call(ImmPtr imm) {
+        call(ImmWord(uintptr_t(imm.value)));
     }
     void call(IonCode *c) {
         BufferOffset bo = m_buffer.nextOffset();
@@ -626,6 +634,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_movPatchable(Imm32(imm.value), dest, Always, hasMOVWT() ? L_MOVWT : L_LDR);
         return label;
     }
+    CodeOffsetLabel movWithPatch(ImmPtr imm, Register dest) {
+        return movWithPatch(ImmWord(uintptr_t(imm.value)), dest);
+    }
 
     void jump(Label *label) {
         as_b(label);
@@ -720,6 +731,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void unboxDouble(const Address &src, const FloatRegister &dest);
     void unboxString(const ValueOperand &operand, const Register &dest);
     void unboxString(const Address &src, const Register &dest);
+    void unboxObject(const ValueOperand &src, const Register &dest);
     void unboxValue(const ValueOperand &src, AnyRegister dest);
     void unboxPrivate(const ValueOperand &src, Register dest);
 
@@ -819,7 +831,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         branch32(cond, lhs, rhs, label);
     }
 
-    void branchPrivatePtr(Condition cond, const Address &lhs, ImmWord ptr, Label *label) {
+    void branchPrivatePtr(Condition cond, const Address &lhs, ImmPtr ptr, Label *label) {
         branchPtr(cond, lhs, ptr, label);
     }
 
@@ -918,6 +930,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void branchPtr(Condition cond, Register lhs, ImmWord imm, Label *label) {
         branch32(cond, lhs, Imm32(imm.value), label);
     }
+    void branchPtr(Condition cond, Register lhs, ImmPtr imm, Label *label) {
+        branchPtr(cond, lhs, ImmWord(uintptr_t(imm.value)), label);
+    }
     void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
         subPtr(imm, lhs);
         branch32(cond, lhs, Imm32(0), label);
@@ -945,6 +960,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_ldr(addr, secondScratchReg_);
         ma_cmp(secondScratchReg_, ptr);
         ma_b(label, cond);
+    }
+    void branchPtr(Condition cond, Address addr, ImmPtr ptr, Label *label) {
+        branchPtr(cond, addr, ImmWord(uintptr_t(ptr.value)), label);
     }
     void branchPtr(Condition cond, const AbsoluteAddress &addr, const Register &ptr, Label *label) {
         loadPtr(addr, secondScratchReg_); // ma_cmp will use the scratch register.
@@ -1102,6 +1120,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         push(imm);
         adjustFrame(STACK_SLOT_SIZE);
     }
+    void Push(const ImmPtr imm) {
+        Push(ImmWord(uintptr_t(imm.value)));
+    }
     void Push(const ImmGCPtr ptr) {
         push(ptr);
         adjustFrame(STACK_SLOT_SIZE);
@@ -1116,7 +1137,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         framePushed_ += sizeof(word.value);
         return pushWithPatch(word);
     }
-
+    CodeOffsetLabel PushWithPatch(const ImmPtr &imm) {
+        return PushWithPatch(ImmWord(uintptr_t(imm.value)));
+    }
 
     void PushWithPadding(const Register &reg, const Imm32 extraSpace) {
         pushWithPadding(reg, extraSpace);
@@ -1182,6 +1205,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
 
     void movePtr(const Register &src, const Register &dest);
     void movePtr(const ImmWord &imm, const Register &dest);
+    void movePtr(const ImmPtr &imm, const Register &dest);
     void movePtr(const ImmGCPtr &imm, const Register &dest);
 
     void load8SignExtend(const Address &address, const Register &dest);
@@ -1237,6 +1261,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void store32(const Imm32 &src, const BaseIndex &address);
 
     void storePtr(ImmWord imm, const Address &address);
+    void storePtr(ImmPtr imm, const Address &address);
     void storePtr(ImmGCPtr imm, const Address &address);
     void storePtr(Register src, const Address &address);
     void storePtr(const Register &src, const AbsoluteAddress &dest);
@@ -1263,13 +1288,12 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         ma_vstr(VFPRegister(src).singleOverlay(), addr.base, addr.index, scale);
     }
 
-    void clampIntToUint8(Register src, Register dest) {
-        // look at (src >> 8) if it is 0, then src shouldn't be clamped
+    void clampIntToUint8(Register reg) {
+        // look at (reg >> 8) if it is 0, then reg shouldn't be clamped
         // if it is <0, then we want to clamp to 0, otherwise, we wish to clamp to 255
-        as_mov(ScratchRegister, asr(src, 8), SetCond);
-        ma_mov(src, dest);
-        ma_mov(Imm32(0xff), dest, NoSetCond, NotEqual);
-        ma_mov(Imm32(0), dest, NoSetCond, Signed);
+        as_mov(ScratchRegister, asr(reg, 8), SetCond);
+        ma_mov(Imm32(0xff), reg, NoSetCond, NotEqual);
+        ma_mov(Imm32(0), reg, NoSetCond, Signed);
     }
 
     void cmp32(const Register &lhs, const Imm32 &rhs);
@@ -1278,10 +1302,12 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void cmp32(const Operand &lhs, const Register &rhs);
 
     void cmpPtr(const Register &lhs, const ImmWord &rhs);
+    void cmpPtr(const Register &lhs, const ImmPtr &rhs);
     void cmpPtr(const Register &lhs, const Register &rhs);
     void cmpPtr(const Register &lhs, const ImmGCPtr &rhs);
     void cmpPtr(const Address &lhs, const Register &rhs);
     void cmpPtr(const Address &lhs, const ImmWord &rhs);
+    void cmpPtr(const Address &lhs, const ImmPtr &rhs);
 
     void subPtr(Imm32 imm, const Register dest);
     void subPtr(const Address &addr, const Register dest);
@@ -1290,6 +1316,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void addPtr(Imm32 imm, const Address &dest);
     void addPtr(ImmWord imm, const Register dest) {
         addPtr(Imm32(imm.value), dest);
+    }
+    void addPtr(ImmPtr imm, const Register dest) {
+        addPtr(ImmWord(uintptr_t(imm.value)), dest);
     }
 
     void setStackArg(const Register &reg, uint32_t arg);

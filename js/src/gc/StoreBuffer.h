@@ -72,10 +72,10 @@ typedef HashSet<void *, PointerHasher<void *, 3>, SystemAllocPolicy> EdgeSet;
 class StoreBuffer
 {
     /* The size of a single block of store buffer storage space. */
-    const static size_t ChunkSize = 1 << 16; /* 64KiB */
+    static const size_t ChunkSize = 1 << 16; /* 64KiB */
 
     /* The size at which a block is about to overflow. */
-    const static size_t MinAvailableSize = (size_t)(ChunkSize * 1.0 / 8.0);
+    static const size_t MinAvailableSize = (size_t)(ChunkSize * 1.0 / 8.0);
 
     /*
      * This buffer holds only a single type of edge. Using this buffer is more
@@ -120,7 +120,7 @@ class StoreBuffer
         /* Add one item to the buffer. */
         void put(const T &t) {
             mozilla::ReentrancyGuard g(*this);
-            JS_ASSERT(!owner->inParallelSection());
+            JS_ASSERT(CurrentThreadCanAccessRuntime(owner->runtime));
 
             if (!enabled_)
                 return;
@@ -159,7 +159,7 @@ class StoreBuffer
 
         /* Record a removal from the buffer. */
         void unput(const T &v) {
-            JS_ASSERT(!this->owner->inParallelSection());
+            JS_ASSERT(CurrentThreadCanAccessRuntime(this->owner->runtime));
             MonoTypeBuffer<T>::put(v.tagged());
         }
     };
@@ -194,7 +194,7 @@ class StoreBuffer
         template <typename T>
         void put(const T &t) {
             mozilla::ReentrancyGuard g(*this);
-            JS_ASSERT(!owner->inParallelSection());
+            JS_ASSERT(CurrentThreadCanAccessRuntime(owner->runtime));
 
             /* Ensure T is derived from BufferableRef. */
             (void)static_cast<const BufferableRef*>(&t);

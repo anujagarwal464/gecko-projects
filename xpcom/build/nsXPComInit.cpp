@@ -118,7 +118,6 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 #include "base/message_loop.h"
 
 #include "mozilla/ipc/BrowserProcessSubThread.h"
-#include "mozilla/MapsMemoryReporter.h"
 #include "mozilla/AvailableMemoryTracker.h"
 #include "mozilla/ClearOnShutdown.h"
 
@@ -332,11 +331,11 @@ NS_InitXPCOM(nsIServiceManager* *result,
     return NS_InitXPCOM2(result, binDirectory, nullptr);
 }
 
-class ICUReporter MOZ_FINAL : public MemoryReporterBase
+class ICUReporter MOZ_FINAL : public MemoryUniReporter
 {
 public:
     ICUReporter()
-      : MemoryReporterBase("explicit/icu", KIND_HEAP, UNITS_BYTES,
+      : MemoryUniReporter("explicit/icu", KIND_HEAP, UNITS_BYTES,
 "Memory used by ICU, a Unicode and globalization support library.")
     {
 #ifdef DEBUG
@@ -573,8 +572,6 @@ NS_InitXPCOM2(nsIServiceManager* *result,
 #ifdef XP_WIN
     CreateAnonTempFileRemover();
 #endif
-
-    mozilla::MapsMemoryReporter::Init();
 
     // The memory reporter manager is up and running -- register a reporter for
     // ICU's memory usage.

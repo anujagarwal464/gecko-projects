@@ -236,7 +236,7 @@ class GlobalObject : public JSObject
     inline void setCreateArrayFromBuffer(Handle<JSFunction*> fun);
 
   public:
-    static GlobalObject *create(JSContext *cx, Class *clasp);
+    static GlobalObject *create(JSContext *cx, const Class *clasp);
 
     /*
      * Create a constructor function with the specified name and length using
@@ -254,13 +254,13 @@ class GlobalObject : public JSObject
      * complete the minimal initialization to make the returned object safe to
      * touch.
      */
-    JSObject *createBlankPrototype(JSContext *cx, js::Class *clasp);
+    JSObject *createBlankPrototype(JSContext *cx, const js::Class *clasp);
 
     /*
      * Identical to createBlankPrototype, but uses proto as the [[Prototype]]
      * of the returned blank prototype.
      */
-    JSObject *createBlankPrototypeInheriting(JSContext *cx, js::Class *clasp, JSObject &proto);
+    JSObject *createBlankPrototypeInheriting(JSContext *cx, const js::Class *clasp, JSObject &proto);
 
     JSObject *getOrCreateObjectPrototype(JSContext *cx) {
         if (functionObjectClassesInitialized())
@@ -444,9 +444,7 @@ class GlobalObject : public JSObject
             return true;
         if (!cx->runtime()->cloneSelfHostedValue(cx, name, value))
             return false;
-        mozilla::DebugOnly<bool> ok = JS_DefinePropertyById(cx, holder, id, value, NULL, NULL, 0);
-        JS_ASSERT(ok);
-        return true;
+        return JS_DefinePropertyById(cx, holder, id, value, NULL, NULL, 0);
     }
 
     bool setIntrinsicValue(JSContext *cx, PropertyName *name, HandleValue value) {

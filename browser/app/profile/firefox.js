@@ -352,6 +352,10 @@ pref("browser.download.panel.shown", false);
 // enabled has been completed already.
 pref("browser.download.panel.firstSessionCompleted", false);
 
+#ifndef XP_MACOSX
+pref("browser.helperApps.deleteTempFileOnExit", true);
+#endif
+
 // search engines URL
 pref("browser.search.searchEnginesURL",      "https://addons.mozilla.org/%LOCALE%/firefox/search-engines/");
 
@@ -1067,7 +1071,8 @@ pref("devtools.gcli.allowSet", false);
 pref("devtools.commands.dir", "");
 
 // Disable the app manager
-pref("devtools.appmanager.enabled", false);
+pref("devtools.appmanager.enabled", true);
+pref("devtools.appmanager.simulatorInstallPage", "https://addons.mozilla.org/firefox/addon/firefox-os-simulator/");
 
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
@@ -1083,10 +1088,6 @@ pref("devtools.inspector.activeSidebar", "ruleview");
 pref("devtools.inspector.markupPreview", false);
 pref("devtools.inspector.remote", false);
 pref("devtools.inspector.show_pseudo_elements", true);
-
-// Enable the Layout View
-pref("devtools.layoutview.enabled", true);
-pref("devtools.layoutview.open", false);
 
 // Enable the Responsive UI tool
 pref("devtools.responsiveUI.enabled", true);

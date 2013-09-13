@@ -106,33 +106,24 @@ LooseEqualityOp(JSContext *cx, FrameRegs &regs)
     return true;
 }
 
-bool
-js::BoxNonStrictThis(JSContext *cx, MutableHandleValue thisv, bool *modified)
+JSObject *
+js::BoxNonStrictThis(JSContext *cx, HandleValue thisv)
 {
     /*
      * Check for SynthesizeFrame poisoning and fast constructors which
      * didn't check their callee properly.
      */
     JS_ASSERT(!thisv.isMagic());
-    *modified = false;
 
     if (thisv.isNullOrUndefined()) {
         Rooted<GlobalObject*> global(cx, cx->global());
-        JSObject *thisp = JSObject::thisObject(cx, global);
-        if (!thisp)
-            return false;
-        thisv.set(ObjectValue(*thisp));
-        *modified = true;
-        return true;
+        return JSObject::thisObject(cx, global);
     }
 
-    if (!thisv.isObject()) {
-        if (!js_PrimitiveToObject(cx, thisv.address()))
-            return false;
-        *modified = true;
-    }
+    if (thisv.isObject())
+        return &thisv.toObject();
 
-    return true;
+    return PrimitiveToObject(cx, thisv);
 }
 
 /*
@@ -157,20 +148,18 @@ js::BoxNonStrictThis(JSContext *cx, const CallReceiver &call)
      * Check for SynthesizeFrame poisoning and fast constructors which
      * didn't check their callee properly.
      */
-    RootedValue thisv(cx, call.thisv());
-    JS_ASSERT(!thisv.isMagic());
+    JS_ASSERT(!call.thisv().isMagic());
 
 #ifdef DEBUG
     JSFunction *fun = call.callee().is<JSFunction>() ? &call.callee().as<JSFunction>() : NULL;
     JS_ASSERT_IF(fun && fun->isInterpreted(), !fun->strict());
 #endif
 
-    bool modified;
-    if (!BoxNonStrictThis(cx, &thisv, &modified))
+    JSObject *thisObj = BoxNonStrictThis(cx, call.thisv());
+    if (!thisObj)
         return false;
-    if (modified)
-        call.setThis(thisv);
 
+    call.setThis(ObjectValue(*thisObj));
     return true;
 }
 
@@ -179,7 +168,7 @@ js::BoxNonStrictThis(JSContext *cx, const CallReceiver &call)
 static const uint32_t JSSLOT_FOUND_FUNCTION = 0;
 static const uint32_t JSSLOT_SAVED_ID = 1;
 
-static Class js_NoSuchMethodClass = {
+static const Class js_NoSuchMethodClass = {
     "NoSuchMethod",
     JSCLASS_HAS_RESERVED_SLOTS(2) | JSCLASS_IS_ANONYMOUS,
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
@@ -468,7 +457,7 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
         return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, construct);
 
     JSObject &callee = args.callee();
-    Class *clasp = callee.getClass();
+    const Class *clasp = callee.getClass();
 
     /* Invoke non-functions. */
     if (JS_UNLIKELY(clasp != &JSFunction::class_)) {
@@ -572,7 +561,7 @@ js::InvokeConstructor(JSContext *cx, CallArgs args)
         return true;
     }
 
-    Class *clasp = callee.getClass();
+    const Class *clasp = callee.getClass();
     if (!clasp->construct)
         return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, CONSTRUCT);
 
@@ -670,7 +659,7 @@ js::Execute(JSContext *cx, HandleScript script, JSObject &scopeChainArg, Value *
 bool
 js::HasInstance(JSContext *cx, HandleObject obj, HandleValue v, bool *bp)
 {
-    Class *clasp = obj->getClass();
+    const Class *clasp = obj->getClass();
     RootedValue local(cx, v);
     if (clasp->hasInstance)
         return clasp->hasInstance(cx, obj, &local, bp);
@@ -811,9 +800,18 @@ js::SameValue(JSContext *cx, const Value &v1, const Value &v2, bool *same)
 }
 
 JSType
-js::TypeOfValue(JSContext *cx, const Value &vref)
+js::TypeOfObject(JSObject *obj)
 {
-    Value v = vref;
+    if (EmulatesUndefined(obj))
+        return JSTYPE_VOID;
+    if (obj->isCallable())
+        return JSTYPE_FUNCTION;
+    return JSTYPE_OBJECT;
+}
+
+JSType
+js::TypeOfValue(const Value &v)
+{
     if (v.isNumber())
         return JSTYPE_NUMBER;
     if (v.isString())
@@ -822,10 +820,8 @@ js::TypeOfValue(JSContext *cx, const Value &vref)
         return JSTYPE_OBJECT;
     if (v.isUndefined())
         return JSTYPE_VOID;
-    if (v.isObject()) {
-        RootedObject obj(cx, &v.toObject());
-        return baseops::TypeOf(cx, obj);
-    }
+    if (v.isObject())
+        return TypeOfObject(&v.toObject());
     JS_ASSERT(v.isBoolean());
     return JSTYPE_BOOLEAN;
 }
@@ -2273,8 +2269,7 @@ END_CASE(JSOP_TOID)
 BEGIN_CASE(JSOP_TYPEOFEXPR)
 BEGIN_CASE(JSOP_TYPEOF)
 {
-    HandleValue ref = regs.stackHandleAt(-1);
-    regs.sp[-1].setString(TypeOfOperation(cx, ref));
+    regs.sp[-1].setString(TypeOfOperation(regs.sp[-1], rt));
 }
 END_CASE(JSOP_TYPEOF)
 

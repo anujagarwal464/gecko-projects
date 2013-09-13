@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jsprf.h"
@@ -73,8 +71,8 @@ HasBitInInterfacesBitmap(JSObject *obj, uint32_t interfaceBit)
 {
     MOZ_ASSERT(IS_WN_REFLECTOR(obj), "Not a wrapper?");
 
-    XPCWrappedNativeJSClass *clasp =
-      (XPCWrappedNativeJSClass*)js::GetObjectClass(obj);
+    const XPCWrappedNativeJSClass *clasp =
+      (const XPCWrappedNativeJSClass*)js::GetObjectClass(obj);
     return (clasp->interfacesBitmap & (1 << interfaceBit)) != 0;
 }
 
@@ -85,7 +83,7 @@ PointerFinalize(JSFreeOp *fop, JSObject *obj)
     delete popp;
 }
 
-JSClass
+const JSClass
 PointerHolderClass = {
     "Pointer", JSCLASS_HAS_PRIVATE,
     JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
@@ -554,7 +552,7 @@ getWrapper(JSContext *cx,
     // object reflection of a particular interface (ie, |foo.nsIBar|). These
     // JS objects are parented to their wrapper, so we snag the tearoff object
     // along the way (if desired), and then set |obj| to its parent.
-    js::Class* clasp = js::GetObjectClass(obj);
+    const js::Class* clasp = js::GetObjectClass(obj);
     if (clasp == &XPC_WN_Tearoff_JSClass) {
         *tearoff = (XPCWrappedNativeTearOff*) js::GetObjectPrivate(obj);
         obj = js::GetObjectParent(obj);

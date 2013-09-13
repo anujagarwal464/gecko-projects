@@ -25,6 +25,8 @@ const Cr = Components.results;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
+                                  "resource://gre/modules/Downloads.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadStore",
                                   "resource://gre/modules/DownloadStore.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadImport",
@@ -37,6 +39,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
+                                  "resource://gre/modules/PlacesUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
                                   "resource://gre/modules/commonjs/sdk/core/promise.js");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
@@ -45,6 +49,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
+
 XPCOMUtils.defineLazyServiceGetter(this, "gDownloadPlatform",
                                    "@mozilla.org/toolkit/download-platform;1",
                                    "mozIDownloadPlatform");
@@ -57,13 +62,21 @@ XPCOMUtils.defineLazyServiceGetter(this, "gMIMEService",
 XPCOMUtils.defineLazyServiceGetter(this, "gExternalProtocolService",
                                    "@mozilla.org/uriloader/external-protocol-service;1",
                                    "nsIExternalProtocolService");
- 
+
 XPCOMUtils.defineLazyGetter(this, "gParentalControlsService", function() {
   if ("@mozilla.org/parental-controls-service;1" in Cc) {
     return Cc["@mozilla.org/parental-controls-service;1"]
       .createInstance(Ci.nsIParentalControlsService);
   }
   return null;
+});
+
+/**
+ * ArrayBufferView representing the bytes to be written to the "Zone.Identifier"
+ * Alternate Data Stream to mark a file as coming from the Internet zone.
+ */
+XPCOMUtils.defineLazyGetter(this, "gInternetZoneIdentifier", function() {
+  return new TextEncoder().encode("[ZoneTransfer]\r\nZoneId=3\r\n");
 });
 
 const Timer = Components.Constructor("@mozilla.org/timer;1", "nsITimer",
@@ -116,6 +129,7 @@ this.DownloadIntegration = {
   downloadDoneCalled: false,
   _deferTestOpenFile: null,
   _deferTestShowDir: null,
+  _deferTestClearPrivateList: null,
 
   /**
    * Main DownloadStore object for loading and saving the list of persistent
@@ -150,6 +164,9 @@ this.DownloadIntegration = {
   initializePublicDownloadList: function(aList) {
     return Task.spawn(function task_DI_initializePublicDownloadList() {
       if (this.dontLoadList) {
+        // In tests, only register the history observer.  This object is kept
+        // alive by the history service, so we don't keep a reference to it.
+        new DownloadHistoryObserver(aList);
         return;
       }
 
@@ -196,9 +213,12 @@ this.DownloadIntegration = {
 
       }
 
-      // After the list of persisten downloads have been loaded, add
-      // the DownloadAutoSaveView (even if the load operation failed).
+      // After the list of persistent downloads has been loaded, add the
+      // DownloadAutoSaveView and the DownloadHistoryObserver (even if the load
+      // operation failed).  These objects are kept alive by the underlying
+      // DownloadList and by the history service respectively.
       new DownloadAutoSaveView(aList, this._store);
+      new DownloadHistoryObserver(aList);
     }.bind(this));
   },
 
@@ -389,15 +409,46 @@ this.DownloadIntegration = {
    * @rejects JavaScript exception if any of the operations failed.
    */
   downloadDone: function(aDownload) {
-    try {
+    return Task.spawn(function () {
+#ifdef XP_WIN
+      // On Windows, we mark any executable file saved to the NTFS file system
+      // as coming from the Internet security zone.  We do this by writing to
+      // the "Zone.Identifier" Alternate Data Stream directly, because the Save
+      // method of the IAttachmentExecute interface would trigger operations
+      // that may cause the application to hang, or other performance issues.
+      // The stream created in this way is forward-compatible with all the
+      // current and future versions of Windows.
+      if (Services.prefs.getBoolPref("browser.download.saveZoneInformation")) {
+        let file = new FileUtils.File(aDownload.target.path);
+        if (file.isExecutable()) {
+          try {
+            let streamPath = aDownload.target.path + ":Zone.Identifier";
+            let stream = yield OS.File.open(streamPath, { create: true });
+            try {
+              yield stream.write(gInternetZoneIdentifier);
+            } finally {
+              yield stream.close();
+            }
+          } catch (ex) {
+            // If writing to the stream fails, we ignore the error and continue.
+            // The Windows API error 123 (ERROR_INVALID_NAME) is expected to
+            // occur when working on a file system that does not support
+            // Alternate Data Streams, like FAT32, thus we don't report this
+            // specific error.
+            if (!(ex instanceof OS.File.Error) || ex.winLastError != 123) {
+              Cu.reportError(ex);
+            }
+          }
+        }
+      }
+#endif
+
       gDownloadPlatform.downloadDone(NetUtil.newURI(aDownload.source.url),
                                      new FileUtils.File(aDownload.target.path),
-                                     aDownload.contentType, aDownload.source.isPrivate);
+                                     aDownload.contentType,
+                                     aDownload.source.isPrivate);
       this.downloadDoneCalled = true;
-      return Promise.resolve();
-    } catch(ex) {
-      return Promise.reject(ex);
-    }
+    }.bind(this));
   },
 
   /**
@@ -432,12 +483,14 @@ this.DownloadIntegration = {
     let deferred = Task.spawn(function DI_launchDownload_task() {
       let file = new FileUtils.File(aDownload.target.path);
 
-      // Ask for confirmation if the file is executable.  We do this here,
-      // instead of letting the caller handle the prompt separately in the user
-      // interface layer, for two reasons.  The first is because of its security
-      // nature, so that add-ons cannot forget to do this check.  The second is
-      // that the system-level security prompt, if enabled, would be displayed
-      // at launch time in any case.
+#ifndef XP_WIN
+      // Ask for confirmation if the file is executable, except on Windows where
+      // the operating system will show the prompt based on the security zone.
+      // We do this here, instead of letting the caller handle the prompt
+      // separately in the user interface layer, for two reasons.  The first is
+      // because of its security nature, so that add-ons cannot forget to do
+      // this check.  The second is that the system-level security prompt would
+      // be displayed at launch time in any case.
       if (file.isExecutable() && !this.dontOpenFileAndFolder) {
         // We don't anchor the prompt to a specific window intentionally, not
         // only because this is the same behavior as the system-level prompt,
@@ -449,6 +502,7 @@ this.DownloadIntegration = {
           return;
         }
       }
+#endif
 
       // In case of a double extension, like ".tar.gz", we only
       // consider the last one, because the MIME service cannot
@@ -641,6 +695,7 @@ this.DownloadIntegration = {
       Services.obs.addObserver(DownloadObserver, "quit-application-requested", true);
       Services.obs.addObserver(DownloadObserver, "offline-requested", true);
       Services.obs.addObserver(DownloadObserver, "last-pb-context-exiting", true);
+      Services.obs.addObserver(DownloadObserver, "last-pb-context-exited", true);
     }
     return Promise.resolve();
   },
@@ -768,6 +823,22 @@ this.DownloadObserver = {
         this._confirmCancelDownloads(aSubject, downloadsCount, p,
                                      p.ON_LEAVE_PRIVATE_BROWSING);
         break;
+      case "last-pb-context-exited":
+        let deferred = Task.spawn(function() {
+          let list = yield Downloads.getList(Downloads.PRIVATE);
+          let downloads = yield list.getAll();
+
+          for (let download of downloads) {
+            list.remove(download);
+            download.finalize(true).then(null, Cu.reportError);
+          }
+        });
+        // Handle test mode
+        if (DownloadIntegration.testMode) {
+          deferred.then((value) => { DownloadIntegration._deferTestClearPrivateList.resolve("success"); },
+                        (error) => { DownloadIntegration._deferTestClearPrivateList.reject(error); });
+        }
+        break;
     }
   },
 
@@ -779,12 +850,67 @@ this.DownloadObserver = {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+//// DownloadHistoryObserver
+
+/**
+ * Registers a Places observer so that operations on download history are
+ * reflected on the provided list of downloads.
+ *
+ * You do not need to keep a reference to this object in order to keep it alive,
+ * because the history service already keeps a strong reference to it.
+ *
+ * @param aList
+ *        DownloadList object linked to this observer.
+ */
+function DownloadHistoryObserver(aList)
+{
+  this._list = aList;
+  PlacesUtils.history.addObserver(this, false);
+}
+
+DownloadHistoryObserver.prototype = {
+  /**
+   * DownloadList object linked to this observer.
+   */
+  _list: null,
+
+  ////////////////////////////////////////////////////////////////////////////
+  //// nsISupports
+
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsINavHistoryObserver]),
+
+  ////////////////////////////////////////////////////////////////////////////
+  //// nsINavHistoryObserver
+
+  onDeleteURI: function DL_onDeleteURI(aURI, aGUID) {
+    this._list.removeFinished(download => aURI.equals(NetUtil.newURI(
+                                                      download.source.url)));
+  },
+
+  onClearHistory: function DL_onClearHistory() {
+    this._list.removeFinished();
+  },
+
+  onTitleChanged: function () {},
+  onBeginUpdateBatch: function () {},
+  onEndUpdateBatch: function () {},
+  onVisit: function () {},
+  onPageChanged: function () {},
+  onDeleteVisits: function () {},
+};
+
+////////////////////////////////////////////////////////////////////////////////
 //// DownloadAutoSaveView
 
 /**
  * This view can be added to a DownloadList object to trigger a save operation
  * in the given DownloadStore object when a relevant change occurs.
  *
+ * You do not need to keep a reference to this object in order to keep it alive,
+ * because the DownloadList object already keeps a strong reference to it.
+ *
+ * @param aList
+ *        The DownloadList object on which the view should be registered.
  * @param aStore
  *        The DownloadStore object used for saving.
  */

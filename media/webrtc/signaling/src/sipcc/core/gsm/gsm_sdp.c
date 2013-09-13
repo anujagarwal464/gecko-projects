@@ -4,6 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <errno.h>
+
 #include "cpr_in.h"
 #include "cpr_rand.h"
 #include "cpr_stdlib.h"
@@ -100,6 +102,39 @@ gsmsdp_add_remote_track(uint16_t idx, uint16_t track,
 extern cc_media_cap_table_t g_media_table;
 
 extern boolean g_disable_mass_reg_debug_print;
+
+/*
+ * gsmsdp_requires_two_dc_components
+ *
+ * returns TRUE if we are talking to Firefox and it's
+ * a version that required two components for datachannel.
+ */
+static boolean gsmsdp_requires_two_dc_components(void *sdp) {
+#define FIRST_VERSION_TO_USE_ONE_DC_COMPONENT 26
+    const char *owner_name = sdp_get_owner_username(sdp);
+    unsigned long remote_version;
+    char* strtoul_end;
+
+    if (strncmp(owner_name, SIPSDP_ORIGIN_APPNAME,
+        strlen(SIPSDP_ORIGIN_APPNAME)) == 0) {
+        /* This means we are talking to firefox, now read the major version */
+        errno = 0;
+        remote_version = strtoul(owner_name + strlen(SIPSDP_ORIGIN_APPNAME),
+            &strtoul_end, 10);
+        if (errno ||
+            strtoul_end == (owner_name + strlen(SIPSDP_ORIGIN_APPNAME)) ||
+            !remote_version) {
+            /* Unable to parse remote, must not be earlier firefox */
+            return FALSE;
+        }
+
+        return (remote_version < FIRST_VERSION_TO_USE_ONE_DC_COMPONENT) ?
+            TRUE : FALSE;
+    }
+
+    return FALSE;
+}
+
 /**
  * A wraper function to return the media capability supported by
  * the platform and session. This is a convient place if policy
@@ -4507,21 +4542,21 @@ gsmsdp_add_rtcp_fb (int level, sdp_t *sdp_p,
 
             /* Add requested a=rtcp-fb:nack attributes */
             for (j = 0; j < SDP_MAX_RTCP_FB_NACK; j++) {
-                if (types & SDP_RTCP_FB_NACK_TO_BITMAP(j)) {
+                if (types & sdp_rtcp_fb_nack_to_bitmap(j)) {
                     gsmsdp_set_rtcp_fb_nack_attribute(level, sdp_p, pt, j);
                 }
             }
 
             /* Add requested a=rtcp-fb:ack attributes */
             for (j = 0; j < SDP_MAX_RTCP_FB_ACK; j++) {
-                if (types & SDP_RTCP_FB_ACK_TO_BITMAP(j)) {
+                if (types & sdp_rtcp_fb_ack_to_bitmap(j)) {
                     gsmsdp_set_rtcp_fb_nack_attribute(level, sdp_p, pt, j);
                 }
             }
 
             /* Add requested a=rtcp-fb:ccm attributes */
             for (j = 0; j < SDP_MAX_RTCP_FB_CCM; j++) {
-                if (types & SDP_RTCP_FB_CCM_TO_BITMAP(j)) {
+                if (types & sdp_rtcp_fb_ccm_to_bitmap(j)) {
                     gsmsdp_set_rtcp_fb_ccm_attribute(level, sdp_p, pt, j);
                 }
             }
@@ -4591,7 +4626,7 @@ gsmsdp_negotiate_rtcp_fb (cc_sdp_t *cc_sdp_p,
             nack_type = sdp_attr_get_rtcp_fb_nack(cc_sdp_p->dest_sdp,
                                                   level, remote_pt, i);
             if (nack_type >= 0 && nack_type < SDP_MAX_RTCP_FB_NACK) {
-                fb_types |= SDP_RTCP_FB_NACK_TO_BITMAP(nack_type);
+                fb_types |= sdp_rtcp_fb_nack_to_bitmap(nack_type);
             }
             i++;
         } while (nack_type != SDP_RTCP_FB_NACK_NOT_FOUND);
@@ -4602,7 +4637,7 @@ gsmsdp_negotiate_rtcp_fb (cc_sdp_t *cc_sdp_p,
             ack_type = sdp_attr_get_rtcp_fb_ack(cc_sdp_p->dest_sdp,
                                                 level, remote_pt, i);
             if (ack_type >= 0 && ack_type < SDP_MAX_RTCP_FB_ACK) {
-                fb_types |= SDP_RTCP_FB_ACK_TO_BITMAP(ack_type);
+                fb_types |= sdp_rtcp_fb_ack_to_bitmap(ack_type);
             }
             i++;
         } while (ack_type != SDP_RTCP_FB_ACK_NOT_FOUND);
@@ -4613,7 +4648,7 @@ gsmsdp_negotiate_rtcp_fb (cc_sdp_t *cc_sdp_p,
             ccm_type = sdp_attr_get_rtcp_fb_ccm(cc_sdp_p->dest_sdp,
                                                 level, remote_pt, i);
             if (ccm_type >= 0 && ccm_type < SDP_MAX_RTCP_FB_CCM) {
-                fb_types |= SDP_RTCP_FB_CCM_TO_BITMAP(ccm_type);
+                fb_types |= sdp_rtcp_fb_ccm_to_bitmap(ccm_type);
             }
             i++;
         } while (ccm_type != SDP_RTCP_FB_CCM_NOT_FOUND);
@@ -4624,9 +4659,9 @@ gsmsdp_negotiate_rtcp_fb (cc_sdp_t *cc_sdp_p,
         switch (codec) {
             case RTP_VP8:
                 fb_types &=
-                  SDP_RTCP_FB_NACK_TO_BITMAP(SDP_RTCP_FB_NACK_BASIC) |
-                  SDP_RTCP_FB_NACK_TO_BITMAP(SDP_RTCP_FB_NACK_PLI) |
-                  SDP_RTCP_FB_CCM_TO_BITMAP(SDP_RTCP_FB_CCM_FIR);
+                  sdp_rtcp_fb_nack_to_bitmap(SDP_RTCP_FB_NACK_BASIC) |
+                  sdp_rtcp_fb_nack_to_bitmap(SDP_RTCP_FB_NACK_PLI) |
+                  sdp_rtcp_fb_ccm_to_bitmap(SDP_RTCP_FB_CCM_FIR);
                 break;
             default:
                 fb_types = 0;
@@ -5554,9 +5589,9 @@ gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
           /* Add supported rtcp-fb types */
           if (media_cap->type == SDP_MEDIA_VIDEO) {
               gsmsdp_add_rtcp_fb (level, dcb_p->sdp->src_sdp, RTP_VP8,
-                  SDP_RTCP_FB_NACK_TO_BITMAP(SDP_RTCP_FB_NACK_BASIC) |
-                  SDP_RTCP_FB_NACK_TO_BITMAP(SDP_RTCP_FB_NACK_PLI) |
-                  SDP_RTCP_FB_CCM_TO_BITMAP(SDP_RTCP_FB_CCM_FIR));
+                  sdp_rtcp_fb_nack_to_bitmap(SDP_RTCP_FB_NACK_BASIC) |
+                  sdp_rtcp_fb_nack_to_bitmap(SDP_RTCP_FB_NACK_PLI) |
+                  sdp_rtcp_fb_ccm_to_bitmap(SDP_RTCP_FB_CCM_FIR));
           }
 
           /* setup and connection attributes */
@@ -6952,6 +6987,19 @@ gsmsdp_install_peer_ice_attributes(fsm_fcb_t *fcb_p)
 
         if (vcm_res) {
           return (CC_CAUSE_SETTING_ICE_SESSION_PARAMETERS_FAILED);
+        }
+      }
+
+      /* If this is Datachannel and we are talking to anything other
+         than an older version of Firefox then disable the second component
+         of the ICE stream */
+      if (media->type == DATA &&
+          !gsmsdp_requires_two_dc_components(sdp_p->dest_sdp)) {
+        vcm_res = vcmDisableRtcpComponent(dcb_p->peerconnection,
+          media->level);
+
+        if (vcm_res) {
+          return CC_CAUSE_SETTING_ICE_SESSION_PARAMETERS_FAILED;
         }
       }
 

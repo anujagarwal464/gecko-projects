@@ -25,7 +25,7 @@ typedef JSThreadSafeNative ThreadSafeNative;
 class JSFunction : public JSObject
 {
   public:
-    static js::Class class_;
+    static const js::Class class_;
 
     enum Flags {
         INTERPRETED      = 0x0001,  /* function has a JSScript and environment. */
@@ -277,7 +277,23 @@ class JSFunction : public JSObject
         return u.i.s.script_;
     }
 
-    inline JSScript *existingScript();
+    JSScript *existingScript() {
+        JS_ASSERT(isInterpreted());
+        if (isInterpretedLazy()) {
+            js::LazyScript *lazy = lazyScript();
+            JSScript *script = lazy->maybeScript();
+            JS_ASSERT(script);
+
+            if (shadowZone()->needsBarrier())
+                js::LazyScript::writeBarrierPre(lazy);
+
+            flags &= ~INTERPRETED_LAZY;
+            flags |= INTERPRETED;
+            initScript(script);
+        }
+        JS_ASSERT(hasScript());
+        return u.i.s.script_;
+    }
 
     JSScript *nonLazyScript() const {
         JS_ASSERT(hasScript());
@@ -316,8 +332,15 @@ class JSFunction : public JSObject
 
     bool isStarGenerator() const { return generatorKind() == js::StarGenerator; }
 
-    inline void setScript(JSScript *script_);
-    inline void initScript(JSScript *script_);
+    void setScript(JSScript *script_) {
+        JS_ASSERT(isInterpreted());
+        mutableScript() = script_;
+    }
+
+    void initScript(JSScript *script_) {
+        JS_ASSERT(isInterpreted());
+        mutableScript().init(script_);
+    }
 
     void initLazyScript(js::LazyScript *lazy) {
         JS_ASSERT(isInterpreted());
@@ -559,7 +582,7 @@ CloneFunctionAndScript(JSContext *cx, HandleObject enclosingScope, HandleFunctio
  * is what was called.
  */
 extern void
-ReportIncompatibleMethod(JSContext *cx, CallReceiver call, Class *clasp);
+ReportIncompatibleMethod(JSContext *cx, CallReceiver call, const Class *clasp);
 
 /*
  * Report an error that call.thisv is not an acceptable this for the callee

@@ -19,6 +19,9 @@
 #include "mozilla/gfx/2D.h"             // for DataSourceSurface
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
 #include "mozilla/layers/CompositorOGL.h"  // for CompositorOGL
+#ifdef MOZ_WIDGET_GONK
+# include "GrallocImages.h"  // for GrallocImage
+#endif
 #include "mozilla/layers/ISurfaceAllocator.h"
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "mozilla/layers/GrallocTextureHost.h"
@@ -28,6 +31,7 @@
 #ifdef XP_MACOSX
 #include "SharedSurfaceIO.h"
 #endif
+#include "GeckoProfiler.h"
 
 using namespace mozilla::gl;
 using namespace mozilla::gfx;
@@ -36,6 +40,16 @@ namespace mozilla {
 namespace layers {
 
 class Compositor; 
+
+TemporaryRef<CompositableQuirks>
+CreateCompositableQuirksOGL()
+{
+#ifdef MOZ_WIDGET_GONK
+  return new CompositableQuirksGonkOGL();
+#else
+  return nullptr;
+#endif
+}
 
 TemporaryRef<DeprecatedTextureHost>
 CreateDeprecatedTextureHostOGL(SurfaceDescriptorType aDescriptorType,
@@ -150,6 +164,38 @@ WrapMode(gl::GLContext *aGl, bool aAllowRepeat)
     return LOCAL_GL_REPEAT;
   }
   return LOCAL_GL_CLAMP_TO_EDGE;
+}
+
+CompositableQuirksGonkOGL::CompositableQuirksGonkOGL()
+ : mTexture(0)
+{
+}
+CompositableQuirksGonkOGL::~CompositableQuirksGonkOGL()
+{
+  if (mTexture) {
+    gl()->MakeCurrent();
+    gl()->fDeleteTextures(1, &mTexture);
+  }
+}
+
+gl::GLContext*
+CompositableQuirksGonkOGL::gl() const
+{
+  return mCompositor ? mCompositor->gl() : nullptr;
+}
+
+void CompositableQuirksGonkOGL::SetCompositor(Compositor* aCompositor)
+{
+  mCompositor = static_cast<CompositorOGL*>(aCompositor);
+}
+
+GLuint CompositableQuirksGonkOGL::GetTexture()
+{
+  if (!mTexture) {
+    gl()->MakeCurrent();
+    gl()->fGenTextures(1, &mTexture);
+  }
+  return mTexture;
 }
 
 bool
@@ -951,6 +997,8 @@ SurfaceFormatForAndroidPixelFormat(android::PixelFormat aFormat,
   case HAL_PIXEL_FORMAT_YCbCr_422_SP:
   case HAL_PIXEL_FORMAT_YCrCb_420_SP:
   case HAL_PIXEL_FORMAT_YCbCr_422_I:
+  case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED:
+  case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS:
   case HAL_PIXEL_FORMAT_YV12:
     return FORMAT_B8G8R8A8; // yup, use FORMAT_B8G8R8A8 even though it's a YUV texture. This is an external texture.
   default:
@@ -976,6 +1024,8 @@ TextureTargetForAndroidPixelFormat(android::PixelFormat aFormat)
   case HAL_PIXEL_FORMAT_YCbCr_422_SP:
   case HAL_PIXEL_FORMAT_YCrCb_420_SP:
   case HAL_PIXEL_FORMAT_YCbCr_422_I:
+  case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED:
+  case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS:
   case HAL_PIXEL_FORMAT_YV12:
     return LOCAL_GL_TEXTURE_EXTERNAL;
   case android::PIXEL_FORMAT_RGBA_8888:
@@ -1073,13 +1123,21 @@ GrallocDeprecatedTextureHostOGL::SwapTexturesImpl(const SurfaceDescriptor& aImag
                                                mIsRBSwapped);
 
   mTextureTarget = TextureTargetForAndroidPixelFormat(mGraphicBuffer->getPixelFormat());
-
+  mQuirks->SetCompositor(mCompositor);
+  GLuint tex = static_cast<CompositableQuirksGonkOGL*>(mQuirks.get())->GetTexture();
+  // delete old EGLImage
   DeleteTextures();
+#if 1
+  gl()->MakeCurrent();
+  gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+  gl()->fBindTexture(mTextureTarget, tex);
+  // create new EGLImage
+  // create EGLImage during buffer swap could reduce the graphic driver's task
+  // during rendering.
+  mEGLImage = gl()->CreateEGLImageForNativeBuffer(mGraphicBuffer->getNativeBuffer());
+  gl()->fEGLImageTargetTexture2D(mTextureTarget, mEGLImage);
+#endif
 
-  // only done for hacky fix in gecko 23 for bug 862324.
-  // Doing this in SetBuffer is not enough, as DeprecatedImageHostBuffered::SwapTextures can
-  // change the value of *mBuffer without calling SetBuffer again.
-  RegisterDeprecatedTextureHostAtGrallocBufferActor(this, aImage);
 }
 
 gl::GLContext*
@@ -1090,6 +1148,7 @@ GrallocDeprecatedTextureHostOGL::gl() const
 
 void GrallocDeprecatedTextureHostOGL::BindTexture(GLenum aTextureUnit)
 {
+  PROFILER_LABEL("Gralloc", "BindTexture");
   /*
    * The job of this function is to ensure that the texture is tied to the
    * android::GraphicBuffer, so that texturing will source the GraphicBuffer.
@@ -1104,14 +1163,11 @@ void GrallocDeprecatedTextureHostOGL::BindTexture(GLenum aTextureUnit)
   MOZ_ASSERT(gl());
   gl()->MakeCurrent();
 
-  GLuint tex = mCompositor->GetTemporaryTexture(aTextureUnit);
+  mQuirks->SetCompositor(mCompositor);
+  GLuint tex = static_cast<CompositableQuirksGonkOGL*>(mQuirks.get())->GetTexture();
 
   gl()->fActiveTexture(aTextureUnit);
   gl()->fBindTexture(mTextureTarget, tex);
-  if (!mEGLImage) {
-    mEGLImage = gl()->CreateEGLImageForNativeBuffer(mGraphicBuffer->getNativeBuffer());
-  }
-  gl()->fEGLImageTargetTexture2D(mTextureTarget, mEGLImage);
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
 }
 
@@ -1244,7 +1300,8 @@ already_AddRefed<gfxImageSurface>
 GrallocDeprecatedTextureHostOGL::GetAsSurface() {
   gl()->MakeCurrent();
 
-  GLuint tex = mCompositor->GetTemporaryTexture(LOCAL_GL_TEXTURE0);
+  mQuirks->SetCompositor(mCompositor);
+  GLuint tex = static_cast<CompositableQuirksGonkOGL*>(mQuirks.get())->GetTexture();
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
   gl()->fBindTexture(mTextureTarget, tex);
   if (!mEGLImage) {

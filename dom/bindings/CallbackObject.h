@@ -19,11 +19,11 @@
 
 #include "nsISupports.h"
 #include "nsISupportsImpl.h"
-#include "nsCycleCollectionHoldDrop.h"
 #include "nsCycleCollectionParticipant.h"
 #include "jswrapper.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Util.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
@@ -103,6 +103,9 @@ private:
     mCallback = aCallback;
     mozilla::HoldJSObjects(this);
   }
+
+  CallbackObject(const CallbackObject&) MOZ_DELETE;
+  CallbackObject& operator =(const CallbackObject&) MOZ_DELETE;
 
 protected:
   void DropCallback()

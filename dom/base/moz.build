@@ -57,6 +57,7 @@ EXPORTS.mozilla.dom += [
     'DOMRequest.h',
     'MessageChannel.h',
     'MessagePort.h',
+    'MessagePortList.h',
     'ScreenOrientation.h',
     'StructuredCloneTags.h',
     'URL.h',
@@ -64,6 +65,7 @@ EXPORTS.mozilla.dom += [
 
 CPP_SOURCES += [
     'BarProps.cpp',
+    'CompositionStringSynthesizer.cpp',
     'Crypto.cpp',
     'DOMCursor.cpp',
     'DOMError.cpp',
@@ -72,6 +74,7 @@ CPP_SOURCES += [
     'Navigator.cpp',
     'MessageChannel.cpp',
     'MessagePort.cpp',
+    'MessagePortList.cpp',
     'nsContentPermissionHelper.cpp',
     'nsDOMClassInfo.cpp',
     'nsDOMNavigationTiming.cpp',

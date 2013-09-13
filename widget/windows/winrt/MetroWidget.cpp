@@ -31,6 +31,7 @@
 #endif
 #include "UIABridgePrivate.h"
 #include "WinMouseScrollHandler.h"
+#include "InputData.h"
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -978,6 +979,39 @@ CompositorParent* MetroWidget::NewCompositorParent(int aSurfaceWidth, int aSurfa
   return compositor;
 }
 
+void
+MetroWidget::ApzContentConsumingTouch()
+{
+  LogFunction();
+  if (!MetroWidget::sAPZC) {
+    return;
+  }
+  MetroWidget::sAPZC->ContentReceivedTouch(mRootLayerTreeId, true);
+}
+
+void
+MetroWidget::ApzContentIgnoringTouch()
+{
+  LogFunction();
+  if (!MetroWidget::sAPZC) {
+    return;
+  }
+  MetroWidget::sAPZC->ContentReceivedTouch(mRootLayerTreeId, false);
+}
+
+nsEventStatus
+MetroWidget::ApzReceiveInputEvent(nsTouchEvent* aEvent)
+{
+  MOZ_ASSERT(aEvent);
+
+  if (!MetroWidget::sAPZC) {
+    return nsEventStatus_eIgnore;
+  }
+
+  MultiTouchInput inputData(*aEvent);
+  return MetroWidget::sAPZC->ReceiveInputEvent(inputData);
+}
+
 LayerManager*
 MetroWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
                              LayersBackend aBackendHint,
@@ -1251,7 +1285,6 @@ MetroWidget::CSSIntPointToLayoutDeviceIntPoint(const CSSIntPoint &aCSSPoint)
 
 float MetroWidget::GetDPI()
 {
-  LogFunction();
   if (!mView) {
     return 96.0;
   }

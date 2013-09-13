@@ -65,9 +65,6 @@ DOMCI_CLASS(CSSSupportsRule)
 DOMCI_CLASS(SVGLength)
 DOMCI_CLASS(SVGNumber)
 
-// Canvas
-DOMCI_CLASS(MozCanvasPrintState)
-
 // WindowUtils
 DOMCI_CLASS(WindowUtils)
 
@@ -88,7 +85,6 @@ DOMCI_CLASS(File)
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
 
-DOMCI_CLASS(MozPowerManager)
 DOMCI_CLASS(MozWakeLock)
 
 DOMCI_CLASS(MozMobileMessageManager)

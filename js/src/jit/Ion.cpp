@@ -53,9 +53,6 @@
 #include "jscompartmentinlines.h"
 #include "jsgcinlines.h"
 #include "jsinferinlines.h"
-#include "jsscriptinlines.h"
-
-#include "vm/Shape-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -230,15 +227,19 @@ IonRuntime::initialize(JSContext *cx)
     if (!functionWrappers_ || !functionWrappers_->init())
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting exception tail stub");
     exceptionTail_ = generateExceptionTailStub(cx);
     if (!exceptionTail_)
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting bailout tail stub");
     bailoutTail_ = generateBailoutTailStub(cx);
     if (!bailoutTail_)
         return false;
 
     if (cx->runtime()->jitSupportsFloatingPoint) {
+        IonSpew(IonSpew_Codegen, "# Emitting bailout tables");
+
         // Initialize some Ion-only stubs that require floating-point support.
         if (!bailoutTables_.reserve(FrameSizeClass::ClassLimit().classId()))
             return false;
@@ -253,41 +254,50 @@ IonRuntime::initialize(JSContext *cx)
                 return false;
         }
 
+        IonSpew(IonSpew_Codegen, "# Emitting bailout handler");
         bailoutHandler_ = generateBailoutHandler(cx);
         if (!bailoutHandler_)
             return false;
 
+        IonSpew(IonSpew_Codegen, "# Emitting invalidator");
         invalidator_ = generateInvalidator(cx);
         if (!invalidator_)
             return false;
     }
 
+    IonSpew(IonSpew_Codegen, "# Emitting sequential arguments rectifier");
     argumentsRectifier_ = generateArgumentsRectifier(cx, SequentialExecution, &argumentsRectifierReturnAddr_);
     if (!argumentsRectifier_)
         return false;
 
 #ifdef JS_THREADSAFE
+    IonSpew(IonSpew_Codegen, "# Emitting parallel arguments rectifier");
     parallelArgumentsRectifier_ = generateArgumentsRectifier(cx, ParallelExecution, NULL);
     if (!parallelArgumentsRectifier_)
         return false;
 #endif
 
+    IonSpew(IonSpew_Codegen, "# Emitting EnterJIT sequence");
     enterJIT_ = generateEnterJIT(cx, EnterJitOptimized);
     if (!enterJIT_)
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting EnterBaselineJIT sequence");
     enterBaselineJIT_ = generateEnterJIT(cx, EnterJitBaseline);
     if (!enterBaselineJIT_)
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting Pre Barrier for Value");
     valuePreBarrier_ = generatePreBarrier(cx, MIRType_Value);
     if (!valuePreBarrier_)
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting Pre Barrier for Shape");
     shapePreBarrier_ = generatePreBarrier(cx, MIRType_Shape);
     if (!shapePreBarrier_)
         return false;
 
+    IonSpew(IonSpew_Codegen, "# Emitting VM function wrappers");
     for (VMFunction *fun = VMFunction::functions; fun; fun = fun->next) {
         if (!generateVMWrapper(cx, *fun))
             return false;
@@ -1307,7 +1317,7 @@ OptimizeMIR(MIRGenerator *mir)
 
     if (js_IonOptions.rangeAnalysis) {
         RangeAnalysis r(mir, graph);
-        if (!r.addBetaNobes())
+        if (!r.addBetaNodes())
             return false;
         IonSpewPass("Beta");
         AssertExtendedGraphCoherency(graph);
@@ -1323,7 +1333,7 @@ OptimizeMIR(MIRGenerator *mir)
         if (mir->shouldCancel("Range Analysis"))
             return false;
 
-        if (!r.removeBetaNobes())
+        if (!r.removeBetaNodes())
             return false;
         IonSpewPass("De-Beta");
         AssertExtendedGraphCoherency(graph);
@@ -1598,12 +1608,6 @@ IonCompile(JSContext *cx, JSScript *script,
 
     if (!script->ensureRanAnalysis(cx))
         return AbortReason_Alloc;
-
-    // Try-finally is not yet supported.
-    if (script->analysis()->hasTryFinally()) {
-        IonSpew(IonSpew_Abort, "Has try-finally.");
-        return AbortReason_Disable;
-    }
 
     LifoAlloc *alloc = cx->new_<LifoAlloc>(BUILDER_LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
     if (!alloc)

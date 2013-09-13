@@ -106,7 +106,7 @@ private:
                   nsCycleCollectionTraversalCallback& aCb) const;
 
   virtual bool
-  DescribeCustomObjects(JSObject* aObject, js::Class* aClasp,
+  DescribeCustomObjects(JSObject* aObject, const js::Class* aClasp,
                         char (&aName)[72]) const
   {
     return false; // We did nothing.
@@ -117,11 +117,11 @@ private:
                         nsCycleCollectionTraversalCallback& aCb) const;
 
   void
-  NoteGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+  NoteGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                            nsCycleCollectionTraversalCallback& aCb) const;
 
   virtual bool
-  NoteCustomGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+  NoteCustomGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                                  nsCycleCollectionTraversalCallback& aCb) const
   {
     return false; // We did nothing.
@@ -162,7 +162,6 @@ private:
   void FinalizeDeferredThings(DeferredFinalizeType aType);
 
   void OnGC(JSGCStatus aStatus);
-  bool OnContext(JSContext* aCx, unsigned aOperation);
 
 public:
   void AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
