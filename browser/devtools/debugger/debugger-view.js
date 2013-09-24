@@ -36,6 +36,9 @@ const DEFAULT_EDITOR_CONFIG = {
   showOverviewRuler: true
 };
 
+//For telemetry
+Cu.import("resource://gre/modules/Services.jsm")
+
 /**
  * Object defining the debugger view components.
  */
@@ -240,26 +243,19 @@ let DebuggerView = {
     // Avoid setting the editor mode for very large files.
     if (aTextContent.length >= SOURCE_SYNTAX_HIGHLIGHT_MAX_FILE_SIZE) {
       this.editor.setMode(SourceEditor.MODES.TEXT);
-      return;
     }
-
-    if (aContentType) {
-      if (/javascript/.test(aContentType)) {
-        this.editor.setMode(SourceEditor.MODES.JAVASCRIPT);
-      } else {
-        this.editor.setMode(SourceEditor.MODES.HTML);
-      }
-    } else if (aTextContent.match(/^\s*</)) {
-      // Use HTML mode for files in which the first non whitespace character is
-      // &lt;, regardless of extension.
+    // Use JS mode for files with .js and .jsm extensions.
+    else if (SourceUtils.isJavaScript(aUrl, aContentType)) {
+      this.editor.setMode(SourceEditor.MODES.JAVASCRIPT);
+    }
+    // Use HTML mode for files in which the first non whitespace character is
+    // &lt;, regardless of extension.
+    else if (aTextContent.match(/^\s*</)) {
       this.editor.setMode(SourceEditor.MODES.HTML);
-    } else {
-      // Use JS mode for files with .js and .jsm extensions.
-      if (/\.jsm?$/.test(SourceUtils.trimUrlQuery(aUrl))) {
-        this.editor.setMode(SourceEditor.MODES.JAVASCRIPT);
-      } else {
-        this.editor.setMode(SourceEditor.MODES.TEXT);
-      }
+    }
+    // Unknown languange, use plain text.
+    else {
+      this.editor.setMode(SourceEditor.MODES.TEXT);
     }
   },
 
@@ -283,6 +279,13 @@ let DebuggerView = {
     if (this._editorSource.url == aSource.url && !aFlags.force) {
       return this._editorSource.promise;
     }
+    let transportType = DebuggerController.client.localTransport
+      ? "_LOCAL"
+      : "_REMOTE";
+    //Telemetry probe
+    let histogramId = "DEVTOOLS_DEBUGGER_DISPLAY_SOURCE" + transportType + "_MS";
+    let histogram = Services.telemetry.getHistogramById(histogramId);
+    let startTime = +new Date();
 
     let deferred = promise.defer();
 
@@ -302,6 +305,8 @@ let DebuggerView = {
       // Synchronize any other components with the currently displayed source.
       DebuggerView.Sources.selectedValue = aSource.url;
       DebuggerController.Breakpoints.updateEditorBreakpoints();
+
+      histogram.add(+new Date() - startTime);
 
       // Resolve and notify that a source file was shown.
       window.emit(EVENTS.SOURCE_SHOWN, aSource);

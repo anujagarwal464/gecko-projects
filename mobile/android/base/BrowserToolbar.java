@@ -1053,7 +1053,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
         showSoftInput();
     }
 
-    private void setTitle(CharSequence title) {
+    public void setTitle(CharSequence title) {
         mTitle.setText(title);
         setContentDescription(title != null ? title : mTitle.getHint());
     }
@@ -1500,6 +1500,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
         }
 
         mGo.setVisibility(View.VISIBLE);
+
+        if (InputMethods.shouldDisableUrlBarUpdate(mUrlEditText.getContext())) {
+            return;
+        }
 
         int imageResource = R.drawable.ic_url_bar_go;
         String contentDescription = mActivity.getString(R.string.go);

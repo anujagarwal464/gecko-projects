@@ -108,105 +108,6 @@ struct ImmType : public ImmTag
 
 static const Scale ScalePointer = TimesFour;
 
-class Operand
-{
-  public:
-    enum Kind {
-        REG,
-        MEM_REG_DISP,
-        FPREG,
-        MEM_SCALE,
-        MEM_ADDRESS32
-    };
-
-  private:
-    Kind kind_ : 4;
-    int32_t base_ : 5;
-    Scale scale_ : 3;
-    int32_t index_ : 5;
-    int32_t disp_;
-
-  public:
-    explicit Operand(Register reg)
-      : kind_(REG),
-        base_(reg.code())
-    { }
-    explicit Operand(FloatRegister reg)
-      : kind_(FPREG),
-        base_(reg.code())
-    { }
-    explicit Operand(const Address &address)
-      : kind_(MEM_REG_DISP),
-        base_(address.base.code()),
-        disp_(address.offset)
-    { }
-    explicit Operand(const BaseIndex &address)
-      : kind_(MEM_SCALE),
-        base_(address.base.code()),
-        scale_(address.scale),
-        index_(address.index.code()),
-        disp_(address.offset)
-    { }
-    Operand(Register base, Register index, Scale scale, int32_t disp = 0)
-      : kind_(MEM_SCALE),
-        base_(base.code()),
-        scale_(scale),
-        index_(index.code()),
-        disp_(disp)
-    { }
-    Operand(Register reg, int32_t disp)
-      : kind_(MEM_REG_DISP),
-        base_(reg.code()),
-        disp_(disp)
-    { }
-    explicit Operand(const AbsoluteAddress &address)
-      : kind_(MEM_ADDRESS32),
-        disp_(reinterpret_cast<int32_t>(address.addr))
-    { }
-
-    Address toAddress() {
-        JS_ASSERT(kind() == MEM_REG_DISP);
-        return Address(Register::FromCode(base()), disp());
-    }
-
-    BaseIndex toBaseIndex() {
-        JS_ASSERT(kind() == MEM_SCALE);
-        return BaseIndex(Register::FromCode(base()), Register::FromCode(index()), scale(), disp());
-    }
-
-    Kind kind() const {
-        return kind_;
-    }
-    Registers::Code reg() const {
-        JS_ASSERT(kind() == REG);
-        return (Registers::Code)base_;
-    }
-    Registers::Code base() const {
-        JS_ASSERT(kind() == MEM_REG_DISP || kind() == MEM_SCALE);
-        return (Registers::Code)base_;
-    }
-    Registers::Code index() const {
-        JS_ASSERT(kind() == MEM_SCALE);
-        return (Registers::Code)index_;
-    }
-    Scale scale() const {
-        JS_ASSERT(kind() == MEM_SCALE);
-        return scale_;
-    }
-    FloatRegisters::Code fpu() const {
-        JS_ASSERT(kind() == FPREG);
-        return (FloatRegisters::Code)base_;
-    }
-    int32_t disp() const {
-        JS_ASSERT(kind() == MEM_REG_DISP || kind() == MEM_SCALE);
-        return disp_;
-    }
-    void *address() const {
-        JS_ASSERT(kind() == MEM_ADDRESS32);
-        return reinterpret_cast<void *>(disp_);
-    }
-};
-
 } // namespace jit
 } // namespace js
 
@@ -330,6 +231,11 @@ class Assembler : public AssemblerX86Shared
     void mov(ImmPtr imm, Register dest) {
         movl(imm, dest);
     }
+    void mov(AsmJSImmPtr imm, Register dest) {
+        masm.movl_i32r(-1, dest.code());
+        AsmJSAbsoluteLink link(masm.currentOffset(), imm.kind());
+        enoughMemory_ &= asmJSAbsoluteLinks_.append(link);
+    }
     void mov(Imm32 imm, Register dest) {
         movl(imm, dest);
     }
@@ -390,6 +296,11 @@ class Assembler : public AssemblerX86Shared
             MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
+    void cmpl(const AsmJSAbsoluteAddress &lhs, const Register &rhs) {
+        masm.cmpl_rm_force32(rhs.code(), (void*)-1);
+        AsmJSAbsoluteLink link(masm.currentOffset(), lhs.kind());
+        enoughMemory_ &= asmJSAbsoluteLinks_.append(link);
+    }
     CodeOffsetLabel cmplWithPatch(const Register &lhs, Imm32 rhs) {
         masm.cmpl_ir_force32(rhs.value, lhs.code());
         return masm.currentOffset();
@@ -421,6 +332,13 @@ class Assembler : public AssemblerX86Shared
     void call(ImmPtr target) {
         JmpSrc src = masm.call();
         addPendingJump(src, target, Relocation::HARDCODED);
+    }
+    void call(AsmJSImmPtr target) {
+        // Moving to a register is suboptimal. To fix (use a single
+        // call-immediate instruction) we'll need to distinguish a new type of
+        // relative patch to an absolute address in AsmJSAbsoluteLink.
+        mov(target, eax);
+        call(eax);
     }
 
     // Emit a CALL or CMP (nop) instruction. ToggleCall can be used to patch

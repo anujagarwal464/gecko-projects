@@ -254,6 +254,7 @@
 @BINPATH@/components/mozfind.xpt
 @BINPATH@/components/necko_about.xpt
 @BINPATH@/components/necko_cache.xpt
+@BINPATH@/components/necko_cache2.xpt
 @BINPATH@/components/necko_cookie.xpt
 @BINPATH@/components/necko_dns.xpt
 @BINPATH@/components/necko_file.xpt
@@ -377,6 +378,8 @@
 @BINPATH@/components/PeerConnection.js
 @BINPATH@/components/PeerConnection.manifest
 #endif
+@BINPATH@/components/HttpDataUsage.manifest
+@BINPATH@/components/HttpDataUsage.js
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/SiteSpecificUserAgent.manifest
 @BINPATH@/components/storage-Legacy.js

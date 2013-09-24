@@ -91,8 +91,8 @@ MacroAssemblerX86::getFloat(float f)
 void
 MacroAssemblerX86::loadConstantFloat32(float f, const FloatRegister &dest)
 {
-    // Contrary to loadConstantDouble, this one doesn't have any maybeInlineFloat,
-    // but that might be interesting to do it in the future.
+    if (maybeInlineFloat(f, dest))
+        return;
     Float *flt = getFloat(f);
     if (!flt)
         return;
@@ -252,6 +252,15 @@ MacroAssemblerX86::callWithABI(void *fun, Result result)
     uint32_t stackAdjust;
     callWithABIPre(&stackAdjust);
     call(ImmPtr(fun));
+    callWithABIPost(stackAdjust, result);
+}
+
+void
+MacroAssemblerX86::callWithABI(AsmJSImmPtr fun, Result result)
+{
+    uint32_t stackAdjust;
+    callWithABIPre(&stackAdjust);
+    call(fun);
     callWithABIPost(stackAdjust, result);
 }
 
