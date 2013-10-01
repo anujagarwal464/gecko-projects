@@ -184,7 +184,7 @@ public:
     PlanarYCbCrImage::Data data;
     DeserializerToPlanarYCbCrImageData(deserializer, data);
 
-    gfxASurface::gfxImageFormat format = gfxASurface::ImageFormatRGB24;
+    gfxImageFormat format = gfxImageFormatRGB24;
     gfxIntSize size;
     gfxUtils::GetYCbCrToRGBDestFormatAndSize(data, format, size);
     if (size.width > PlanarYCbCrImage::MAX_DIMENSION ||
@@ -202,7 +202,7 @@ public:
 
     mSize = IntSize(size.width, size.height);
     mFormat =
-      (format == gfxASurface::ImageFormatARGB32) ? FORMAT_B8G8R8A8 :
+      (format == gfxImageFormatARGB32) ? FORMAT_B8G8R8A8 :
                                                    FORMAT_B8G8R8X8;
   }
 
@@ -469,20 +469,17 @@ BasicCompositor::EndFrame()
 {
   mRenderTarget->mDrawTarget->PopClip();
 
+  RefPtr<SourceSurface> source = mRenderTarget->mDrawTarget->Snapshot();
   if (mCopyTarget) {
-    nsRefPtr<gfxASurface> thebes = gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(mRenderTarget->mDrawTarget);
-    gfxContextAutoSaveRestore restore(mCopyTarget);
-    mCopyTarget->SetOperator(gfxContext::OPERATOR_SOURCE);
-    mCopyTarget->SetSource(thebes);
-    mCopyTarget->Paint();
-    mCopyTarget = nullptr;
+    mCopyTarget->CopySurface(source,
+                             IntRect(0, 0, mWidgetSize.width, mWidgetSize.height),
+                             IntPoint(0, 0));
   } else {
     // Most platforms require us to buffer drawing to the widget surface.
     // That's why we don't draw to mDrawTarget directly.
-    RefPtr<SourceSurface> source = mRenderTarget->mDrawTarget->Snapshot();
     mDrawTarget->CopySurface(source,
-	                     IntRect(0, 0, mWidgetSize.width, mWidgetSize.height),
-			     IntPoint(0, 0));
+	                           IntRect(0, 0, mWidgetSize.width, mWidgetSize.height),
+			                       IntPoint(0, 0));
     mWidget->EndRemoteDrawing();
   }
   mDrawTarget = nullptr;

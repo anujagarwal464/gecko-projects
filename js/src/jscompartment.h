@@ -19,6 +19,10 @@ namespace jit {
 class IonCompartment;
 }
 
+namespace gc {
+template<class Node> class ComponentFinder;
+}
+
 struct NativeIterator;
 
 /*
@@ -206,15 +210,27 @@ struct JSCompartment
     /* Set of all currently living type representations. */
     js::TypeRepresentationHash   typeReprs;
 
-  private:
-    void sizeOfTypeInferenceData(JS::TypeInferenceSizes *stats, mozilla::MallocSizeOf mallocSizeOf);
+    /*
+     * For generational GC, record whether a write barrier has added this
+     * compartment's global to the store buffer since the last minor GC.
+     *
+     * This is used to avoid adding it to the store buffer on every write, which
+     * can quickly fill the buffer and also cause performance problems.
+     */
+    bool                         globalWriteBarriered;
 
   public:
-    void sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *compartmentObject,
-                             JS::TypeInferenceSizes *tiSizes,
-                             size_t *shapesCompartmentTables, size_t *crossCompartmentWrappers,
-                             size_t *regexpCompartment, size_t *debuggeesSet,
-                             size_t *baselineStubsOptimized);
+    void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
+                                size_t *tiPendingArrays,
+                                size_t *tiAllocationSiteTables,
+                                size_t *tiArrayTypeTables,
+                                size_t *tiObjectTypeTables,
+                                size_t *compartmentObject,
+                                size_t *shapesCompartmentTables,
+                                size_t *crossCompartmentWrappers,
+                                size_t *regexpCompartment,
+                                size_t *debuggeesSet,
+                                size_t *baselineStubsOptimized);
 
     /*
      * Shared scope property tree, and arena-pool for allocating its nodes.

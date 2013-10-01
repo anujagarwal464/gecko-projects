@@ -8,9 +8,11 @@
 #include "nsDOMUIEvent.h"
 #include "nsTArray.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/TouchEvents.h"
 #include "nsJSEnvironment.h"
 #include "mozilla/dom/TouchEventBinding.h"
 #include "nsWrapperCache.h"
+
 
 class nsAString;
 
@@ -80,7 +82,8 @@ class nsDOMTouchEvent : public nsDOMUIEvent
 {
 public:
   nsDOMTouchEvent(mozilla::dom::EventTarget* aOwner,
-                  nsPresContext* aPresContext, nsTouchEvent* aEvent);
+                  nsPresContext* aPresContext,
+                  mozilla::WidgetTouchEvent* aEvent);
   virtual ~nsDOMTouchEvent();
 
   NS_DECL_ISUPPORTS_INHERITED

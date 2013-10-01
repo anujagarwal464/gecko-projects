@@ -10,7 +10,9 @@
 #include "NamespaceImports.h"
 
 #include "gc/Heap.h"
-#include "gc/StoreBuffer.h"
+#ifdef JSGC_GENERATIONAL
+# include "gc/StoreBuffer.h"
+#endif
 #include "js/HashTable.h"
 #include "js/Id.h"
 #include "js/RootingAPI.h"
@@ -250,7 +252,7 @@ class EncapsulatedPtr
     };
 
   public:
-    EncapsulatedPtr() : value(NULL) {}
+    EncapsulatedPtr() : value(nullptr) {}
     EncapsulatedPtr(T *v) : value(v) {}
     explicit EncapsulatedPtr(const EncapsulatedPtr<T> &v) : value(v.value) {}
 
@@ -261,10 +263,10 @@ class EncapsulatedPtr
         this->value = v;
     }
 
-    /* Use to set the pointer to NULL. */
+    /* Use to set the pointer to nullptr. */
     void clear() {
         pre();
-        value = NULL;
+        value = nullptr;
     }
 
     EncapsulatedPtr<T, Unioned> &operator=(T *v) {
@@ -306,7 +308,7 @@ template <class T, class Unioned = uintptr_t>
 class HeapPtr : public EncapsulatedPtr<T, Unioned>
 {
   public:
-    HeapPtr() : EncapsulatedPtr<T>(NULL) {}
+    HeapPtr() : EncapsulatedPtr<T>(nullptr) {}
     explicit HeapPtr(T *v) : EncapsulatedPtr<T>(v) { post(); }
     explicit HeapPtr(const HeapPtr<T> &v)
       : EncapsulatedPtr<T>(v) { post(); }
@@ -378,7 +380,7 @@ template <class T>
 class RelocatablePtr : public EncapsulatedPtr<T>
 {
   public:
-    RelocatablePtr() : EncapsulatedPtr<T>(NULL) {}
+    RelocatablePtr() : EncapsulatedPtr<T>(nullptr) {}
     explicit RelocatablePtr(T *v) : EncapsulatedPtr<T>(v) {
         if (v)
             post();
@@ -1049,13 +1051,13 @@ class ReadBarriered
     T *value;
 
   public:
-    ReadBarriered() : value(NULL) {}
+    ReadBarriered() : value(nullptr) {}
     ReadBarriered(T *value) : value(value) {}
     ReadBarriered(const Rooted<T*> &rooted) : value(rooted) {}
 
     T *get() const {
         if (!value)
-            return NULL;
+            return nullptr;
         T::readBarrier(value);
         return value;
     }

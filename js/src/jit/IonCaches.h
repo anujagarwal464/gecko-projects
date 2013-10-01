@@ -10,7 +10,6 @@
 #ifdef JS_CPU_ARM
 # include "jit/arm/Assembler-arm.h"
 #endif
-#include "jit/IonCode.h"
 #include "jit/Registers.h"
 #include "jit/shared/Assembler-shared.h"
 
@@ -161,7 +160,7 @@ class IonCache
 
     CodeLocationLabel fallbackLabel_;
 
-    // Location of this operation, NULL for idempotent caches.
+    // Location of this operation, nullptr for idempotent caches.
     JSScript *script_;
     jsbytecode *pc_;
 
@@ -181,8 +180,8 @@ class IonCache
         disabled_(false),
         stubCount_(0),
         fallbackLabel_(),
-        script_(NULL),
-        pc_(NULL)
+        script_(nullptr),
+        pc_(nullptr)
     {
     }
 
@@ -464,7 +463,7 @@ class DispatchIonCache : public IonCache
 
   public:
     DispatchIonCache()
-      : firstStub_(NULL),
+      : firstStub_(nullptr),
         rejoinLabel_(),
         dispatchLabel_()
     {
@@ -932,8 +931,8 @@ class NameIC : public RepatchIonCache
         return typeOf_;
     }
 
-    bool attachReadSlot(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject obj,
-                        HandleShape shape);
+    bool attachReadSlot(JSContext *cx, IonScript *ion, HandleObject scopeChain,
+                        HandleObject holderBase, HandleObject holder, HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                           HandleShape shape, void *returnAddr);
 
@@ -986,7 +985,7 @@ class ParallelIonCache : public DispatchIonCache
     ShapeSet *stubbedShapes_;
 
     ParallelIonCache()
-      : stubbedShapes_(NULL)
+      : stubbedShapes_(nullptr)
     {
     }
 

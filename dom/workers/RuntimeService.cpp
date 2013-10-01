@@ -45,6 +45,10 @@
 #include "Worker.h"
 #include "WorkerPrivate.h"
 
+#ifdef MOZ_NUWA_PROCESS
+#include "ipc/Nuwa.h"
+#endif
+
 using namespace mozilla;
 using namespace mozilla::dom;
 
@@ -833,15 +837,7 @@ public:
   : CycleCollectedJSRuntime(WORKER_DEFAULT_RUNTIME_HEAPSIZE,
                             JS_NO_HELPER_THREADS),
     mWorkerPrivate(aWorkerPrivate)
-  {
-    // We need to ensure that a JSContext outlives the cycle collector, and
-    // that the internal JSContext created by ctypes is not the last JSContext
-    // to die.  So we create an unused JSContext here and destroy it after
-    // the cycle collector shuts down.  Thus all cycles will be broken before
-    // the last GC and all finalizers will be run.
-    mLastJSContext = JS_NewContext(Runtime(), 0);
-    MOZ_ASSERT(mLastJSContext);
-  }
+  { }
 
   ~WorkerJSRuntime()
   {
@@ -849,18 +845,15 @@ public:
     delete rtPrivate;
     JS_SetRuntimePrivate(Runtime(), nullptr);
 
-    // All JSContexts except mLastJSContext should be destroyed now.  The
-    // worker global will be unrooted and the shutdown cycle collection
-    // should break all remaining cycles.  Destroying mLastJSContext will run
-    // the GC the final time and finalize any JSObjects that were participating
+    // The worker global should be unrooted and the shutdown cycle collection
+    // should break all remaining cycles. The superclass destructor will run
+    // the GC one final time and finalize any JSObjects that were participating
     // in cycles that were broken during CC shutdown.
     nsCycleCollector_shutdown();
 
-    // The CC is shutdown, and this will GC, so make sure we don't try to CC
-    // again.
+    // The CC is shut down, and the superclass destructor will GC, so make sure
+    // we don't try to CC again.
     mWorkerPrivate = nullptr;
-    JS_DestroyContext(mLastJSContext);
-    mLastJSContext = nullptr;
   }
 
   void
@@ -888,7 +881,6 @@ public:
 
 private:
   WorkerPrivate* mWorkerPrivate;
-  JSContext* mLastJSContext;
 };
 
 class WorkerThreadRunnable : public nsRunnable
@@ -905,6 +897,14 @@ public:
   NS_IMETHOD
   Run()
   {
+#ifdef MOZ_NUWA_PROCESS
+    if (IsNuwaProcess()) {
+      NS_ASSERTION(NuwaMarkCurrentThread != nullptr,
+                   "NuwaMarkCurrentThread is undefined!");
+      NuwaMarkCurrentThread(nullptr, nullptr);
+      NuwaFreezeCurrentThread();
+    }
+#endif
     WorkerPrivate* workerPrivate = mWorkerPrivate;
     mWorkerPrivate = nullptr;
 

@@ -2330,7 +2330,8 @@ struct GlyphBufferAzure {
         }
         if (aDrawMode & gfxFont::GLYPH_PATH) {
             aThebesContext->EnsurePathBuilder();
-            aFont->CopyGlyphsToBuilder(buf, aThebesContext->mPathBuilder);
+			Matrix mat = aDT->GetTransform();
+            aFont->CopyGlyphsToBuilder(buf, aThebesContext->mPathBuilder, &mat);
         }
         if ((aDrawMode & (gfxFont::GLYPH_STROKE | gfxFont::GLYPH_STROKE_UNDERNEATH)) ==
                           gfxFont::GLYPH_STROKE) {
@@ -5892,7 +5893,7 @@ struct BufferAlphaColor {
                     aBounds.Height() / appsPerDevUnit), true);
         mContext->Clip();
         mContext->SetColor(gfxRGBA(aAlphaColor.r, aAlphaColor.g, aAlphaColor.b));
-        mContext->PushGroup(gfxASurface::CONTENT_COLOR_ALPHA);
+        mContext->PushGroup(GFX_CONTENT_COLOR_ALPHA);
         mAlpha = aAlphaColor.a;
     }
 

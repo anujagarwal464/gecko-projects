@@ -51,6 +51,12 @@ js::SetSourceHook(JSRuntime *rt, SourceHook *hook)
     rt->sourceHook = hook;
 }
 
+JS_FRIEND_API(SourceHook *)
+js::ForgetSourceHook(JSRuntime *rt)
+{
+    return rt->sourceHook.forget();
+}
+
 JS_FRIEND_API(void)
 JS_SetGrayGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data)
 {
@@ -218,7 +224,7 @@ JS_SetCompartmentPrincipals(JSCompartment *compartment, JSPrincipals *principals
 
     // Any compartment with the trusted principals -- and there can be
     // multiple -- is a system compartment.
-    JSPrincipals *trusted = compartment->runtimeFromMainThread()->trustedPrincipals();
+    const JSPrincipals *trusted = compartment->runtimeFromMainThread()->trustedPrincipals();
     bool isSystem = principals && principals == trusted;
 
     // Clear out the old principals, if any.
@@ -753,6 +759,9 @@ DumpHeapVisitCell(JSRuntime *rt, void *data, void *thing,
 static void
 DumpHeapVisitChild(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 {
+    if (gc::IsInsideNursery(trc->runtime, *thingp))
+        return;
+
     JSDumpHeapTracer *dtrc = static_cast<JSDumpHeapTracer *>(trc);
     char buffer[1024];
     fprintf(dtrc->output, "> %p %c %s\n", *thingp, MarkDescriptor(*thingp),
@@ -762,6 +771,9 @@ DumpHeapVisitChild(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 static void
 DumpHeapVisitRoot(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 {
+    if (gc::IsInsideNursery(trc->runtime, *thingp))
+        return;
+
     JSDumpHeapTracer *dtrc = static_cast<JSDumpHeapTracer *>(trc);
     char buffer[1024];
     fprintf(dtrc->output, "%p %c %s\n", *thingp, MarkDescriptor(*thingp),
@@ -769,9 +781,14 @@ DumpHeapVisitRoot(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 }
 
 void
-js::DumpHeapComplete(JSRuntime *rt, FILE *fp)
+js::DumpHeapComplete(JSRuntime *rt, FILE *fp, js::DumpHeapNurseryBehaviour nurseryBehaviour)
 {
     JSDumpHeapTracer dtrc(fp);
+
+#ifdef JSGC_GENERATIONAL
+    if (nurseryBehaviour == js::CollectNurseryBeforeDump)
+        MinorGC(rt, JS::gcreason::API);
+#endif
 
     JS_TracerInit(&dtrc, rt, DumpHeapVisitRoot);
     dtrc.eagerlyTraceWeakMaps = TraceWeakMapKeysValues;
@@ -1031,12 +1048,12 @@ js::GetDOMCallbacks(JSRuntime *rt)
     return rt->DOMcallbacks;
 }
 
-static void *gDOMProxyHandlerFamily = NULL;
+static const void *gDOMProxyHandlerFamily = NULL;
 static uint32_t gDOMProxyExpandoSlot = 0;
 static DOMProxyShadowsCheck gDOMProxyShadowsCheck;
 
 JS_FRIEND_API(void)
-js::SetDOMProxyInformation(void *domProxyHandlerFamily, uint32_t domProxyExpandoSlot,
+js::SetDOMProxyInformation(const void *domProxyHandlerFamily, uint32_t domProxyExpandoSlot,
                            DOMProxyShadowsCheck domProxyShadowsCheck)
 {
     gDOMProxyHandlerFamily = domProxyHandlerFamily;
@@ -1044,7 +1061,7 @@ js::SetDOMProxyInformation(void *domProxyHandlerFamily, uint32_t domProxyExpando
     gDOMProxyShadowsCheck = domProxyShadowsCheck;
 }
 
-void *
+const void *
 js::GetDOMProxyHandlerFamily()
 {
     return gDOMProxyHandlerFamily;
@@ -1066,6 +1083,24 @@ bool
 js::detail::IdMatchesAtom(jsid id, JSAtom *atom)
 {
     return id == INTERNED_STRING_TO_JSID(NULL, atom);
+}
+
+JS_FRIEND_API(JSContext *)
+js::DefaultJSContext(JSRuntime *rt)
+{
+    if (rt->defaultJSContextCallback) {
+        JSContext *cx = rt->defaultJSContextCallback(rt);
+        JS_ASSERT(cx);
+        return cx;
+    }
+    JS_ASSERT(rt->contextList.getFirst() == rt->contextList.getLast());
+    return rt->contextList.getFirst();
+}
+
+JS_FRIEND_API(void)
+js::SetDefaultJSContextCallback(JSRuntime *rt, DefaultJSContextCallback cb)
+{
+    rt->defaultJSContextCallback = cb;
 }
 
 JS_FRIEND_API(void)

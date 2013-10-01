@@ -5,10 +5,12 @@
 
 /* rendering object for replaced elements with bitmap image data */
 
+#include "nsImageFrame.h"
+
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MouseEvents.h"
 
 #include "nsCOMPtr.h"
-#include "nsImageFrame.h"
 #include "nsIImageLoadingContent.h"
 #include "nsString.h"
 #include "nsPrintfCString.h"
@@ -36,7 +38,6 @@
 #include "nsAccessibilityService.h"
 #endif
 #include "nsIDOMNode.h"
-#include "nsGUIEvent.h"
 #include "nsLayoutUtils.h"
 #include "nsDisplayList.h"
 
@@ -264,8 +265,8 @@ nsImageFrame::UpdateIntrinsicSize(imgIContainer* aImage)
   if (!aImage)
     return false;
 
-  nsIFrame::IntrinsicSize oldIntrinsicSize = mIntrinsicSize;
-  mIntrinsicSize = nsIFrame::IntrinsicSize();
+  IntrinsicSize oldIntrinsicSize = mIntrinsicSize;
+  mIntrinsicSize = IntrinsicSize();
 
   // Set intrinsic size to match aImage's reported intrinsic width & height.
   nsSize intrinsicSize;
@@ -792,7 +793,7 @@ nsImageFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
     mIntrinsicSize.width.GetCoordValue() : 0;
 }
 
-/* virtual */ nsIFrame::IntrinsicSize
+/* virtual */ IntrinsicSize
 nsImageFrame::GetIntrinsicSize()
 {
   return mIntrinsicSize;
@@ -1609,7 +1610,8 @@ nsImageFrame::GetContentForEvent(nsEvent* aEvent,
   // XXX We need to make this special check for area element's capturing the
   // mouse due to bug 135040. Remove it once that's fixed.
   nsIContent* capturingContent =
-    NS_IS_MOUSE_EVENT(aEvent) ? nsIPresShell::GetCapturingContent() : nullptr;
+    aEvent->HasMouseEventMessage() ? nsIPresShell::GetCapturingContent() :
+                                     nullptr;
   if (capturingContent && capturingContent->GetPrimaryFrame() == this) {
     *aContent = capturingContent;
     NS_IF_ADDREF(*aContent);

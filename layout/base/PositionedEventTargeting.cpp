@@ -4,8 +4,8 @@
 
 #include "PositionedEventTargeting.h"
 
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
-#include "nsGUIEvent.h"
 #include "nsLayoutUtils.h"
 #include "nsGkAtoms.h"
 #include "nsEventListenerManager.h"
@@ -13,6 +13,7 @@
 #include "mozilla/dom/Element.h"
 #include "nsRegion.h"
 #include "nsDeviceContext.h"
+#include "nsIFrame.h"
 #include <algorithm>
 
 namespace mozilla {

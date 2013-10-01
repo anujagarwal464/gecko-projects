@@ -42,6 +42,8 @@
 #include "mozilla/GenericRefCounted.h"
 
 class nsIntRegion;
+class nsIRunnable;
+class nsIThread;
 
 namespace android {
     class GraphicBuffer;
@@ -50,6 +52,7 @@ namespace android {
 namespace mozilla {
     namespace gfx {
         class SharedSurface;
+        class SourceSurface;
         class DataSourceSurface;
         struct SurfaceCaps;
     }
@@ -391,6 +394,7 @@ public:
         ARB_occlusion_query2,
         EXT_transform_feedback,
         NV_transform_feedback,
+        ANGLE_depth_texture,
         Extensions_Max,
         Extensions_End
     };
@@ -2283,7 +2287,7 @@ protected:
 
     typedef class gfx::SharedSurface SharedSurface;
     typedef gfx::SharedSurfaceType SharedSurfaceType;
-    typedef gfxASurface::gfxImageFormat ImageFormat;
+    typedef gfxImageFormat ImageFormat;
     typedef gfx::SurfaceFormat SurfaceFormat;
 
 public:
@@ -2650,7 +2654,7 @@ public:
                        TextureImage::ContentType aContentType,
                        GLenum aWrapMode,
                        TextureImage::Flags aFlags = TextureImage::NoFlags,
-                       TextureImage::ImageFormat aImageFormat = gfxASurface::ImageFormatUnknown);
+                       TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown);
 
     /**
      * In EGL we want to use Tiled Texture Images, which we return
@@ -2663,17 +2667,17 @@ public:
     TileGenFunc(const nsIntSize& aSize,
                 TextureImage::ContentType aContentType,
                 TextureImage::Flags aFlags = TextureImage::NoFlags,
-                TextureImage::ImageFormat aImageFormat = gfxASurface::ImageFormatUnknown)
+                TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown)
     {
         return nullptr;
     }
 
     /**
      * Read the image data contained in aTexture, and return it as an ImageSurface.
-     * If GL_RGBA is given as the format, a ImageFormatARGB32 surface is returned.
+     * If GL_RGBA is given as the format, a gfxImageFormatARGB32 surface is returned.
      * Not implemented yet:
-     * If GL_RGB is given as the format, a ImageFormatRGB24 surface is returned.
-     * If GL_LUMINANCE is given as the format, a ImageFormatA8 surface is returned.
+     * If GL_RGB is given as the format, a gfxImageFormatRGB24 surface is returned.
+     * If GL_LUMINANCE is given as the format, a gfxImageFormatA8 surface is returned.
      *
      * THIS IS EXPENSIVE.  It is ridiculously expensive.  Only do this
      * if you absolutely positively must, and never in any performance
@@ -2698,6 +2702,8 @@ public:
     // Similar to ReadPixelsIntoImageSurface, but pulls from the screen
     // instead of the currently bound framebuffer.
     void ReadScreenIntoImageSurface(gfxImageSurface* dest);
+
+    TemporaryRef<gfx::SourceSurface> ReadPixelsToSourceSurface(const gfx::IntSize &aSize);
 
     /**
      * Copy a rectangle from one TextureImage into another.  The
@@ -2760,7 +2766,7 @@ public:
      */
     SurfaceFormat UploadImageDataToTexture(unsigned char* aData,
                                            int32_t aStride,
-                                           gfxASurface::gfxImageFormat aFormat,
+                                           gfxImageFormat aFormat,
                                            const nsIntRegion& aDstRegion,
                                            GLuint& aTexture,
                                            bool aOverwrite = false,

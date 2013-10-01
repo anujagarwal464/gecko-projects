@@ -70,7 +70,7 @@ class Nursery
     }
 
     /*
-     * Allocate and return a pointer to a new GC thing. Returns NULL if the
+     * Allocate and return a pointer to a new GC thing. Returns nullptr if the
      * Nursery is full.
      */
     void *allocate(size_t size);
@@ -136,11 +136,6 @@ class Nursery
      */
     typedef HashSet<HeapSlot *, PointerHasher<HeapSlot *, 3>, SystemAllocPolicy> HugeSlotsSet;
     HugeSlotsSet hugeSlots;
-
-    /* The marking bitmap for the fallback marker. */
-    static const size_t ThingAlignment = sizeof(JS::Value);
-    static const size_t FallbackBitmapBits = NurserySize / ThingAlignment;
-    BitArray<FallbackBitmapBits> fallbackBitmap;
 
 #ifdef DEBUG
     /*

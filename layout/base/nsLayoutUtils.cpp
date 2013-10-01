@@ -6,6 +6,7 @@
 
 #include "nsLayoutUtils.h"
 
+#include "mozilla/BasicEvents.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Util.h"
 #include "nsPresContext.h"
@@ -22,7 +23,6 @@
 #include "nsPlaceholderFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsIDOMEvent.h"
-#include "nsGUIEvent.h"
 #include "nsDisplayList.h"
 #include "nsRegion.h"
 #include "nsFrameManager.h"
@@ -552,10 +552,10 @@ nsLayoutUtils::GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult)
 }
 
 nsIFrame*
-nsLayoutUtils::GetLastContinuationWithChild(nsIFrame* aFrame)
+nsLayoutUtils::LastContinuationWithChild(nsIFrame* aFrame)
 {
   NS_PRECONDITION(aFrame, "NULL frame pointer");
-  aFrame = aFrame->GetLastContinuation();
+  aFrame = aFrame->LastContinuation();
   while (!aFrame->GetFirstPrincipalChild() &&
          aFrame->GetPrevContinuation()) {
     aFrame = aFrame->GetPrevContinuation();
@@ -606,13 +606,13 @@ GetLastChildFrame(nsIFrame*       aFrame,
 
   // Get the last continuation frame that's a parent
   nsIFrame* lastParentContinuation =
-    nsLayoutUtils::GetLastContinuationWithChild(aFrame);
+    nsLayoutUtils::LastContinuationWithChild(aFrame);
   nsIFrame* lastChildFrame =
     lastParentContinuation->GetLastChild(nsIFrame::kPrincipalList);
   if (lastChildFrame) {
     // Get the frame's first continuation. This matters in case the frame has
     // been continued across multiple lines or split by BiDi resolution.
-    lastChildFrame = lastChildFrame->GetFirstContinuation();
+    lastChildFrame = lastChildFrame->FirstContinuation();
 
     // If the last child frame is a pseudo-frame, then return its last child.
     // Note that the frame we create for the generated content is also a
@@ -630,7 +630,7 @@ GetLastChildFrame(nsIFrame*       aFrame,
 }
 
 //static
-nsIFrame::ChildListID
+FrameChildListID
 nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
 {
   nsIFrame::ChildListID id = nsIFrame::kPrincipalList;
@@ -2519,7 +2519,7 @@ nsLayoutUtils::GetNextContinuationOrSpecialSibling(nsIFrame *aFrame)
   if ((aFrame->GetStateBits() & NS_FRAME_IS_SPECIAL) != 0) {
     // We only store the "special sibling" annotation with the first
     // frame in the continuation chain. Walk back to find that frame now.
-    aFrame = aFrame->GetFirstContinuation();
+    aFrame = aFrame->FirstContinuation();
 
     void* value = aFrame->Properties().Get(nsIFrame::IBSplitSpecialSibling());
     return static_cast<nsIFrame*>(value);
@@ -2529,9 +2529,9 @@ nsLayoutUtils::GetNextContinuationOrSpecialSibling(nsIFrame *aFrame)
 }
 
 nsIFrame*
-nsLayoutUtils::GetFirstContinuationOrSpecialSibling(nsIFrame *aFrame)
+nsLayoutUtils::FirstContinuationOrSpecialSibling(nsIFrame *aFrame)
 {
-  nsIFrame *result = aFrame->GetFirstContinuation();
+  nsIFrame *result = aFrame->FirstContinuation();
   if (result->GetStateBits() & NS_FRAME_IS_SPECIAL) {
     while (true) {
       nsIFrame *f = static_cast<nsIFrame*>
@@ -2543,6 +2543,20 @@ nsLayoutUtils::GetFirstContinuationOrSpecialSibling(nsIFrame *aFrame)
   }
 
   return result;
+}
+
+bool
+nsLayoutUtils::IsFirstContinuationOrSpecialSibling(nsIFrame *aFrame)
+{
+  if (aFrame->GetPrevContinuation()) {
+    return false;
+  }
+  if ((aFrame->GetStateBits() & NS_FRAME_IS_SPECIAL) &&
+      aFrame->Properties().Get(nsIFrame::IBSplitSpecialPrevSibling())) {
+    return false;
+  }
+
+  return true;
 }
 
 bool
@@ -3119,7 +3133,7 @@ nsLayoutUtils::ComputeHeightDependentValue(
 /* static */ nsSize
 nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
                    nsRenderingContext* aRenderingContext, nsIFrame* aFrame,
-                   const nsIFrame::IntrinsicSize& aIntrinsicSize,
+                   const IntrinsicSize& aIntrinsicSize,
                    nsSize aIntrinsicRatio, nsSize aCBSize,
                    nsSize aMargin, nsSize aBorder, nsSize aPadding)
 {
@@ -3444,7 +3458,7 @@ nsLayoutUtils::ComputeAutoSizeWithIntrinsicDimensions(nscoord minWidth, nscoord 
 nsLayoutUtils::MinWidthFromInline(nsIFrame* aFrame,
                                   nsRenderingContext* aRenderingContext)
 {
-  NS_ASSERTION(!nsLayoutUtils::IsContainerForFontSizeInflation(aFrame),
+  NS_ASSERTION(!aFrame->IsContainerForFontSizeInflation(),
                "should not be container for font size inflation");
 
   nsIFrame::InlineMinWidthData data;
@@ -3458,7 +3472,7 @@ nsLayoutUtils::MinWidthFromInline(nsIFrame* aFrame,
 nsLayoutUtils::PrefWidthFromInline(nsIFrame* aFrame,
                                    nsRenderingContext* aRenderingContext)
 {
-  NS_ASSERTION(!nsLayoutUtils::IsContainerForFontSizeInflation(aFrame),
+  NS_ASSERTION(!aFrame->IsContainerForFontSizeInflation(),
                "should not be container for font size inflation");
 
   nsIFrame::InlinePrefWidthData data;
@@ -4116,7 +4130,7 @@ nsLayoutUtils::DrawPixelSnapped(nsRenderingContext* aRenderingContext,
   gfxUtils::DrawPixelSnapped(ctx, aDrawable,
                              drawingParams.mUserSpaceToImageSpace, subimage,
                              sourceRect, imageRect, drawingParams.mFillRect,
-                             gfxASurface::ImageFormatARGB32, aFilter);
+                             gfxImageFormatARGB32, aFilter);
 }
 
 /* static */ nsresult
@@ -4628,17 +4642,17 @@ nsLayoutUtils::SurfaceFromElement(nsIImageLoadingContent* aElement,
   if (NS_FAILED(rv) || NS_FAILED(rv2))
     return result;
 
-  if (wantImageSurface && framesurf->GetType() != gfxASurface::SurfaceTypeImage) {
+  if (wantImageSurface && framesurf->GetType() != gfxSurfaceTypeImage) {
     forceCopy = true;
   }
 
   nsRefPtr<gfxASurface> gfxsurf = framesurf;
   if (forceCopy) {
     if (wantImageSurface) {
-      gfxsurf = new gfxImageSurface (gfxIntSize(imgWidth, imgHeight), gfxASurface::ImageFormatARGB32);
+      gfxsurf = new gfxImageSurface (gfxIntSize(imgWidth, imgHeight), gfxImageFormatARGB32);
     } else {
       gfxsurf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(imgWidth, imgHeight),
-                                                                   gfxASurface::CONTENT_COLOR_ALPHA);
+                                                                   GFX_CONTENT_COLOR_ALPHA);
     }
 
     nsRefPtr<gfxContext> ctx = new gfxContext(gfxsurf);
@@ -4699,14 +4713,14 @@ nsLayoutUtils::SurfaceFromElement(HTMLCanvasElement* aElement,
       surf = nullptr;
   }
 
-  if (surf && wantImageSurface && surf->GetType() != gfxASurface::SurfaceTypeImage)
+  if (surf && wantImageSurface && surf->GetType() != gfxSurfaceTypeImage)
     surf = nullptr;
 
   if (!surf) {
     if (wantImageSurface) {
-      surf = new gfxImageSurface(size, gfxASurface::ImageFormatARGB32);
+      surf = new gfxImageSurface(size, gfxImageFormatARGB32);
     } else {
-      surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(size, gfxASurface::CONTENT_COLOR_ALPHA);
+      surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(size, GFX_CONTENT_COLOR_ALPHA);
     }
 
     if (!surf)
@@ -4767,9 +4781,9 @@ nsLayoutUtils::SurfaceFromElement(HTMLVideoElement* aElement,
   if (!surf)
     return result;
 
-  if (wantImageSurface && surf->GetType() != gfxASurface::SurfaceTypeImage) {
+  if (wantImageSurface && surf->GetType() != gfxSurfaceTypeImage) {
     nsRefPtr<gfxImageSurface> imgSurf =
-      new gfxImageSurface(size, gfxASurface::ImageFormatARGB32);
+      new gfxImageSurface(size, gfxImageFormatARGB32);
 
     nsRefPtr<gfxContext> ctx = new gfxContext(imgSurf);
     ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
@@ -5207,25 +5221,6 @@ nsUnsetAttrRunnable::Run()
   return mContent->UnsetAttr(kNameSpaceID_None, mAttrName, true);
 }
 
-nsReflowFrameRunnable::nsReflowFrameRunnable(nsIFrame* aFrame,
-                          nsIPresShell::IntrinsicDirty aIntrinsicDirty,
-                          nsFrameState aBitToAdd)
-  : mWeakFrame(aFrame),
-    mIntrinsicDirty(aIntrinsicDirty),
-    mBitToAdd(aBitToAdd)
-{
-}
-
-NS_IMETHODIMP
-nsReflowFrameRunnable::Run()
-{
-  if (mWeakFrame.IsAlive()) {
-    mWeakFrame->PresContext()->PresShell()->
-      FrameNeedsReflow(mWeakFrame, mIntrinsicDirty, mBitToAdd);
-  }
-  return NS_OK;
-}
-
 /**
  * Compute the minimum font size inside of a container with the given
  * width, such that **when the user zooms the container to fill the full
@@ -5284,7 +5279,7 @@ nsLayoutUtils::FontSizeInflationInner(const nsIFrame *aFrame,
   // non-inline element with fixed width or height, then we should not inflate
   // fonts for this frame.
   for (const nsIFrame* f = aFrame;
-       f && !IsContainerForFontSizeInflation(f);
+       f && !f->IsContainerForFontSizeInflation();
        f = f->GetParent()) {
     nsIContent* content = f->GetContent();
     nsIAtom* fType = f->GetType();
@@ -5377,7 +5372,7 @@ nsLayoutUtils::InflationMinFontSizeFor(const nsIFrame *aFrame)
   }
 
   for (const nsIFrame *f = aFrame; f; f = f->GetParent()) {
-    if (IsContainerForFontSizeInflation(f)) {
+    if (f->IsContainerForFontSizeInflation()) {
       if (!ShouldInflateFontsForContainer(f)) {
         return 0;
       }
@@ -5528,5 +5523,48 @@ nsLayoutUtils::UpdateImageVisibilityForFrame(nsIFrame* aImageFrame)
     presShell->EnsureImageInVisibleList(content);
   } else {
     presShell->RemoveImageFromVisibleList(content);
+  }
+}
+
+nsLayoutUtils::SurfaceFromElementResult::SurfaceFromElementResult()
+  // Use safe default values here
+  : mIsWriteOnly(true), mIsStillLoading(false), mCORSUsed(false)
+{
+}
+
+bool
+nsLayoutUtils::IsNonWrapperBlock(nsIFrame* aFrame)
+{
+  return GetAsBlock(aFrame) && !aFrame->IsBlockWrapper();
+}
+
+bool
+nsLayoutUtils::NeedsPrintPreviewBackground(nsPresContext* aPresContext)
+{
+  return aPresContext->IsRootPaginatedDocument() &&
+    (aPresContext->Type() == nsPresContext::eContext_PrintPreview ||
+     aPresContext->Type() == nsPresContext::eContext_PageLayout);
+}
+
+AutoMaybeDisableFontInflation::AutoMaybeDisableFontInflation(nsIFrame *aFrame)
+{
+  // FIXME: Now that inflation calculations are based on the flow
+  // root's NCA's (nearest common ancestor of its inflatable
+  // descendants) width, we could probably disable inflation in
+  // fewer cases than we currently do.
+  if (aFrame->IsContainerForFontSizeInflation()) {
+    mPresContext = aFrame->PresContext();
+    mOldValue = mPresContext->mInflationDisabledForShrinkWrap;
+    mPresContext->mInflationDisabledForShrinkWrap = true;
+  } else {
+    // indicate we have nothing to restore
+    mPresContext = nullptr;
+  }
+}
+
+AutoMaybeDisableFontInflation::~AutoMaybeDisableFontInflation()
+{
+  if (mPresContext) {
+    mPresContext->mInflationDisabledForShrinkWrap = mOldValue;
   }
 }

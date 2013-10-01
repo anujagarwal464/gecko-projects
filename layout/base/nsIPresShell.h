@@ -20,6 +20,7 @@
 #ifndef nsIPresShell_h___
 #define nsIPresShell_h___
 
+#include "mozilla/EventForwards.h"
 #include "mozilla/MemoryReporting.h"
 #include "gfxPoint.h"
 #include "nsTHashtable.h"
@@ -28,7 +29,6 @@
 #include "nsQueryFrame.h"
 #include "nsCoord.h"
 #include "nsColor.h"
-#include "nsEvent.h"
 #include "nsCompatibility.h"
 #include "nsFrameManagerBase.h"
 #include "mozFlushType.h"
@@ -1297,12 +1297,12 @@ public:
   virtual bool IsVisible() = 0;
   virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
 
-  virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                   nsArenaMemoryStats *aArenaObjectsSize,
-                                   size_t *aPresShellSize,
-                                   size_t *aStyleSetsSize,
-                                   size_t *aTextRunsSize,
-                                   size_t *aPresContextSize) = 0;
+  virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                      nsArenaMemoryStats *aArenaObjectsSize,
+                                      size_t *aPresShellSize,
+                                      size_t *aStyleSetsSize,
+                                      size_t *aTextRunsSize,
+                                      size_t *aPresContextSize) = 0;
 
   /**
    * Methods that retrieve the cached font inflation preferences.

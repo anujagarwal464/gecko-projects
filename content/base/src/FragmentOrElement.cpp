@@ -51,7 +51,8 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
-#include "nsMutationEvent.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/MutationEvent.h"
 #include "nsNodeUtils.h"
 #include "nsDocument.h"
 #include "nsAttrValueOrString.h"
@@ -1020,7 +1021,7 @@ FragmentOrElement::FireNodeInserted(nsIDocument* aDoc,
 
     if (nsContentUtils::HasMutationListeners(childContent,
           NS_EVENT_BITS_MUTATION_NODEINSERTED, aParent)) {
-      nsMutationEvent mutation(true, NS_MUTATION_NODEINSERTED);
+      InternalMutationEvent mutation(true, NS_MUTATION_NODEINSERTED);
       mutation.mRelatedNode = do_QueryInterface(aParent);
 
       mozAutoSubtreeModified subtree(aDoc, aParent);

@@ -6,8 +6,8 @@
 #ifndef nsWindowBase_h_
 #define nsWindowBase_h_
 
+#include "mozilla/MiscEvents.h"
 #include "nsBaseWidget.h"
-#include "nsGUIEvent.h"
 #include "npapi.h"
 #include <windows.h>
 
@@ -63,7 +63,7 @@ public:
     if (!PluginHasFocus()) {
       return false;
     }
-    nsPluginEvent pluginEvent(true, NS_PLUGIN_INPUT_EVENT, this);
+    mozilla::WidgetPluginEvent pluginEvent(true, NS_PLUGIN_INPUT_EVENT, this);
     nsIntPoint point(0, 0);
     InitEvent(pluginEvent, &point);
     NPEvent npEvent;

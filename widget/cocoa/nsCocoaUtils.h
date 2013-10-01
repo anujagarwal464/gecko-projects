@@ -10,12 +10,13 @@
 
 #include "nsRect.h"
 #include "imgIContainer.h"
-#include "nsEvent.h"
 #include "npapi.h"
 #include "nsTArray.h"
 
 // This must be the last include:
 #include "nsObjCExceptions.h"
+
+#include "mozilla/EventForwards.h"
 
 // Declare the backingScaleFactor method that we want to call
 // on NSView/Window/Screen objects, if they recognize it.
@@ -285,7 +286,7 @@ class nsCocoaUtils
   /**
    * Initializes aPluginEvent for aCocoaEvent.
    */
-  static void InitPluginEvent(nsPluginEvent &aPluginEvent,
+  static void InitPluginEvent(mozilla::WidgetPluginEvent &aPluginEvent,
                               NPCocoaEvent &aCocoaEvent);
   /**
    * Initializes nsInputEvent for aNativeEvent or aModifiers.

@@ -18,7 +18,6 @@
 #include "nsIDOMMouseEvent.h"
 #include "nsFontMetrics.h"
 #include "nsIScrollableFrame.h"
-#include "nsGUIEvent.h"
 #include "nsCSSRendering.h"
 #include "nsIDOMEventListener.h"
 #include "nsLayoutUtils.h"
@@ -28,7 +27,9 @@
 #include "mozilla/dom/HTMLOptionsCollection.h"
 #include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -1234,12 +1235,17 @@ nsListControlFrame::SetOptionsSelectedFromFrame(int32_t aStartIndex,
 {
   nsRefPtr<dom::HTMLSelectElement> selectElement =
     dom::HTMLSelectElement::FromContent(mContent);
-  return selectElement->SetOptionsSelectedByIndex(aStartIndex,
-                                                  aEndIndex,
-                                                  aValue,
-                                                  aClearAll,
-                                                  false,
-                                                  true);
+
+  uint32_t mask = dom::HTMLSelectElement::NOTIFY;
+  if (aValue) {
+    mask |= dom::HTMLSelectElement::IS_SELECTED;
+  }
+
+  if (aClearAll) {
+    mask |= dom::HTMLSelectElement::CLEAR_ALL;
+  }
+
+  return selectElement->SetOptionsSelectedByIndex(aStartIndex, aEndIndex, mask);
 }
 
 bool
@@ -1252,12 +1258,12 @@ nsListControlFrame::ToggleOptionSelectedFromFrame(int32_t aIndex)
   nsRefPtr<dom::HTMLSelectElement> selectElement =
     dom::HTMLSelectElement::FromContent(mContent);
 
-  return selectElement->SetOptionsSelectedByIndex(aIndex,
-                                                  aIndex,
-                                                  !option->Selected(),
-                                                  false,
-                                                  false,
-                                                  true);
+  uint32_t mask = dom::HTMLSelectElement::NOTIFY;
+  if (!option->Selected()) {
+    mask |= dom::HTMLSelectElement::IS_SELECTED;
+  }
+
+  return selectElement->SetOptionsSelectedByIndex(aIndex, aIndex, mask);
 }
 
 

@@ -21,6 +21,9 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/Likely.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/TouchEvents.h"
 #include "mozilla/Util.h"
 #include <algorithm>
 
@@ -3970,10 +3973,6 @@ PresShell::DocumentStatesChanged(nsIDocument* aDocument,
   if (aStateMask.HasState(NS_DOCUMENT_STATE_WINDOW_INACTIVE)) {
     nsIFrame* root = mFrameConstructor->GetRootFrame();
     if (root) {
-      FrameLayerBuilder::InvalidateAllLayersForFrame(root);
-      if (root->HasView()) {
-        root->GetView()->SetForcedRepaint(true);
-      }
       root->SchedulePaint();
     }
   }
@@ -4378,8 +4377,8 @@ PresShell::RenderDocument(const nsRect& aRect, uint32_t aFlags,
 
   if (needsGroup) {
     aThebesContext->PushGroup(NS_GET_A(aBackgroundColor) == 0xff ?
-                              gfxASurface::CONTENT_COLOR :
-                              gfxASurface::CONTENT_COLOR_ALPHA);
+                              GFX_CONTENT_COLOR :
+                              GFX_CONTENT_COLOR_ALPHA);
     aThebesContext->Save();
 
     if (oldOperator != gfxContext::OPERATOR_OVER) {
@@ -4710,7 +4709,7 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
 
   nsRefPtr<gfxImageSurface> surface =
     new gfxImageSurface(gfxIntSize(pixelArea.width, pixelArea.height),
-                        gfxImageSurface::ImageFormatARGB32);
+                        gfxImageFormatARGB32);
   if (surface->CairoStatus()) {
     return nullptr;
   }
@@ -5957,7 +5956,7 @@ EvictTouchPoint(nsRefPtr<dom::Touch>& aTouch)
     return;
   }
   
-  nsTouchEvent event(true, NS_TOUCH_END, widget);
+  WidgetTouchEvent event(true, NS_TOUCH_END, widget);
   event.widget = widget;
   event.time = PR_IntervalNow();
   event.touches.AppendElement(aTouch);
@@ -6017,7 +6016,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
 
   if (mIsDestroying ||
       (sDisableNonTestMouseEvents && !aEvent->mFlags.mIsSynthesizedForTests &&
-       NS_IS_MOUSE_EVENT(aEvent))) {
+       aEvent->HasMouseEventMessage())) {
     return NS_OK;
   }
 
@@ -6027,8 +6026,9 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     return NS_OK;
 
   nsIContent* capturingContent =
-    NS_IS_MOUSE_EVENT(aEvent) || aEvent->eventStructType == NS_WHEEL_EVENT ?
-      GetCapturingContent() : nullptr;
+    (aEvent->HasMouseEventMessage() ||
+     aEvent->eventStructType == NS_WHEEL_EVENT ? GetCapturingContent() :
+                                                 nullptr);
 
   nsCOMPtr<nsIDocument> retargetEventDoc;
   if (!aDontRetargetEvents) {
@@ -6041,7 +6041,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     // active window.  So, the events should be handled on the last focused
     // content in the last focused DOM window in same top level window.
     // Note, if no DOM window has been focused yet, we can discard the events.
-    if (NS_IsEventTargetedAtFocusedWindow(aEvent)) {
+    if (aEvent->IsTargetedAtFocusedWindow()) {
       nsCOMPtr<nsPIDOMWindow> window = GetFocusedDOMWindowInOurWindow();
       // No DOM window in same top level window has not been focused yet,
       // discard the events.
@@ -6071,7 +6071,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
         nsIFrame* frame = presShell->GetRootFrame();
         if (!frame) {
           if (aEvent->message == NS_QUERY_TEXT_CONTENT ||
-              NS_IS_CONTENT_COMMAND_EVENT(aEvent)) {
+              aEvent->IsContentCommandEvent()) {
             return NS_OK;
           }
 
@@ -6109,7 +6109,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     frame = GetNearestFrameContainingPresShell(this);
   }
 
-  bool dispatchUsingCoordinates = NS_IsEventUsingCoordinates(aEvent);
+  bool dispatchUsingCoordinates = aEvent->IsUsingCoordinates();
   if (dispatchUsingCoordinates) {
     NS_WARN_IF_FALSE(frame, "Nothing to handle this event!");
     if (!frame)
@@ -6198,7 +6198,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
       uint32_t flags = 0;
       if (aEvent->message == NS_TOUCH_START) {
         flags |= INPUT_IGNORE_ROOT_SCROLL_FRAME;
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
         // if this is a continuing session, ensure that all these events are
         // in the same document by taking the target of the events already in
         // the capture list
@@ -6330,7 +6330,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
       case NS_TOUCH_CANCEL:
       case NS_TOUCH_END: {
         // get the correct shell to dispatch to
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
         nsTArray< nsRefPtr<dom::Touch> >& touches = touchEvent->touches;
         for (uint32_t i = 0; i < touches.Length(); ++i) {
           dom::Touch* touch = touches[i];
@@ -6376,7 +6376,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     // to the active document when mouse is over some subdocument.
     nsEventStateManager* activeESM =
       nsEventStateManager::GetActiveEventStateManager();
-    if (activeESM && NS_IS_MOUSE_EVENT(aEvent) &&
+    if (activeESM && aEvent->HasMouseEventMessage() &&
         activeESM != shell->GetPresContext()->EventStateManager() &&
         static_cast<nsEventStateManager*>(activeESM)->GetPresContext()) {
       nsIPresShell* activeShell =
@@ -6409,7 +6409,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
     PushCurrentEventInfo(nullptr, nullptr);
 
     // key and IME related events go to the focused frame in this DOM window.
-    if (NS_IsEventTargetedAtFocusedContent(aEvent)) {
+    if (aEvent->IsTargetedAtFocusedContent()) {
       mCurrentEventContent = nullptr;
 
       nsCOMPtr<nsPIDOMWindow> window =
@@ -6499,7 +6499,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
       mCurrentEventFrame = nullptr;
       return HandleEventInternal(aEvent, aEventStatus);
     }
-    else if (NS_IS_KEY_EVENT(aEvent)) {
+    else if (aEvent->HasKeyEventMessage()) {
       // Keypress events in new blank tabs should not be completely thrown away.
       // Retarget them -- the parent chrome shell might make use of them.
       return RetargetEventToParent(aEvent, aEventStatus);
@@ -6719,7 +6719,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
         isHandlingUserInput = true;
         break;
       case NS_TOUCH_START: {
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
         // if there is only one touch in this touchstart event, assume that it is
         // the start of a new touch session and evict any old touches in the
         // queue
@@ -6747,7 +6747,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       case NS_TOUCH_END: {
         // Remove the changed touches
         // need to make sure we only remove touches that are ending here
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
         nsTArray< nsRefPtr<dom::Touch> >& touches = touchEvent->touches;
         for (uint32_t i = 0; i < touches.Length(); ++i) {
           dom::Touch* touch = touches[i];
@@ -6774,7 +6774,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       }
       case NS_TOUCH_MOVE: {
         // Check for touches that changed. Mark them add to queue
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+        WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
         nsTArray< nsRefPtr<dom::Touch> >& touches = touchEvent->touches;
         bool haveChanged = false;
         for (int32_t i = touches.Length(); i; ) {
@@ -6872,7 +6872,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       if (aEvent->eventStructType == NS_KEY_EVENT) {
         nsContentUtils::SetIsHandlingKeyBoardEvent(true);
       }
-      if (NS_IsAllowedToDispatchDOMEvent(aEvent)) {
+      if (aEvent->IsAllowedToDispatchDOMEvent()) {
         nsPresShellEventCB eventCB(this);
         if (aEvent->eventStructType == NS_TOUCH_EVENT) {
           DispatchTouchEvent(aEvent, aStatus, &eventCB, touchIsNew);
@@ -6939,7 +6939,7 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
               (aEvent->message == NS_TOUCH_MOVE && aTouchIsNew);
   bool preventDefault = false;
   nsEventStatus tmpStatus = nsEventStatus_eIgnore;
-  nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+  WidgetTouchEvent* touchEvent = static_cast<WidgetTouchEvent*>(aEvent);
 
   // loop over all touches and dispatch events on any that have changed
   for (uint32_t i = 0; i < touchEvent->touches.Length(); ++i) {
@@ -6964,7 +6964,7 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
       content = capturingContent;
     }
     // copy the event
-    nsTouchEvent newEvent(touchEvent->mFlags.mIsTrusted, touchEvent);
+    WidgetTouchEvent newEvent(touchEvent->mFlags.mIsTrusted, touchEvent);
     newEvent.target = targetPtr;
 
     nsRefPtr<PresShell> contentPresShell;
@@ -8586,14 +8586,14 @@ DumpToPNG(nsIPresShell* shell, nsAString& name) {
 
   nsRefPtr<gfxImageSurface> imgSurface =
      new gfxImageSurface(gfxIntSize(width, height),
-                         gfxImageSurface::ImageFormatARGB32);
+                         gfxImageFormatARGB32);
 
   nsRefPtr<gfxContext> imgContext = new gfxContext(imgSurface);
 
   nsRefPtr<gfxASurface> surface = 
     gfxPlatform::GetPlatform()->
     CreateOffscreenSurface(gfxIntSize(width, height),
-      gfxASurface::ContentFromFormat(gfxASurface::ImageFormatARGB32));
+      gfxASurface::ContentFromFormat(gfxImageFormatARGB32));
   NS_ENSURE_TRUE(surface, NS_ERROR_OUT_OF_MEMORY);
 
   nsRefPtr<gfxContext> context = new gfxContext(surface);
@@ -9529,22 +9529,22 @@ PresShell::GetRootPresShell()
 }
 
 void
-PresShell::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
-                               nsArenaMemoryStats *aArenaObjectsSize,
-                               size_t *aPresShellSize,
-                               size_t *aStyleSetsSize,
-                               size_t *aTextRunsSize,
-                               size_t *aPresContextSize)
+PresShell::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
+                                  nsArenaMemoryStats *aArenaObjectsSize,
+                                  size_t *aPresShellSize,
+                                  size_t *aStyleSetsSize,
+                                  size_t *aTextRunsSize,
+                                  size_t *aPresContextSize)
 {
-  mFrameArena.SizeOfExcludingThis(aMallocSizeOf, aArenaObjectsSize);
-  *aPresShellSize = aMallocSizeOf(this);
+  mFrameArena.AddSizeOfExcludingThis(aMallocSizeOf, aArenaObjectsSize);
+  *aPresShellSize += aMallocSizeOf(this);
   *aPresShellSize += aArenaObjectsSize->mOther;
 
-  *aStyleSetsSize = StyleSet()->SizeOfIncludingThis(aMallocSizeOf);
+  *aStyleSetsSize += StyleSet()->SizeOfIncludingThis(aMallocSizeOf);
 
-  *aTextRunsSize = SizeOfTextRuns(aMallocSizeOf);
+  *aTextRunsSize += SizeOfTextRuns(aMallocSizeOf);
 
-  *aPresContextSize = mPresContext->SizeOfIncludingThis(aMallocSizeOf);
+  *aPresContextSize += mPresContext->SizeOfIncludingThis(aMallocSizeOf);
 }
 
 size_t

@@ -157,7 +157,6 @@ FENNEC_JAVA_FILES = \
   TextSelectionHandle.java \
   ThumbnailHelper.java \
   TouchEventInterceptor.java \
-  UpdateServiceHelper.java \
   VideoPlayer.java \
   WebAppAllocator.java \
   WebAppImpl.java \
@@ -194,6 +193,7 @@ FENNEC_JAVA_FILES = \
   gfx/LayerView.java \
   gfx/NativePanZoomController.java \
   gfx/NinePatchTileLayer.java \
+  gfx/Overscroll.java \
   gfx/PanningPerfAPI.java \
   gfx/PanZoomController.java \
   gfx/PanZoomTarget.java \
@@ -252,6 +252,8 @@ FENNEC_JAVA_FILES = \
   menu/MenuPopup.java \
   preferences/SearchPreferenceCategory.java \
   preferences/SearchEnginePreference.java \
+  updater/UpdateServiceHelper.java \
+  updater/UpdateService.java \
   widget/ActivityChooserModel.java \
   widget/ButtonToast.java \
   widget/ArrowPopup.java \
@@ -266,7 +268,6 @@ FENNEC_JAVA_FILES = \
   widget/TwoWayView.java \
   GeckoNetworkManager.java \
   GeckoScreenOrientationListener.java \
-  UpdateService.java \
   GeckoUpdateReceiver.java \
   ReferrerReceiver.java \
   $(NULL)
@@ -649,7 +650,7 @@ RES_DRAWABLE_MDPI = \
   res/drawable-mdpi/ic_menu_bookmark_add.png \
   res/drawable-mdpi/ic_menu_bookmark_remove.png \
   res/drawable-mdpi/ic_menu_character_encoding.png \
-  res/drawable-mdpi/ic_menu_close_all_tabs.png \
+  res/drawable-mdpi/close.png \
   res/drawable-mdpi/ic_menu_forward.png \
   res/drawable-mdpi/ic_menu_guest.png \
   res/drawable-mdpi/ic_menu_new_private_tab.png \
@@ -666,11 +667,12 @@ RES_DRAWABLE_MDPI = \
   res/drawable-mdpi/icon_most_recent.png \
   res/drawable-mdpi/icon_most_recent_empty.png \
   res/drawable-mdpi/icon_most_visited.png \
-  res/drawable-mdpi/icon_most_visited_empty.png \
   res/drawable-mdpi/icon_openinapp.png \
   res/drawable-mdpi/icon_pageaction.png \
   res/drawable-mdpi/icon_reading_list_empty.png \
   res/drawable-mdpi/progress_spinner.png \
+  res/drawable-mdpi/play.png \
+  res/drawable-mdpi/pause.png \
   res/drawable-mdpi/tab_indicator_divider.9.png \
   res/drawable-mdpi/tab_indicator_selected.9.png \
   res/drawable-mdpi/tab_indicator_selected_focused.9.png \
@@ -763,7 +765,7 @@ RES_DRAWABLE_HDPI = \
   res/drawable-hdpi/ic_menu_bookmark_add.png \
   res/drawable-hdpi/ic_menu_bookmark_remove.png \
   res/drawable-hdpi/ic_menu_character_encoding.png \
-  res/drawable-hdpi/ic_menu_close_all_tabs.png \
+  res/drawable-hdpi/close.png \
   res/drawable-hdpi/ic_menu_forward.png \
   res/drawable-hdpi/ic_menu_guest.png \
   res/drawable-hdpi/ic_menu_new_private_tab.png \
@@ -780,7 +782,6 @@ RES_DRAWABLE_HDPI = \
   res/drawable-hdpi/icon_most_recent.png \
   res/drawable-hdpi/icon_most_recent_empty.png \
   res/drawable-hdpi/icon_most_visited.png \
-  res/drawable-hdpi/icon_most_visited_empty.png \
   res/drawable-hdpi/icon_openinapp.png \
   res/drawable-hdpi/icon_pageaction.png \
   res/drawable-hdpi/icon_reading_list_empty.png \
@@ -818,6 +819,8 @@ RES_DRAWABLE_HDPI = \
   res/drawable-hdpi/menu_item_more.png \
   res/drawable-hdpi/menu_item_uncheck.png \
   res/drawable-hdpi/pin.png \
+  res/drawable-hdpi/play.png \
+  res/drawable-hdpi/pause.png \
   res/drawable-hdpi/shield.png \
   res/drawable-hdpi/shield_doorhanger.png \
   res/drawable-hdpi/tabs_normal.png \
@@ -862,7 +865,7 @@ RES_DRAWABLE_XHDPI = \
   res/drawable-xhdpi/ic_menu_addons_filler.png \
   res/drawable-xhdpi/ic_menu_bookmark_add.png \
   res/drawable-xhdpi/ic_menu_bookmark_remove.png \
-  res/drawable-xhdpi/ic_menu_close_all_tabs.png \
+  res/drawable-xhdpi/close.png \
   res/drawable-xhdpi/ic_menu_character_encoding.png \
   res/drawable-xhdpi/ic_menu_forward.png \
   res/drawable-xhdpi/ic_menu_guest.png \
@@ -880,7 +883,6 @@ RES_DRAWABLE_XHDPI = \
   res/drawable-xhdpi/icon_most_recent.png \
   res/drawable-xhdpi/icon_most_recent_empty.png \
   res/drawable-xhdpi/icon_most_visited.png \
-  res/drawable-xhdpi/icon_most_visited_empty.png \
   res/drawable-xhdpi/icon_openinapp.png \
   res/drawable-xhdpi/icon_pageaction.png \
   res/drawable-xhdpi/icon_reading_list_empty.png \
@@ -917,6 +919,8 @@ RES_DRAWABLE_XHDPI = \
   res/drawable-xhdpi/menu_item_more.png \
   res/drawable-xhdpi/menu_item_uncheck.png \
   res/drawable-xhdpi/pin.png \
+  res/drawable-xhdpi/play.png \
+  res/drawable-xhdpi/pause.png \
   res/drawable-xhdpi/shield.png \
   res/drawable-xhdpi/shield_doorhanger.png \
   res/drawable-xhdpi/tab_indicator_divider.9.png \

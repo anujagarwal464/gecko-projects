@@ -16,8 +16,9 @@
 #include "nsIServiceManager.h"
 #include "nsMenuUtilsX.h"
 #include "nsToolkit.h"
-#include "nsGUIEvent.h"
+#include "mozilla/MiscEvents.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::widget;
@@ -419,7 +420,7 @@ nsCocoaUtils::InitNPCocoaEvent(NPCocoaEvent* aNPCocoaEvent)
 
 // static
 void
-nsCocoaUtils::InitPluginEvent(nsPluginEvent &aPluginEvent,
+nsCocoaUtils::InitPluginEvent(WidgetPluginEvent &aPluginEvent,
                               NPCocoaEvent &aCocoaEvent)
 {
   aPluginEvent.time = PR_IntervalNow();

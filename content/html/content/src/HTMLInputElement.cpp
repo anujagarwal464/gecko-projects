@@ -42,7 +42,6 @@
 #include "nsIServiceManager.h"
 #include "nsError.h"
 #include "nsIEditor.h"
-#include "nsGUIEvent.h"
 #include "nsIIOService.h"
 #include "nsDocument.h"
 #include "nsAttrValueOrString.h"
@@ -58,7 +57,10 @@
 #include "nsLayoutUtils.h"
 
 #include "nsIDOMMutationEvent.h"
-#include "nsMutationEvent.h"
+#include "mozilla/ContentEvents.h"
+#include "mozilla/MutationEvent.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/TouchEvents.h"
 #include "nsEventListenerManager.h"
 
 #include "nsRuleData.h"
@@ -2808,7 +2810,7 @@ HTMLInputElement::MaybeSubmitForm(nsPresContext* aPresContext)
     // If there's only one text control, just submit the form
     // Hold strong ref across the event
     nsRefPtr<mozilla::dom::HTMLFormElement> form = mForm;
-    nsFormEvent event(true, NS_FORM_SUBMIT);
+    InternalFormEvent event(true, NS_FORM_SUBMIT);
     nsEventStatus status = nsEventStatus_eIgnore;
     shell->HandleDOMEventWithTarget(mForm, &event, &status);
   }
@@ -3010,7 +3012,7 @@ HTMLInputElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   // DOMActivate that was dispatched directly, this will be set, but if we're
   // a DOMActivate dispatched from click handling, it will not be set.
   bool outerActivateEvent =
-    (NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) ||
+    (aVisitor.mEvent->IsLeftClickEvent() ||
      (aVisitor.mEvent->message == NS_UI_ACTIVATE && !mInInternalActivate));
 
   if (outerActivateEvent) {
@@ -3240,7 +3242,7 @@ HTMLInputElement::MaybeInitPickers(nsEventChainPostVisitor& aVisitor)
   // - it's the left mouse button.
   // We do not prevent non-trusted click because authors can already use
   // .click(). However, the pickers will follow the rules of popup-blocking.
-  if (NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
+  if (aVisitor.mEvent->IsLeftClickEvent() &&
       !aVisitor.mEvent->mFlags.mDefaultPrevented) {
     if (mType == NS_FORM_INPUT_FILE) {
       return InitFilePicker(FILE_PICKER_FILE);
@@ -3294,7 +3296,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
   // the click.
   if (aVisitor.mEventStatus != nsEventStatus_eConsumeNoDefault &&
       !IsSingleLineTextControl(true) &&
-      NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
+      aVisitor.mEvent->IsLeftClickEvent() &&
       !ShouldPreventDOMActivateDispatch(aVisitor.mEvent->originalTarget)) {
     nsUIEvent actEvent(aVisitor.mEvent->mFlags.mIsTrusted, NS_UI_ACTIVATE, 1);
 
@@ -3391,7 +3393,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
           // just because we raised a window.
           nsIFocusManager* fm = nsFocusManager::GetFocusManager();
           if (fm && IsSingleLineTextControl(false) &&
-              !(static_cast<nsFocusEvent*>(aVisitor.mEvent))->fromRaise &&
+              !(static_cast<InternalFocusEvent*>(aVisitor.mEvent))->fromRaise &&
               SelectTextFieldOnFocus()) {
             nsIDocument* document = GetCurrentDoc();
             if (document) {
@@ -3614,8 +3616,8 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
         case NS_FORM_INPUT_SUBMIT:
         case NS_FORM_INPUT_IMAGE:
           if (mForm) {
-            nsFormEvent event(true, (mType == NS_FORM_INPUT_RESET) ?
-                              NS_FORM_RESET : NS_FORM_SUBMIT);
+            InternalFormEvent event(true,
+              (mType == NS_FORM_INPUT_RESET) ? NS_FORM_RESET : NS_FORM_SUBMIT);
             event.originator      = this;
             nsEventStatus status  = nsEventStatus_eIgnore;
 
@@ -3707,7 +3709,8 @@ HTMLInputElement::PostHandleEventForRangeThumb(nsEventChainPostVisitor& aVisitor
           CancelRangeThumbDrag();
         }
       } else {
-        nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aVisitor.mEvent);
+        WidgetTouchEvent* touchEvent =
+          static_cast<WidgetTouchEvent*>(aVisitor.mEvent);
         if (touchEvent->touches.Length() == 1) {
           StartRangeThumbDrag(inputEvent);
         } else if (mIsDraggingRange) {

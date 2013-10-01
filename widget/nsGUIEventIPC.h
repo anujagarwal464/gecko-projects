@@ -9,7 +9,10 @@
 #include "ipc/IPCMessageUtils.h"
 #include "mozilla/GfxMessageUtils.h"
 #include "mozilla/dom/Touch.h"
-#include "nsGUIEvent.h"
+#include "mozilla/MiscEvents.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/TouchEvents.h"
 
 namespace IPC
 {
@@ -198,9 +201,9 @@ struct ParamTraits<nsMouseEvent>
 };
 
 template<>
-struct ParamTraits<nsTouchEvent>
+struct ParamTraits<mozilla::WidgetTouchEvent>
 {
-  typedef nsTouchEvent paramType;
+  typedef mozilla::WidgetTouchEvent paramType;
 
   static void Write(Message* aMsg, const paramType& aParam)
   {
@@ -484,9 +487,9 @@ struct ParamTraits<nsIMEUpdatePreference>
 };
 
 template<>
-struct ParamTraits<nsPluginEvent>
+struct ParamTraits<mozilla::WidgetPluginEvent>
 {
-  typedef nsPluginEvent paramType;
+  typedef mozilla::WidgetPluginEvent paramType;
 
   static void Write(Message* aMsg, const paramType& aParam)
   {

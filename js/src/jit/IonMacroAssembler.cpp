@@ -14,12 +14,14 @@
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
-#include "jit/BaselineRegisters.h"
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
+#include "jit/ParallelFunctions.h"
 #include "vm/ForkJoin.h"
 
-#include "jsgcinlines.h"
+#ifdef JSGC_GENERATIONAL
+# include "jsgcinlines.h"
+#endif
 #include "jsinferinlines.h"
 
 using namespace js;
@@ -53,12 +55,12 @@ class TypeWrapper {
     inline JSObject *getSingleObject(unsigned) const {
         if (t_.isSingleObject())
             return t_.singleObject();
-        return NULL;
+        return nullptr;
     }
     inline types::TypeObject *getTypeObject(unsigned) const {
         if (t_.isTypeObject())
             return t_.typeObject();
-        return NULL;
+        return nullptr;
     }
 };
 
@@ -338,6 +340,53 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
     JS_ASSERT(diffG == 0);
 }
 
+bool MacroAssembler::maybeCallPostBarrier(Register object, ConstantOrRegister value,
+                                          Register maybeScratch) {
+    bool usedMaybeScratch = false;
+
+#ifdef JSGC_GENERATIONAL
+    JSRuntime *runtime = GetIonContext()->runtime;
+    if (value.constant()) {
+        JS_ASSERT_IF(value.value().isGCThing(),
+                     !gc::IsInsideNursery(runtime, value.value().toGCThing()));
+        return false;
+    }
+
+    TypedOrValueRegister valReg = value.reg();
+    if (valReg.hasTyped() && valReg.type() != MIRType_Object)
+        return false;
+
+    Label done;
+    Label tenured;
+    branchPtr(Assembler::Below, object, ImmWord(runtime->gcNurseryStart_), &tenured);
+    branchPtr(Assembler::Below, object, ImmWord(runtime->gcNurseryEnd_), &done);
+
+    bind(&tenured);
+    if (valReg.hasValue()) {
+        branchTestObject(Assembler::NotEqual, valReg.valueReg(), &done);
+        extractObject(valReg, maybeScratch);
+        usedMaybeScratch = true;
+    }
+    Register valObj = valReg.hasValue() ? maybeScratch : valReg.typedReg().gpr();
+    branchPtr(Assembler::Below, valObj, ImmWord(runtime->gcNurseryStart_), &done);
+    branchPtr(Assembler::AboveOrEqual, valObj, ImmWord(runtime->gcNurseryEnd_), &done);
+
+    GeneralRegisterSet saveRegs = GeneralRegisterSet::Volatile();
+    PushRegsInMask(saveRegs);
+    Register callScratch = saveRegs.getAny();
+    setupUnalignedABICall(2, callScratch);
+    movePtr(ImmPtr(runtime), callScratch);
+    passABIArg(callScratch);
+    passABIArg(object);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, PostWriteBarrier));
+    PopRegsInMask(saveRegs);
+
+    bind(&done);
+#endif
+
+    return usedMaybeScratch;
+}
+
 void
 MacroAssembler::branchNurseryPtr(Condition cond, const Address &ptr1, const ImmMaybeNurseryPtr &ptr2,
                                  Label *label)
@@ -468,7 +517,7 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
       case ScalarTypeRepresentation::TYPE_INT16:
       case ScalarTypeRepresentation::TYPE_UINT16:
       case ScalarTypeRepresentation::TYPE_INT32:
-        loadFromTypedArray(arrayType, src, AnyRegister(dest.scratchReg()), InvalidReg, NULL);
+        loadFromTypedArray(arrayType, src, AnyRegister(dest.scratchReg()), InvalidReg, nullptr);
         tagValue(JSVAL_TYPE_INT32, dest.scratchReg(), dest);
         break;
       case ScalarTypeRepresentation::TYPE_UINT32:
@@ -497,13 +546,15 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
         }
         break;
       case ScalarTypeRepresentation::TYPE_FLOAT32:
-        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(), NULL);
+        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(),
+                           nullptr);
         if (LIRGenerator::allowFloat32Optimizations())
             convertFloatToDouble(ScratchFloatReg, ScratchFloatReg);
         boxDouble(ScratchFloatReg, dest);
         break;
       case ScalarTypeRepresentation::TYPE_FLOAT64:
-        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(), NULL);
+        loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(),
+                           nullptr);
         boxDouble(ScratchFloatReg, dest);
         break;
       default:
@@ -771,7 +822,7 @@ MacroAssembler::initGCThing(const Register &obj, JSObject *templateObject)
 
     storePtr(ImmGCPtr(templateObject->lastProperty()), Address(obj, JSObject::offsetOfShape()));
     storePtr(ImmGCPtr(templateObject->type()), Address(obj, JSObject::offsetOfType()));
-    storePtr(ImmPtr(NULL), Address(obj, JSObject::offsetOfSlots()));
+    storePtr(ImmPtr(nullptr), Address(obj, JSObject::offsetOfSlots()));
 
     if (templateObject->is<ArrayObject>()) {
         JS_ASSERT(!templateObject->getDenseInitializedLength());
@@ -1003,8 +1054,7 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
         load32(Address(temp, BaselineFrame::reverseOffsetOfFrameSize()), temp);
         makeFrameDescriptor(temp, IonFrame_BaselineJS);
         push(temp);
-        loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)), temp);
-        push(temp);
+        push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)));
         enterFakeExitFrame();
 
         // If monitorStub is non-null, handle resumeAddr appropriately.
@@ -1012,7 +1062,7 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
         Label done;
         branchPtr(Assembler::Equal,
                   Address(bailoutInfo, offsetof(BaselineBailoutInfo, monitorStub)),
-                  ImmPtr(NULL),
+                  ImmPtr(nullptr),
                   &noMonitor);
 
         //
@@ -1021,12 +1071,9 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
         {
             // Save needed values onto stack temporarily.
             pushValue(Address(bailoutInfo, offsetof(BaselineBailoutInfo, valueR0)));
-            loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeFramePtr)), temp);
-            push(temp);
-            loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)), temp);
-            push(temp);
-            loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, monitorStub)), temp);
-            push(temp);
+            push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeFramePtr)));
+            push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)));
+            push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, monitorStub)));
 
             // Call a stub to free allocated memory and create arguments objects.
             setupUnalignedABICall(1, temp);
@@ -1040,7 +1087,6 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
             enterMonRegs.take(BaselineStubReg);
             enterMonRegs.take(BaselineFrameReg);
             enterMonRegs.takeUnchecked(BaselineTailCallReg);
-            Register jitcodeReg = enterMonRegs.takeAny();
 
             pop(BaselineStubReg);
             pop(BaselineTailCallReg);
@@ -1050,11 +1096,10 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
             // Discard exit frame.
             addPtr(Imm32(IonExitFrameLayout::SizeWithFooter()), StackPointer);
 
-            loadPtr(Address(BaselineStubReg, ICStub::offsetOfStubCode()), jitcodeReg);
 #if defined(JS_CPU_X86) || defined(JS_CPU_X64)
             push(BaselineTailCallReg);
 #endif
-            jump(jitcodeReg);
+            jump(Address(BaselineStubReg, ICStub::offsetOfStubCode()));
         }
 
         //
@@ -1065,10 +1110,8 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
             // Save needed values onto stack temporarily.
             pushValue(Address(bailoutInfo, offsetof(BaselineBailoutInfo, valueR0)));
             pushValue(Address(bailoutInfo, offsetof(BaselineBailoutInfo, valueR1)));
-            loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeFramePtr)), temp);
-            push(temp);
-            loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)), temp);
-            push(temp);
+            push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeFramePtr)));
+            push(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)));
 
             // Call a stub to free allocated memory and create arguments objects.
             setupUnalignedABICall(1, temp);
@@ -1203,7 +1246,7 @@ MacroAssembler::enterFakeParallelExitFrame(Register slice, Register scratch,
     loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
     linkParallelExitFrame(scratch);
     Push(ImmPtr(codeVal));
-    Push(ImmPtr(NULL));
+    Push(ImmPtr(nullptr));
 }
 
 void
@@ -1339,7 +1382,7 @@ MacroAssembler::printf(const char *output)
 }
 
 void printf1_(const char *output, uintptr_t value) {
-    char *line = JS_sprintf_append(NULL, output, value);
+    char *line = JS_sprintf_append(nullptr, output, value);
     printf("%s", line);
     js_free(line);
 }
@@ -1525,7 +1568,7 @@ MacroAssembler::PushEmptyRooted(VMFunction::RootType rootType)
       case VMFunction::RootPropertyName:
       case VMFunction::RootFunction:
       case VMFunction::RootCell:
-        Push(ImmPtr(NULL));
+        Push(ImmPtr(nullptr));
         break;
       case VMFunction::RootValue:
         Push(UndefinedValue());
@@ -1809,7 +1852,7 @@ MacroAssembler::convertTypedOrValueToInt(TypedOrValueRegister src, FloatRegister
             clampIntToUint8(output);
         break;
       case MIRType_Double:
-        convertDoubleToInt(src.typedReg().fpu(), output, temp, NULL, fail, behavior);
+        convertDoubleToInt(src.typedReg().fpu(), output, temp, nullptr, fail, behavior);
         break;
       case MIRType_String:
       case MIRType_Object:

@@ -22,7 +22,9 @@
 #include "nsIFormControlFrame.h"
 #include "nsIDOMEvent.h"
 #include "nsIDocument.h"
-#include "nsGUIEvent.h"
+#include "mozilla/ContentEvents.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
 #include "nsUnicharUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsEventDispatcher.h"
@@ -197,7 +199,7 @@ HTMLButtonElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   // DOMActivate that was dispatched directly, this will be set, but if we're
   // a DOMActivate dispatched from click handling, it will not be set.
   bool outerActivateEvent =
-    (NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) ||
+    (aVisitor.mEvent->IsLeftClickEvent() ||
      (aVisitor.mEvent->message == NS_UI_ACTIVATE &&
       !mInInternalActivate));
 
@@ -224,7 +226,7 @@ HTMLButtonElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
   }
 
   if (aVisitor.mEventStatus != nsEventStatus_eConsumeNoDefault &&
-      NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent)) {
+      aVisitor.mEvent->IsLeftClickEvent()) {
     nsUIEvent actEvent(aVisitor.mEvent->mFlags.mIsTrusted, NS_UI_ACTIVATE, 1);
 
     nsCOMPtr<nsIPresShell> shell = aVisitor.mPresContext->GetPresShell();
@@ -345,9 +347,8 @@ HTMLButtonElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
     if (aVisitor.mItemFlags & NS_OUTER_ACTIVATE_EVENT) {
       if (mForm && (mType == NS_FORM_BUTTON_SUBMIT ||
                     mType == NS_FORM_BUTTON_RESET)) {
-        nsFormEvent event(true,
-                          (mType == NS_FORM_BUTTON_RESET)
-                          ? NS_FORM_RESET : NS_FORM_SUBMIT);
+        InternalFormEvent event(true,
+          (mType == NS_FORM_BUTTON_RESET) ? NS_FORM_RESET : NS_FORM_SUBMIT);
         event.originator     = this;
         nsEventStatus status = nsEventStatus_eIgnore;
 

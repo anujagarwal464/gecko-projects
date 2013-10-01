@@ -45,15 +45,12 @@ const kCHILD_PROCESS_MESSAGES = ["Push:Register", "Push:Unregister",
                                  "Push:Registrations"];
 
 // This is a singleton
-this.PushDB = function PushDB(aGlobal) {
+this.PushDB = function PushDB() {
   debug("PushDB()");
 
   // set the indexeddb database
-  let idbManager = Cc["@mozilla.org/dom/indexeddb/manager;1"]
-                     .getService(Ci.nsIIndexedDatabaseManager);
-  idbManager.initWindowless(aGlobal);
   this.initDBHelper(kPUSHDB_DB_NAME, kPUSHDB_DB_VERSION,
-                    [kPUSHDB_STORE_NAME], aGlobal);
+                    [kPUSHDB_STORE_NAME]);
 };
 
 this.PushDB.prototype = {
@@ -177,7 +174,7 @@ this.PushDB.prototype = {
       kPUSHDB_STORE_NAME,
       function txnCb(aTxn, aStore) {
         let index = aStore.index("manifestURL");
-        let range = self.dbGlobal.IDBKeyRange.only(aManifestURL);
+        let range = IDBKeyRange.only(aManifestURL);
         aTxn.result = [];
         index.openCursor(range).onsuccess = function(event) {
           let cursor = event.target.result;
@@ -436,12 +433,26 @@ this.PushService = {
    */
   _willBeWokenUpByUDP: false,
 
+  /**
+   * Sends a message to the Push Server through an open websocket.
+   * typeof(msg) shall be an object
+   */
+  _wsSendMessage: function(msg) {
+    if (!this._ws) {
+      debug("No WebSocket initialized. Cannot send a message.");
+      return;
+    }
+    msg = JSON.stringify(msg);
+    debug("Sending message: " + msg);
+    this._ws.sendMsg(msg);
+  },
+
   init: function() {
     debug("init()");
     if (!prefs.get("enabled"))
         return null;
 
-    this._db = new PushDB(this);
+    this._db = new PushDB();
 
     let ppmm = Cc["@mozilla.org/parentprocessmessagemanager;1"]
                  .getService(Ci.nsIMessageBroadcaster);
@@ -453,8 +464,6 @@ this.PushService = {
     this._alarmID = null;
 
     this._requestTimeout = prefs.get("requestTimeout");
-
-    this._udpPort = prefs.get("udp.port");
 
     this._startListeningIfChannelsPresent();
 
@@ -730,7 +739,7 @@ this.PushService = {
       // handle the exception, as the lack of a pong will lead to the socket
       // being reset.
       try {
-        this._ws.sendMsg('{}');
+        this._wsSendMessage({});
       } catch (e) {
       }
 
@@ -949,7 +958,7 @@ this.PushService = {
       this._shutdownWS();
     }
 
-    this._ws.sendMsg(JSON.stringify(data));
+    this._wsSendMessage(data);
     // Process the next one as soon as possible.
     setTimeout(this._processNextRequestInQueue.bind(this), 0);
   },
@@ -1280,6 +1289,10 @@ this.PushService = {
     // Since we've had a successful connection reset the retry fail count.
     this._retryFailCount = 0;
 
+    // Openning an available UDP port.
+    // _listenForUDPWakeup will return the opened port number
+    this._udpPort = this._listenForUDPWakeup();
+
     let data = {
       messageType: "hello",
     }
@@ -1305,7 +1318,7 @@ this.PushService = {
       // On success, ids is an array, on error its not.
       data["channelIDs"] = ids.map ?
                            ids.map(function(el) { return el.channelID; }) : [];
-      this._ws.sendMsg(JSON.stringify(data));
+      this._wsSendMessage(data);
       this._currentState = STATE_WAITING_FOR_HELLO;
     }
 
@@ -1400,7 +1413,6 @@ this.PushService = {
       debug("Server closed with promise to wake up");
       this._willBeWokenUpByUDP = true;
       // TODO: there should be no pending requests
-      this._listenForUDPWakeup();
     }
   },
 
@@ -1424,9 +1436,11 @@ this.PushService = {
 
     this._udpServer = Cc["@mozilla.org/network/server-socket-udp;1"]
                         .createInstance(Ci.nsIUDPServerSocket);
-    this._udpServer.init(this._udpPort, false);
+    this._udpServer.init(-1, false);
     this._udpServer.asyncListen(this);
     debug("listenForUDPWakeup listening on " + this._udpPort);
+
+    return this._udpServer.port;
   },
 
   /**
@@ -1446,6 +1460,7 @@ this.PushService = {
    */
   onStopListening: function(aServ, aStatus) {
     debug("UDP Server socket was shutdown. Status: " + aStatus);
+    this._udpPort = undefined;
     this._beginWSSetup();
   },
 
@@ -1464,12 +1479,12 @@ this.PushService = {
 
       let nm = Cc["@mozilla.org/network/manager;1"].getService(Ci.nsINetworkManager);
       if (nm.active && nm.active.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE) {
-        let mcp = Cc["@mozilla.org/ril/content-helper;1"].getService(Ci.nsIMobileConnectionProvider);
-        if (mcp.iccInfo) {
+        let icc = Cc["@mozilla.org/ril/content-helper;1"].getService(Ci.nsIIccProvider);
+        if (icc.iccInfo) {
           debug("Running on mobile data");
           return {
-            mcc: mcp.iccInfo.mcc,
-            mnc: mcp.iccInfo.mnc,
+            mcc: icc.iccInfo.mcc,
+            mnc: icc.iccInfo.mnc,
             ip:  nm.active.ip
           }
         }

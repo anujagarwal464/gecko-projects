@@ -21,6 +21,7 @@
 #include "gfxTypes.h"                   // for gfxFloat
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/ClearOnShutdown.h"    // for ClearOnShutdown
+#include "mozilla/EventForwards.h"      // for nsEventStatus_*
 #include "mozilla/Preferences.h"        // for Preferences
 #include "mozilla/ReentrantMonitor.h"   // for ReentrantMonitorAutoEnter, etc
 #include "mozilla/StaticPtr.h"          // for StaticAutoPtr
@@ -41,8 +42,6 @@
 #include "nsAutoPtr.h"                  // for nsRefPtr
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsDebug.h"                    // for NS_WARNING
-#include "nsEvent.h"
-#include "nsGUIEvent.h"                 // for nsInputEvent, nsTouchEvent, etc
 #include "nsISupportsImpl.h"
 #include "nsMathUtils.h"                // for NS_hypot
 #include "nsPoint.h"                    // for nsIntPoint
@@ -1182,11 +1181,6 @@ void AsyncPanZoomController::NotifyLayersUpdated(const FrameMetrics& aLayerMetri
 
     mX.CancelTouch();
     mY.CancelTouch();
-
-    // XXX If this is the very first time we're getting a layers update we need to
-    // trigger another repaint, or the B2G browser shows stale content. This needs
-    // to be investigated and fixed.
-    needContentRepaint |= (isDefault && !aLayerMetrics.IsDefault());
 
     mFrameMetrics = aLayerMetrics;
     mState = NOTHING;

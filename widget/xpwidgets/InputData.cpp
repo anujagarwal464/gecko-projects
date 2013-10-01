@@ -5,20 +5,21 @@
 
 #include "InputData.h"
 
-#include "nsGUIEvent.h"
 #include "mozilla/dom/Touch.h"
 #include "nsDebug.h"
 #include "nsThreadUtils.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TouchEvents.h"
 
 namespace mozilla {
 
 using namespace dom;
 
-MultiTouchInput::MultiTouchInput(const nsTouchEvent& aTouchEvent)
+MultiTouchInput::MultiTouchInput(const WidgetTouchEvent& aTouchEvent)
   : InputData(MULTITOUCH_INPUT, aTouchEvent.time)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(),
-                    "Can only copy from nsTouchEvent on main thread");
+                    "Can only copy from WidgetTouchEvent on main thread");
 
   switch (aTouchEvent.message) {
     case NS_TOUCH_START:

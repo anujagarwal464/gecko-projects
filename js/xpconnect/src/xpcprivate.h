@@ -764,6 +764,7 @@ public:
     void AddContextCallback(xpcContextCallback cb);
     void RemoveContextCallback(xpcContextCallback cb);
 
+    static JSContext* DefaultJSContextCallback(JSRuntime *rt);
     static void ActivityCallback(void *arg, bool active);
     static void CTypesActivityCallback(JSContext *cx,
                                        js::CTypesActivityType type);
@@ -785,7 +786,7 @@ private:
 
     void ReleaseIncrementally(nsTArray<nsISupports *> &array);
 
-    static const char* mStrings[IDX_TOTAL_COUNT];
+    static const char* const mStrings[IDX_TOTAL_COUNT];
     jsid mStrIDs[IDX_TOTAL_COUNT];
     jsval mStrJSVals[IDX_TOTAL_COUNT];
 
@@ -2190,8 +2191,8 @@ public:
      : public nsXPCOMCycleCollectionParticipant
     {
       NS_DECL_CYCLE_COLLECTION_CLASS_BODY(XPCWrappedNative, XPCWrappedNative)
-      NS_IMETHOD Root(void *p) { return NS_OK; }
-      NS_IMETHOD Unroot(void *p) { return NS_OK; }
+      NS_IMETHOD_(void) Root(void *p) { }
+      NS_IMETHOD_(void) Unroot(void *p) { }
       NS_IMPL_GET_XPCOM_CYCLE_COLLECTION_PARTICIPANT(XPCWrappedNative)
     };
     NS_CHECK_FOR_RIGHT_PARTICIPANT_IMPL(XPCWrappedNative);
@@ -3585,6 +3586,18 @@ NewFunctionForwarder(JSContext *cx, JS::HandleId id, JS::HandleObject callable,
 nsresult
 ThrowAndFail(nsresult errNum, JSContext *cx, bool *retval);
 
+struct GlobalProperties {
+    GlobalProperties() { mozilla::PodZero(this); }
+    bool Parse(JSContext *cx, JS::HandleObject obj);
+    bool Define(JSContext *cx, JS::HandleObject obj);
+    bool indexedDB;
+    bool XMLHttpRequest;
+    bool TextDecoder;
+    bool TextEncoder;
+    bool atob;
+    bool btoa;
+};
+
 // Infallible.
 already_AddRefed<nsIXPCComponents_utils_Sandbox>
 NewSandboxConstructor();
@@ -3594,17 +3607,6 @@ bool
 IsSandbox(JSObject *obj);
 
 struct SandboxOptions {
-    struct GlobalProperties {
-        GlobalProperties() { mozilla::PodZero(this); }
-        bool Parse(JSContext* cx, JS::HandleObject obj);
-        bool Define(JSContext* cx, JS::HandleObject obj);
-        bool XMLHttpRequest;
-        bool TextDecoder;
-        bool TextEncoder;
-        bool atob;
-        bool btoa;
-    };
-
     SandboxOptions(JSContext *cx)
         : wantXrays(true)
         , wantComponents(true)
@@ -3620,7 +3622,7 @@ struct SandboxOptions {
     JS::RootedObject proto;
     nsCString sandboxName;
     JS::RootedObject sameZoneAs;
-    GlobalProperties GlobalProperties;
+    GlobalProperties globalProperties;
     JS::RootedValue metadata;
 };
 

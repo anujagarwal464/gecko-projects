@@ -8,10 +8,10 @@
 // Moz headers (alphabetical)
 #include "keyboardlayout.h"   // mModifierKeyState
 #include "nsBaseHashtable.h"  // mTouches
-#include "nsGUIEvent.h"       // mTouchEvent (nsTouchEvent)
 #include "nsHashKeys.h"       // type of key for mTouches
 #include "mozwrlbase.h"
 #include "nsDeque.h"
+#include "mozilla/EventForwards.h"
 
 // System headers (alphabetical)
 #include <EventToken.h>     // EventRegistrationToken
@@ -21,8 +21,6 @@
 
 // Moz forward declarations
 class MetroWidget;
-enum nsEventStatus;
-class nsGUIEvent;
 struct nsIntPoint;
 
 namespace mozilla {
@@ -147,8 +145,8 @@ public:
   HRESULT OnRightTapped(IGestureRecognizer* aSender,
                         IRightTappedEventArgs* aArgs);
 
-  void HandleSingleTap(const mozilla::LayoutDeviceIntPoint& aPoint);
-  void HandleLongTap(const mozilla::LayoutDeviceIntPoint& aPoint);
+  void HandleSingleTap(const Point& aPoint);
+  void HandleLongTap(const Point& aPoint);
 
 private:
   Microsoft::WRL::ComPtr<ICoreWindow> mWindow;
@@ -161,8 +159,15 @@ private:
   void RegisterInputEvents();
   void UnregisterInputEvents();
 
+  // Hit testing for chrome content
+  bool mChromeHitTestCacheForTouch;
+  bool HitTestChrome(const LayoutDeviceIntPoint& pt);
+
   // Event processing helpers.  See function definitions for more info.
+  void TransformRefPoint(const Point& aPosition,
+                         LayoutDeviceIntPoint& aRefPointOut);
   void OnPointerNonTouch(IPointerPoint* aPoint);
+  void AddPointerMoveDataToRecognizer(IPointerEventArgs* aArgs);
   void InitGeckoMouseEventFromPointerPoint(nsMouseEvent* aEvent,
                                            IPointerPoint* aPoint);
   void ProcessManipulationDelta(ManipulationDelta const& aDelta,
@@ -218,7 +223,7 @@ private:
   // the updated touchpoint info and record the fact that the touchpoint
   // has changed.  If ever we try to update a touchpoint has already
   // changed, we dispatch a touch event containing all the changed touches.
-  void InitTouchEventTouchList(nsTouchEvent* aEvent);
+  void InitTouchEventTouchList(WidgetTouchEvent* aEvent);
   nsBaseHashtable<nsUint32HashKey,
                   nsRefPtr<mozilla::dom::Touch>,
                   nsRefPtr<mozilla::dom::Touch> > mTouches;
@@ -259,8 +264,9 @@ private:
 
   // Async event dispatching
   void DispatchAsyncEventIgnoreStatus(nsInputEvent* aEvent);
-  void DispatchAsyncTouchEventIgnoreStatus(nsTouchEvent* aEvent);
-  void DispatchAsyncTouchEventWithCallback(nsTouchEvent* aEvent, void (MetroInput::*Callback)());
+  void DispatchAsyncTouchEventIgnoreStatus(WidgetTouchEvent* aEvent);
+  void DispatchAsyncTouchEventWithCallback(WidgetTouchEvent* aEvent,
+                                           void (MetroInput::*Callback)());
 
   // Async event callbacks
   void DeliverNextQueuedEventIgnoreStatus();

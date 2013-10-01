@@ -18,12 +18,13 @@
 #include "nsToolkit.h"
 #include "nsString.h"
 #include "nsTArray.h"
-#include "nsEvent.h"
 #include "gfxWindowsSurface.h"
 #include "nsWindowDbg.h"
 #include "cairo.h"
 #include "nsITimer.h"
 #include "nsRegion.h"
+#include "mozilla/EventForwards.h"
+#include "mozilla/MouseEvents.h"
 #include "mozilla/TimeStamp.h"
 #include "nsMargin.h"
 
@@ -360,13 +361,12 @@ protected:
    * Event handlers
    */
   virtual void            OnDestroy();
-  virtual bool            OnMove(int32_t aX, int32_t aY);
   virtual bool            OnResize(nsIntRect &aWindowRect);
   bool                    OnGesture(WPARAM wParam, LPARAM lParam);
   bool                    OnTouch(WPARAM wParam, LPARAM lParam);
   bool                    OnHotKey(WPARAM wParam, LPARAM lParam);
   bool                    OnPaint(HDC aDC, uint32_t aNestingLevel);
-  void                    OnWindowPosChanged(WINDOWPOS *wp, bool& aResult);
+  void                    OnWindowPosChanged(WINDOWPOS* wp);
   void                    OnWindowPosChanging(LPWINDOWPOS& info);
   void                    OnSysColorChanged();
 

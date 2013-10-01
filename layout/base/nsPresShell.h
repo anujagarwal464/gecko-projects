@@ -31,11 +31,12 @@
 #include "nsIWidget.h"
 #include "nsStyleSet.h"
 #include "nsFrameSelection.h"
-#include "nsGUIEvent.h"
 #include "nsContentUtils.h" // For AddScriptBlocker().
 #include "nsRefreshDriver.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
 
 class nsRange;
 class nsIDragService;
@@ -313,12 +314,12 @@ public:
       IsLayoutFlushObserver(this);
   }
 
-  void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                           nsArenaMemoryStats *aArenaObjectsSize,
-                           size_t *aPresShellSize,
-                           size_t *aStyleSetsSize,
-                           size_t *aTextRunsSize,
-                           size_t *aPresContextSize) MOZ_OVERRIDE;
+  void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                              nsArenaMemoryStats *aArenaObjectsSize,
+                              size_t *aPresShellSize,
+                              size_t *aStyleSetsSize,
+                              size_t *aTextRunsSize,
+                              size_t *aPresContextSize) MOZ_OVERRIDE;
   size_t SizeOfTextRuns(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   virtual void AddInvalidateHiddenPresShellObserver(nsRefreshDriver *aDriver) MOZ_OVERRIDE;

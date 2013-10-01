@@ -123,6 +123,8 @@ ClippedImage::ShouldClip()
   // available yet, in which case we'll try again later.
   if (mShouldClip.empty()) {
     int32_t width, height;
+    nsRefPtr<imgStatusTracker> innerImageStatusTracker =
+      InnerImage()->GetStatusTracker();
     if (InnerImage()->HasError()) {
       // If there's a problem with the inner image we'll let it handle everything.
       mShouldClip.construct(false);
@@ -134,7 +136,8 @@ ClippedImage::ShouldClip()
       // If the clipping region is the same size as the underlying image we
       // don't have to do anything.
       mShouldClip.construct(!mClip.IsEqualInterior(nsIntRect(0, 0, width, height)));
-    } else if (InnerImage()->GetStatusTracker().IsLoading()) {
+    } else if (innerImageStatusTracker &&
+               innerImageStatusTracker->IsLoading()) {
       // The image just hasn't finished loading yet. We don't yet know whether
       // clipping with be needed or not for now. Just return without memoizing
       // anything.
@@ -249,7 +252,7 @@ ClippedImage::GetFrameInternal(const nsIntSize& aViewportSize,
     gfxRect imageRect(0, 0, mClip.width, mClip.height);
     gfxUtils::DrawPixelSnapped(ctx, drawable, gfxMatrix(),
                                imageRect, imageRect, imageRect, imageRect,
-                               gfxASurface::ImageFormatARGB32,
+                               gfxImageFormatARGB32,
                                gfxPattern::FILTER_FAST);
 
     // Cache the resulting surface.
@@ -336,7 +339,7 @@ ClippedImage::Draw(gfxContext* aContext,
     gfxRect subimage(aSubimage.x, aSubimage.y, aSubimage.width, aSubimage.height);
     gfxUtils::DrawPixelSnapped(aContext, drawable, aUserSpaceToImageSpace,
                                subimage, sourceRect, imageRect, aFill,
-                               gfxASurface::ImageFormatARGB32, aFilter);
+                               gfxImageFormatARGB32, aFilter);
 
     return NS_OK;
   }

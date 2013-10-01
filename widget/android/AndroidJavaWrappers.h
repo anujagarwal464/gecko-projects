@@ -17,6 +17,7 @@
 #include "nsIObserver.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/dom/Touch.h"
+#include "mozilla/EventForwards.h"
 #include "InputData.h"
 #include "Units.h"
 
@@ -587,7 +588,7 @@ public:
     int Width() { return mWidth; }
     int Height() { return mHeight; }
     int RequestId() { return mCount; } // for convenience
-    nsTouchEvent MakeTouchEvent(nsIWidget* widget);
+    WidgetTouchEvent MakeTouchEvent(nsIWidget* widget);
     MultiTouchInput MakeMultiTouchInput(nsIWidget* widget);
     void UnionRect(nsIntRect const& aRect);
     nsIObserver *Observer() { return mObserver; }

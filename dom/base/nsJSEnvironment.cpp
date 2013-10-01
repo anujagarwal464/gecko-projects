@@ -28,7 +28,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIPrompt.h"
 #include "nsIObserverService.h"
-#include "nsGUIEvent.h"
 #include "nsITimer.h"
 #include "nsIAtom.h"
 #include "nsContentUtils.h"
@@ -81,6 +80,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/ContentEvents.h"
 
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "GeckoProfiler.h"
@@ -306,7 +306,7 @@ private:
 // XXXmarkh - This function is mis-placed!
 bool
 NS_HandleScriptError(nsIScriptGlobalObject *aScriptGlobal,
-                     nsScriptErrorEvent *aErrorEvent,
+                     InternalScriptErrorEvent *aErrorEvent,
                      nsEventStatus *aStatus)
 {
   bool called = false;
@@ -444,7 +444,7 @@ public:
         docShell->GetPresContext(getter_AddRefs(presContext));
 
         if (presContext) {
-          nsScriptErrorEvent errorevent(true, NS_LOAD_ERROR);
+          InternalScriptErrorEvent errorevent(true, NS_LOAD_ERROR);
 
           errorevent.fileName = mFileName.get();
 

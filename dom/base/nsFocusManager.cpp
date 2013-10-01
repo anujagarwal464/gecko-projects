@@ -37,7 +37,9 @@
 #include "nsIObserverService.h"
 #include "nsIObjectFrame.h"
 #include "nsBindingManager.h"
+#include "nsStyleCoord.h"
 
+#include "mozilla/ContentEvents.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
@@ -1851,7 +1853,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    nsFocusEvent event(true, mType);
+    InternalFocusEvent event(true, mType);
     event.mFlags.mBubbles = false;
     event.fromRaise = mWindowRaised;
     event.isRefocus = mIsRefocus;

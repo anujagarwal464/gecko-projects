@@ -5,13 +5,14 @@
 
 /* rendering object to wrap rendering objects that should be scrollable */
 
+#include "nsGfxScrollFrame.h"
+
 #include "base/compiler_specific.h"
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
 #include "nsView.h"
 #include "nsIScrollable.h"
 #include "nsContainerFrame.h"
-#include "nsGfxScrollFrame.h"
 #include "nsGkAtoms.h"
 #include "nsINameSpaceManager.h"
 #include "nsContentList.h"
@@ -24,7 +25,6 @@
 #include "nsITextControlFrame.h"
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsNodeInfoManager.h"
-#include "nsGUIEvent.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsAutoPtr.h"
 #include "nsPresState.h"
@@ -33,6 +33,7 @@
 #include "nsContentUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsBidiUtils.h"
+#include "mozilla/ContentEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/dom/Element.h"
@@ -2752,14 +2753,14 @@ nsGfxScrollFrameInner::FireScrollPortEvent()
   // DOM event.
   bool both = vertChanged && horizChanged &&
                 newVerticalOverflow == newHorizontalOverflow;
-  nsScrollPortEvent::orientType orient;
+  InternalScrollPortEvent::orientType orient;
   if (both) {
-    orient = nsScrollPortEvent::both;
+    orient = InternalScrollPortEvent::both;
     mHorizontalOverflow = newHorizontalOverflow;
     mVerticalOverflow = newVerticalOverflow;
   }
   else if (vertChanged) {
-    orient = nsScrollPortEvent::vertical;
+    orient = InternalScrollPortEvent::vertical;
     mVerticalOverflow = newVerticalOverflow;
     if (horizChanged) {
       // We need to dispatch a separate horizontal DOM event. Do that the next
@@ -2769,15 +2770,14 @@ nsGfxScrollFrameInner::FireScrollPortEvent()
     }
   }
   else {
-    orient = nsScrollPortEvent::horizontal;
+    orient = InternalScrollPortEvent::horizontal;
     mHorizontalOverflow = newHorizontalOverflow;
   }
 
-  nsScrollPortEvent event(true,
-                          (orient == nsScrollPortEvent::horizontal ?
-                           mHorizontalOverflow : mVerticalOverflow) ?
-                            NS_SCROLLPORT_OVERFLOW : NS_SCROLLPORT_UNDERFLOW,
-                          nullptr);
+  InternalScrollPortEvent event(true,
+    (orient == InternalScrollPortEvent::horizontal ? mHorizontalOverflow :
+                                                     mVerticalOverflow) ?
+    NS_SCROLLPORT_OVERFLOW : NS_SCROLLPORT_UNDERFLOW, nullptr);
   event.orient = orient;
   return nsEventDispatcher::Dispatch(mOuter->GetContent(),
                                      mOuter->PresContext(), &event);
@@ -4203,7 +4203,7 @@ nsGfxScrollFrameInner::FireScrolledAreaEvent()
 {
   mScrolledAreaEvent.Forget();
 
-  nsScrollAreaEvent event(true, NS_SCROLLEDAREACHANGED, nullptr);
+  InternalScrollAreaEvent event(true, NS_SCROLLEDAREACHANGED, nullptr);
   nsPresContext *prescontext = mOuter->PresContext();
   nsIContent* content = mOuter->GetContent();
 

@@ -10,6 +10,7 @@
 #include "mozilla/dom/indexedDB/IndexedDatabase.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EventForwards.h"
 #include "mozilla/dom/DOMError.h"
 #include "mozilla/dom/IDBRequestBinding.h"
 #include "mozilla/ErrorResult.h"
@@ -104,7 +105,7 @@ public:
 
   void CaptureCaller();
 
-  void FillScriptErrorEvent(nsScriptErrorEvent* aEvent) const;
+  void FillScriptErrorEvent(mozilla::InternalScriptErrorEvent* aEvent) const;
 
   bool
   IsPending() const

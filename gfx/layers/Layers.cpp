@@ -118,7 +118,7 @@ LayerManager::GetScrollableLayers(nsTArray<Layer*>& aArray)
 
 already_AddRefed<gfxASurface>
 LayerManager::CreateOptimalSurface(const gfxIntSize &aSize,
-                                   gfxASurface::gfxImageFormat aFormat)
+                                   gfxImageFormat aFormat)
 {
   return gfxPlatform::GetPlatform()->
     CreateOffscreenSurface(aSize, gfxASurface::ContentFromFormat(aFormat));
@@ -127,7 +127,7 @@ LayerManager::CreateOptimalSurface(const gfxIntSize &aSize,
 already_AddRefed<gfxASurface>
 LayerManager::CreateOptimalMaskSurface(const gfxIntSize &aSize)
 {
-  return CreateOptimalSurface(aSize, gfxASurface::ImageFormatA8);
+  return CreateOptimalSurface(aSize, gfxImageFormatA8);
 }
 
 TemporaryRef<DrawTarget>
@@ -1171,9 +1171,10 @@ void WriteSnapshotToDumpFile(LayerManager* aManager, gfxASurface* aSurf)
   WriteSnapshotToDumpFile_internal(aManager, aSurf);
 }
 
-void WriteSnapshotToDumpFile(Compositor* aCompositor, gfxASurface* aSurf)
+void WriteSnapshotToDumpFile(Compositor* aCompositor, DrawTarget* aTarget)
 {
-  WriteSnapshotToDumpFile_internal(aCompositor, aSurf);
+  nsRefPtr<gfxASurface> surf = gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(aTarget);
+  WriteSnapshotToDumpFile_internal(aCompositor, surf);
 }
 #endif
 

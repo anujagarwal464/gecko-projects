@@ -33,14 +33,16 @@
 #ifdef MOZ_OMX_DECODER
 #include "MediaResourceManagerService.h"
 #endif
+#include "mozilla/TouchEvents.h"
 #include "mozilla/FileUtils.h"
 #include "mozilla/Hal.h"
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Services.h"
+#include "mozilla/TextEvents.h"
 #include "nsAppShell.h"
 #include "mozilla/dom/Touch.h"
 #include "nsGkAtoms.h"
-#include "nsGUIEvent.h"
 #include "nsIObserverService.h"
 #include "nsIScreen.h"
 #include "nsScreenManagerGonk.h"
@@ -54,6 +56,10 @@
 #include "libui/InputReader.h"
 #include "libui/InputDispatcher.h"
 #include "cutils/properties.h"
+
+#ifdef MOZ_NUWA_PROCESS
+#include "ipc/Nuwa.h"
+#endif
 
 #include "GeckoProfiler.h"
 
@@ -156,7 +162,7 @@ sendMouseEvent(uint32_t msg, uint64_t timeMs, int x, int y, bool forwardToChildr
 }
 
 static void
-addDOMTouch(UserInputData& data, nsTouchEvent& event, int i)
+addDOMTouch(UserInputData& data, WidgetTouchEvent& event, int i)
 {
     const ::Touch& touch = data.motion.touches[i];
     event.touches.AppendElement(
@@ -192,7 +198,7 @@ sendTouchEvent(UserInputData& data, bool* captured)
         break;
     }
 
-    nsTouchEvent event(true, msg, NULL);
+    WidgetTouchEvent event(true, msg, NULL);
 
     event.time = data.timeMs;
 
@@ -467,9 +473,18 @@ GeckoInputReaderPolicy::setDisplayInfo()
                   "Orientation enums not matched!");
 
     DisplayViewport viewport;
-    viewport.setNonDisplayViewport(gScreenBounds.width, gScreenBounds.height);
     viewport.displayId = 0;
     viewport.orientation = nsScreenGonk::GetRotation();
+    viewport.physicalRight = viewport.deviceWidth = gScreenBounds.width;
+    viewport.physicalBottom = viewport.deviceHeight = gScreenBounds.height;
+    if (viewport.orientation == DISPLAY_ORIENTATION_90 ||
+        viewport.orientation == DISPLAY_ORIENTATION_270) {
+        viewport.logicalRight = gScreenBounds.height;
+        viewport.logicalBottom = gScreenBounds.width;
+    } else {
+        viewport.logicalRight = gScreenBounds.width;
+        viewport.logicalBottom = gScreenBounds.height;
+    }
     mConfig.setDisplayInfo(false, viewport);
 }
 
@@ -721,6 +736,11 @@ nsAppShell::Init()
     if (obsServ) {
         obsServ->AddObserver(this, "browser-ui-startup-complete", false);
     }
+
+#ifdef MOZ_NUWA_PROCESS
+    // Make sure main thread was woken up after Nuwa fork.
+    NuwaAddConstructor((void (*)(void *))&NotifyEvent, nullptr);
+#endif
 
     // Delay initializing input devices until the screen has been
     // initialized (and we know the resolution).

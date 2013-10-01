@@ -29,10 +29,14 @@
 
 #include "nsIFrame.h"
 #include "nsIWidget.h"
-#include "nsGUIEvent.h"
 #include "nsCharsetSource.h"
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
+
+#include "mozilla/MiscEvents.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/TouchEvents.h"
 
 #include "nsViewManager.h"
 
@@ -78,6 +82,7 @@
 #include "nsIBaseWindow.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "GeckoProfiler.h"
 
 #ifdef XP_WIN
 #undef GetClassName
@@ -872,7 +877,7 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
   } else {
     return NS_ERROR_UNEXPECTED;
   }
-  nsTouchEvent event(true, msg, widget);
+  WidgetTouchEvent event(true, msg, widget);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.widget = widget;
   event.time = PR_Now();
@@ -1259,7 +1264,7 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
   else
     return NS_ERROR_FAILURE;
  
-  nsSimpleGestureEvent event(true, msg, widget, aDirection, aDelta);
+  WidgetSimpleGestureEvent event(true, msg, widget, aDirection, aDelta);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.clickCount = aClickCount;
   event.time = PR_IntervalNow();
@@ -2011,7 +2016,7 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
   else
     return NS_ERROR_FAILURE;
 
-  nsContentCommandEvent event(true, msg, widget);
+  WidgetContentCommandEvent event(true, msg, widget);
   if (msg == NS_CONTENT_COMMAND_PASTE_TRANSFERABLE) {
     event.mTransferable = aTransferable;
   }
@@ -2531,6 +2536,23 @@ nsDOMWindowUtils::GetOuterWindowWithId(uint64_t aWindowID,
 
   *aWindow = nsGlobalWindow::GetOuterWindowWithId(aWindowID);
   NS_IF_ADDREF(*aWindow);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetContainerElement(nsIDOMElement** aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsCOMPtr<nsIDOMElement> element =
+    do_QueryInterface(window->GetFrameElementInternal());
+
+  element.forget(aResult);
   return NS_OK;
 }
 

@@ -7,6 +7,7 @@
 #define nsDOMScrollAreaEvent_h__
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EventForwards.h"
 #include "nsIDOMScrollAreaEvent.h"
 #include "nsDOMUIEvent.h"
 
@@ -19,7 +20,7 @@ class nsDOMScrollAreaEvent : public nsDOMUIEvent,
 public:
   nsDOMScrollAreaEvent(mozilla::dom::EventTarget* aOwner,
                        nsPresContext *aPresContext,
-                       nsScrollAreaEvent *aEvent);
+                       mozilla::InternalScrollAreaEvent* aEvent);
   virtual ~nsDOMScrollAreaEvent();
 
   NS_DECL_ISUPPORTS_INHERITED

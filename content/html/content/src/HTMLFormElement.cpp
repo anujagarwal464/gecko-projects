@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ContentEvents.h"
 #include "mozilla/dom/HTMLFormElement.h"
 #include "mozilla/dom/HTMLFormElementBinding.h"
 #include "nsIHTMLDocument.h"
@@ -17,7 +18,6 @@
 #include "nsContentUtils.h"
 #include "nsInterfaceHashtable.h"
 #include "nsContentList.h"
-#include "nsGUIEvent.h"
 #include "nsCOMArray.h"
 #include "nsAutoPtr.h"
 #include "nsTArray.h"
@@ -422,7 +422,7 @@ HTMLFormElement::Submit()
 NS_IMETHODIMP
 HTMLFormElement::Reset()
 {
-  nsFormEvent event(true, NS_FORM_RESET);
+  InternalFormEvent event(true, NS_FORM_RESET);
   nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this), nullptr,
                               &event);
   return NS_OK;
@@ -822,13 +822,15 @@ HTMLFormElement::BuildSubmission(nsFormSubmission** aFormSubmission,
   nsGenericHTMLElement* originatingElement = nullptr;
   if (aEvent) {
     if (NS_FORM_EVENT == aEvent->eventStructType) {
-      nsIContent* originator = ((nsFormEvent *)aEvent)->originator;
+      nsIContent* originator =
+        static_cast<InternalFormEvent*>(aEvent)->originator;
       if (originator) {
         if (!originator->IsHTML()) {
           return NS_ERROR_UNEXPECTED;
         }
         originatingElement =
-          static_cast<nsGenericHTMLElement*>(((nsFormEvent *)aEvent)->originator);
+          static_cast<nsGenericHTMLElement*>(
+            static_cast<InternalFormEvent*>(aEvent)->originator);
       }
     }
   }

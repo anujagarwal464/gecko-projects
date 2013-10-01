@@ -8,7 +8,7 @@
 
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint64_t, uint32_t, uint8_t
-#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxTypes.h"
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for RefPtr, TemporaryRef, etc
@@ -39,7 +39,7 @@ namespace layers {
 
 class Compositor;
 class CompositableHost;
-class CompositableQuirks;
+class CompositableBackendSpecificData;
 class SurfaceDescriptor;
 class ISurfaceAllocator;
 class TextureSourceOGL;
@@ -118,10 +118,10 @@ public:
    */
   virtual TileIterator* AsTileIterator() { return nullptr; }
 
-  virtual void SetCompositableQuirks(CompositableQuirks* aQuirks);
+  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData);
 
 protected:
-  RefPtr<CompositableQuirks> mQuirks;
+  RefPtr<CompositableBackendSpecificData> mCompositableBackendData;
 };
 
 
@@ -382,7 +382,7 @@ public:
     return LayerRenderState();
   }
 
-  virtual void SetCompositableQuirks(CompositableQuirks* aQuirks);
+  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData);
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char *Name() { return "TextureHost"; }
@@ -393,7 +393,7 @@ protected:
   uint64_t mID;
   RefPtr<TextureHost> mNextTexture;
   TextureFlags mFlags;
-  RefPtr<CompositableQuirks> mQuirks;
+  RefPtr<CompositableBackendSpecificData> mCompositableBackendData;
 };
 
 /**
@@ -675,7 +675,7 @@ public:
    * Ensure that a buffer of the given size/type has been allocated so that
    * we can update it using Update and/or CopyTo.
    */
-  virtual void EnsureBuffer(const nsIntSize& aSize, gfxASurface::gfxContentType aType)
+  virtual void EnsureBuffer(const nsIntSize& aSize, gfxContentType aType)
   {
     NS_RUNTIMEABORT("DeprecatedTextureHost doesn't support EnsureBuffer");
   }
@@ -697,6 +697,7 @@ public:
 
 
   SurfaceDescriptor* GetBuffer() const { return mBuffer; }
+  virtual SurfaceDescriptor* LockSurfaceDescriptor() const { return GetBuffer(); }
 
   /**
    * Set a SurfaceDescriptor for this texture host. By setting a buffer and
