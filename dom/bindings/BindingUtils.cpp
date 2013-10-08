@@ -17,6 +17,7 @@
 
 #include "AccessCheck.h"
 #include "jsfriendapi.h"
+#include "js/OldDebugAPI.h"
 #include "nsIDOMGlobalPropertyInitializer.h"
 #include "nsIXPConnect.h"
 #include "WrapperFactory.h"
@@ -216,6 +217,10 @@ ErrorResult::ReportJSExceptionFromJSImplementation(JSContext* aCx)
   errorReport.errorNumber = JSMSG_USER_DEFINED_ERROR;
   errorReport.ucmessage = message.get();
   errorReport.exnType = JSEXN_ERR;
+  JS::Rooted<JSScript*> script(aCx);
+  if (JS_DescribeScriptedCaller(aCx, &script, &errorReport.lineno)) {
+    errorReport.filename = JS_GetScriptFilename(aCx, script);
+  }
   JS_ThrowReportedError(aCx, nullptr, &errorReport);
   JS_RemoveValueRoot(aCx, &mJSException);
   
@@ -2040,8 +2045,13 @@ ConstructJSImplementation(JSContext* aCx, const char* aContractId,
         aRv.Throw(rv);
         return nullptr;
       }
-      MOZ_ASSERT(initReturn.isUndefined(),
-                 "nsIDOMGlobalPropertyInitializer should return undefined");
+      // With JS-implemented WebIDL, the return value of init() is not used to determine
+      // if init() failed, so init() should only return undefined. Any kind of permission
+      // or pref checking must happen by adding an attribute to the WebIDL interface.
+      if (!initReturn.isUndefined()) {
+        MOZ_ASSERT(false, "The init() method for JS-implemented WebIDL should not return anything");
+        MOZ_CRASH();
+      }
     }
     // Extract the JS implementation from the XPCOM object.
     nsCOMPtr<nsIXPConnectWrappedJS> implWrapped =

@@ -65,6 +65,10 @@ XPCOMUtils.defineLazyGetter(this, "interAppCommService", function() {
          .getService(Ci.nsIInterAppCommService);
 });
 
+XPCOMUtils.defineLazyServiceGetter(this, "dataStoreService",
+                                   "@mozilla.org/datastore-service;1",
+                                   "nsIDataStoreService");
+
 XPCOMUtils.defineLazyGetter(this, "msgmgr", function() {
   return Cc["@mozilla.org/system-message-internal;1"]
          .getService(Ci.nsISystemMessagesInternal);
@@ -252,6 +256,12 @@ this.DOMApplicationRegistry = {
       // twice
       this._readManifests(ids, (function readCSPs(aResults) {
         aResults.forEach(function registerManifest(aResult) {
+          if (!aResult.manifest) {
+            // If we can't load the manifest, we probably have a corrupted
+            // registry. We delete the app since we can't do anything with it.
+            delete this.webapps[aResult.id];
+            return;
+          }
           let app = this.webapps[aResult.id];
           app.csp = aResult.manifest.csp || "";
           app.role = aResult.manifest.role || "";
@@ -264,6 +274,20 @@ this.DOMApplicationRegistry = {
       // Nothing else to do but notifying we're ready.
       this.notifyAppsRegistryReady();
     }
+  },
+
+  updateDataStoreForApp: function(aId) {
+    if (!this.webapps[aId]) {
+      return;
+    }
+
+    // Create or Update the DataStore for this app
+    this._readManifests([{ id: aId }], (function(aResult) {
+      this.updateDataStore(this.webapps[aId].localId,
+                           this.webapps[aId].origin,
+                           this.webapps[aId].manifestURL,
+                           aResult[0].manifest);
+    }).bind(this));
   },
 
   updatePermissionsForApp: function updatePermissionsForApp(aId) {
@@ -512,6 +536,12 @@ this.DOMApplicationRegistry = {
         // installPreinstalledApp() removes the ones failing to install.
         this._saveApps();
       }
+
+      // DataStores must be initialized at startup.
+      for (let id in this.webapps) {
+        this.updateDataStoreForApp(id);
+      }
+
       this.registerAppsHandlers(runUpdate);
     }).bind(this);
 
@@ -526,6 +556,30 @@ this.DOMApplicationRegistry = {
       onAppsLoaded();
 #endif
     }).bind(this));
+  },
+
+  updateDataStore: function(aId, aOrigin, aManifestURL, aManifest) {
+    if ('datastores-owned' in aManifest) {
+      for (let name in aManifest['datastores-owned']) {
+        let readonly = "access" in aManifest['datastores-owned'][name]
+                         ? aManifest['datastores-owned'][name].access == 'readonly'
+                         : false;
+
+        dataStoreService.installDataStore(aId, name, aOrigin, aManifestURL,
+                                          readonly);
+      }
+    }
+
+    if ('datastores-access' in aManifest) {
+      for (let name in aManifest['datastores-access']) {
+        let readonly = ("readonly" in aManifest['datastores-access'][name]) &&
+                       !aManifest['datastores-access'][name].readonly
+                         ? false : true;
+
+        dataStoreService.installAccessDataStore(aId, name, aOrigin,
+                                                aManifestURL, readonly);
+      }
+    }
   },
 
   // |aEntryPoint| is either the entry_point name or the null in which case we
@@ -816,6 +870,12 @@ this.DOMApplicationRegistry = {
       aResults.forEach(function registerManifest(aResult) {
         let app = this.webapps[aResult.id];
         let manifest = aResult.manifest;
+        if (!manifest) {
+          // If we can't load the manifest, we probably have a corrupted
+          // registry. We delete the app since we can't do anything with it.
+          delete this.webapps[aResult.id];
+          return;
+        }
         app.name = manifest.name;
         app.csp = manifest.csp || "";
         app.role = manifest.role || "";
@@ -1380,7 +1440,8 @@ this.DOMApplicationRegistry = {
                 manifestURL: app.manifestURL },
               true);
           }
-
+          this.updateDataStore(this.webapps[id].localId, app.origin,
+                               app.manifestURL, aData);
           this.broadcastMessage("Webapps:PackageEvent",
                                 { type: "applied",
                                   manifestURL: app.manifestURL,
@@ -1585,6 +1646,9 @@ this.DOMApplicationRegistry = {
             manifestURL: aData.manifestURL
           }, true);
         }
+
+        this.updateDataStore(this.webapps[id].localId, app.origin,
+                             app.manifestURL, app.manifest);
 
         app.name = manifest.name;
         app.csp = manifest.csp || "";
@@ -2077,6 +2141,8 @@ this.DOMApplicationRegistry = {
         this._saveApps((function() {
           this.updateAppHandlers(null, aManifest, appObject);
           this.broadcastMessage("Webapps:AddApp", { id: aId, app: appObject });
+          Services.obs.notifyObservers(null, "webapps-installed",
+            JSON.stringify({ manifestURL: appObject.manifestURL }));
 
           if (supportUseCurrentProfile()) {
             // Update the permissions for this app.
@@ -2085,6 +2151,10 @@ this.DOMApplicationRegistry = {
                                                       manifestURL: appObject.manifestURL },
                                                     true);
           }
+
+          this.updateDataStore(this.webapps[aId].localId, appObject.origin,
+                               appObject.manifestURL, aManifest);
+
           debug("About to fire Webapps:PackageEvent 'installed'");
           this.broadcastMessage("Webapps:PackageEvent",
                                 { type: "installed",
@@ -2187,6 +2257,9 @@ this.DOMApplicationRegistry = {
           this.uninstall(aData, aData.mm);
         }).bind(this));
       }
+
+      this.updateDataStore(this.webapps[id].localId,  this.webapps[id].origin,
+                           this.webapps[id].manifestURL, jsonManifest);
     }
 
     ["installState", "downloadAvailable",
@@ -2208,6 +2281,8 @@ this.DOMApplicationRegistry = {
     this._saveApps((function() {
       this.broadcastMessage("Webapps:AddApp", { id: id, app: appObject });
       this.broadcastMessage("Webapps:Install:Return:OK", aData);
+      Services.obs.notifyObservers(null, "webapps-installed",
+        JSON.stringify({ manifestURL: app.manifestURL }));
     }).bind(this));
 
     if (!aData.isPackage) {

@@ -261,6 +261,7 @@ OmxDecoder::OmxDecoder(MediaResource *aResource,
   mAudioSampleRate(-1),
   mDurationUs(-1),
   mMP3FrameParser(aResource->GetLength()),
+  mIsMp3(false),
   mVideoBuffer(nullptr),
   mAudioBuffer(nullptr),
   mIsVideoSeeking(false),
@@ -327,6 +328,12 @@ bool OmxDecoder::Init() {
   if (extractor == nullptr) {
     NS_WARNING("Could not create MediaExtractor");
     return false;
+  }
+
+  const char* extractorMime;
+  sp<MetaData> meta = extractor->getMetaData();
+  if (meta->findCString(kKeyMIMEType, &extractorMime) && !strcasecmp(extractorMime, AUDIO_MP3)) {
+    mIsMp3 = true;
   }
 
   ssize_t audioTrackIndex = -1;
@@ -623,7 +630,7 @@ bool OmxDecoder::SetAudioFormat() {
 
 void OmxDecoder::NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset)
 {
-  if (!mMP3FrameParser.IsMP3()) {
+  if (!mAudioTrack.get() || !mIsMp3 || !mMP3FrameParser.IsMP3()) {
     return;
   }
 
@@ -999,9 +1006,11 @@ void OmxDecoder::ReleaseAllPendingVideoBuffersLocked()
 
 bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
 {
-  // We read data in chunks of 8 MiB. We can reduce this
+  // We read data in chunks of 32 KiB. We can reduce this
   // value if media, such as sdcards, is too slow.
-  static const int64_t sReadSize = 8 * 1024 * 1024;
+  // Because of SD card's slowness, need to keep sReadSize to small size.
+  // See Bug 914870.
+  static const int64_t sReadSize = 32 * 1024;
 
   NS_ASSERTION(!NS_IsMainThread(), "Should not be on main thread.");
 

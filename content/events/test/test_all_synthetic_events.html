@@ -96,6 +96,10 @@ const kEventConstructors = {
                                                          return e;
                                                        },
                                              },
+  DataStoreChangeEvent:                      { create: function (aName, aProps) {
+                                                         return new DataStoreChangeEvent(aProps);
+                                                       },
+                                             },
   DeviceLightEvent:                          { create: function (aName, aProps) {
                                                          return new DeviceLightEvent(aName, aProps);
                                                        },
@@ -135,6 +139,10 @@ const kEventConstructors = {
                                                          return e;
                                                        },
                                              },
+  ErrorEvent:                                { create: function (aName, aProps) {
+                                                         return new ErrorEvent(aName, aProps);
+                                                       },
+  },
   ElementReplaceEvent:                       { create: function (aName, aProps) {
                                                          return new ElementReplaceEvent(aName, aProps);
                                                        },
@@ -378,6 +386,10 @@ const kEventConstructors = {
                                                                           aProps.ctrlKey, aProps.altKey, aProps.shiftKey, aProps.metaKey,
                                                                           aProps.touches, aProps.targetTouches, aProps.changedTouches);
                                                          return e;
+                                                       },
+                                             },
+  TrackEvent:                                { create: function (aName, aProps) {
+                                                         return new TrackEvent(aName, aProps);
                                                        },
                                              },
   TransitionEvent:                           { create: function (aName, aProps) {

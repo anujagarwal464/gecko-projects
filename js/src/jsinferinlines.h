@@ -16,6 +16,7 @@
 #include "jsanalyze.h"
 
 #include "builtin/ParallelArray.h"
+#include "jit/ExecutionModeInlines.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
 #include "vm/NumberObject.h"
@@ -28,7 +29,7 @@
 inline bool
 js::TaggedProto::isObject() const
 {
-    /* Skip NULL and Proxy::LazyProto. */
+    /* Skip nullptr and Proxy::LazyProto. */
     return uintptr_t(proto) > uintptr_t(Proxy::LazyProto);
 }
 
@@ -87,68 +88,26 @@ namespace types {
 // CompilerOutput & RecompileInfo
 /////////////////////////////////////////////////////////////////////
 
-inline
-CompilerOutput::CompilerOutput()
-  : script(NULL),
-    kindInt(Ion),
-    pendingRecompilation(false)
-{
-}
-
 inline jit::IonScript *
 CompilerOutput::ion() const
 {
 #ifdef JS_ION
+    // Note: If type constraints are generated before compilation has finished
+    // (i.e. after IonBuilder but before CodeGenerator::link) then a valid
+    // CompilerOutput may not yet have an associated IonScript.
     JS_ASSERT(isValid());
-    switch (kind()) {
-      case Ion: return script->ionScript();
-      case ParallelIon: return script->parallelIonScript();
-    }
+    jit::IonScript *ion = jit::GetIonScript(script(), mode());
+    JS_ASSERT(ion != ION_COMPILING_SCRIPT);
+    return ion;
 #endif
     MOZ_ASSUME_UNREACHABLE("Invalid kind of CompilerOutput");
-}
-
-inline bool
-CompilerOutput::isValid() const
-{
-    if (!script)
-        return false;
-
-#if defined(DEBUG) && defined(JS_ION)
-    TypeCompartment &types = script->compartment()->types;
-#endif
-
-    switch (kind()) {
-      case Ion:
-#ifdef JS_ION
-        if (script->hasIonScript()) {
-            JS_ASSERT(this == script->ionScript()->recompileInfo().compilerOutput(types));
-            return true;
-        }
-        if (script->isIonCompilingOffThread())
-            return true;
-#endif
-        return false;
-
-      case ParallelIon:
-#ifdef JS_ION
-        if (script->hasParallelIonScript()) {
-            JS_ASSERT(this == script->parallelIonScript()->recompileInfo().compilerOutput(types));
-            return true;
-        }
-        if (script->isParallelIonCompilingOffThread())
-            return true;
-#endif
-        return false;
-    }
-    return false;
 }
 
 inline CompilerOutput*
 RecompileInfo::compilerOutput(TypeCompartment &types) const
 {
     if (!types.constrainedOutputs || outputIndex >= types.constrainedOutputs->length())
-        return NULL;
+        return nullptr;
     return &(*types.constrainedOutputs)[outputIndex];
 }
 
@@ -349,75 +308,6 @@ struct AutoEnterAnalysis
     }
 };
 
-/*
- * Structure marking the currently compiled script, for constraints which can
- * trigger recompilation.
- */
-struct AutoEnterCompilation
-{
-    JSContext *cx;
-    RecompileInfo &info;
-    CompilerOutput::Kind kind;
-
-    AutoEnterCompilation(JSContext *cx, CompilerOutput::Kind kind)
-      : cx(cx),
-        info(cx->compartment()->types.compiledInfo),
-        kind(kind)
-    {
-        JS_ASSERT(cx->compartment()->activeAnalysis);
-        JS_ASSERT(info.outputIndex == RecompileInfo::NoCompilerRunning);
-    }
-
-    bool init(JSScript *script)
-    {
-        CompilerOutput co;
-        co.script = script;
-        co.setKind(kind);
-
-        JS_ASSERT(!co.isValid());
-        TypeCompartment &types = cx->compartment()->types;
-        if (!types.constrainedOutputs) {
-            types.constrainedOutputs = cx->new_< Vector<CompilerOutput> >(cx);
-            if (!types.constrainedOutputs) {
-                types.setPendingNukeTypes(cx);
-                return false;
-            }
-        }
-
-        info.outputIndex = types.constrainedOutputs->length();
-        // I hope we GC before we reach 64k of compilation attempts.
-        if (info.outputIndex >= RecompileInfo::NoCompilerRunning)
-            return false;
-
-        if (!types.constrainedOutputs->append(co)) {
-            info.outputIndex = RecompileInfo::NoCompilerRunning;
-            return false;
-        }
-        return true;
-    }
-
-    void initExisting(RecompileInfo oldInfo)
-    {
-        // Initialize the active compilation index from that produced during a
-        // previous compilation, for finishing an off thread compilation.
-        info = oldInfo;
-    }
-
-    ~AutoEnterCompilation()
-    {
-        // Handle failure cases of init.
-        if (info.outputIndex >= RecompileInfo::NoCompilerRunning)
-            return;
-
-        JS_ASSERT(info.outputIndex < cx->compartment()->types.constrainedOutputs->length());
-        CompilerOutput *co = info.compilerOutput(cx);
-        if (!co->isValid())
-            co->invalidate();
-
-        info.outputIndex = RecompileInfo::NoCompilerRunning;
-    }
-};
-
 /////////////////////////////////////////////////////////////////////
 // Interface functions
 /////////////////////////////////////////////////////////////////////
@@ -481,7 +371,7 @@ GetTypeNewObject(JSContext *cx, JSProtoKey key)
 {
     RootedObject proto(cx);
     if (!js_GetClassPrototype(cx, key, &proto))
-        return NULL;
+        return nullptr;
     return cx->getNewType(GetClassForProtoKey(key), proto.get());
 }
 
@@ -733,8 +623,8 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc)
 TypeScript::StandardType(JSContext *cx, JSProtoKey key)
 {
     RootedObject proto(cx);
-    if (!js_GetClassPrototype(cx, key, &proto, NULL))
-        return NULL;
+    if (!js_GetClassPrototype(cx, key, &proto, nullptr))
+        return nullptr;
     return cx->getNewType(GetClassForProtoKey(key), proto.get());
 }
 
@@ -1001,7 +891,7 @@ HashKey(T v)
 
 /*
  * Insert space for an element into the specified set and grow its capacity if needed.
- * returned value is an existing or new entry (NULL if new).
+ * returned value is an existing or new entry (nullptr if new).
  */
 template <class T, class U, class KEY>
 static U **
@@ -1014,7 +904,7 @@ HashSetInsertTry(LifoAlloc &alloc, U **&values, unsigned &count, T key)
     bool converting = (count == SET_ARRAY_SIZE);
 
     if (!converting) {
-        while (values[insertpos] != NULL) {
+        while (values[insertpos] != nullptr) {
             if (KEY::getKey(values[insertpos]) == key)
                 return &values[insertpos];
             insertpos = (insertpos + 1) & (capacity - 1);
@@ -1031,13 +921,13 @@ HashSetInsertTry(LifoAlloc &alloc, U **&values, unsigned &count, T key)
 
     U **newValues = alloc.newArray<U*>(newCapacity);
     if (!newValues)
-        return NULL;
+        return nullptr;
     mozilla::PodZero(newValues, newCapacity);
 
     for (unsigned i = 0; i < capacity; i++) {
         if (values[i]) {
             unsigned pos = HashKey<T,KEY>(KEY::getKey(values[i])) & (newCapacity - 1);
-            while (newValues[pos] != NULL)
+            while (newValues[pos] != nullptr)
                 pos = (pos + 1) & (newCapacity - 1);
             newValues[pos] = values[i];
         }
@@ -1046,21 +936,21 @@ HashSetInsertTry(LifoAlloc &alloc, U **&values, unsigned &count, T key)
     values = newValues;
 
     insertpos = HashKey<T,KEY>(key) & (newCapacity - 1);
-    while (values[insertpos] != NULL)
+    while (values[insertpos] != nullptr)
         insertpos = (insertpos + 1) & (newCapacity - 1);
     return &values[insertpos];
 }
 
 /*
  * Insert an element into the specified set if it is not already there, returning
- * an entry which is NULL if the element was not there.
+ * an entry which is nullptr if the element was not there.
  */
 template <class T, class U, class KEY>
 static inline U **
 HashSetInsert(LifoAlloc &alloc, U **&values, unsigned &count, T key)
 {
     if (count == 0) {
-        JS_ASSERT(values == NULL);
+        JS_ASSERT(values == nullptr);
         count++;
         return (U **) &values;
     }
@@ -1073,7 +963,7 @@ HashSetInsert(LifoAlloc &alloc, U **&values, unsigned &count, T key)
         values = alloc.newArray<U*>(SET_ARRAY_SIZE);
         if (!values) {
             values = (U **) oldData;
-            return NULL;
+            return nullptr;
         }
         mozilla::PodZero(values, SET_ARRAY_SIZE);
         count++;
@@ -1097,35 +987,35 @@ HashSetInsert(LifoAlloc &alloc, U **&values, unsigned &count, T key)
     return HashSetInsertTry<T,U,KEY>(alloc, values, count, key);
 }
 
-/* Lookup an entry in a hash set, return NULL if it does not exist. */
+/* Lookup an entry in a hash set, return nullptr if it does not exist. */
 template <class T, class U, class KEY>
 static inline U *
 HashSetLookup(U **values, unsigned count, T key)
 {
     if (count == 0)
-        return NULL;
+        return nullptr;
 
     if (count == 1)
-        return (KEY::getKey((U *) values) == key) ? (U *) values : NULL;
+        return (KEY::getKey((U *) values) == key) ? (U *) values : nullptr;
 
     if (count <= SET_ARRAY_SIZE) {
         for (unsigned i = 0; i < count; i++) {
             if (KEY::getKey(values[i]) == key)
                 return values[i];
         }
-        return NULL;
+        return nullptr;
     }
 
     unsigned capacity = HashSetCapacity(count);
     unsigned pos = HashKey<T,KEY>(key) & (capacity - 1);
 
-    while (values[pos] != NULL) {
+    while (values[pos] != nullptr) {
         if (KEY::getKey(values[pos]) == key)
             return values[pos];
         pos = (pos + 1) & (capacity - 1);
     }
 
-    return NULL;
+    return nullptr;
 }
 
 inline TypeObjectKey *
@@ -1170,7 +1060,7 @@ TypeSet::hasType(Type type) const
     } else {
         return !!(flags & TYPE_FLAG_ANYOBJECT) ||
             HashSetLookup<TypeObjectKey*,TypeObjectKey,TypeObjectKey>
-            (objectSet, baseObjectCount(), type.objectKey()) != NULL;
+            (objectSet, baseObjectCount(), type.objectKey()) != nullptr;
     }
 }
 
@@ -1186,7 +1076,7 @@ inline void
 TypeSet::clearObjects()
 {
     setBaseObjectCount(0);
-    objectSet = NULL;
+    objectSet = nullptr;
 }
 
 inline void
@@ -1315,14 +1205,14 @@ inline JSObject *
 TypeSet::getSingleObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
-    return (uintptr_t(key) & 1) ? (JSObject *)(uintptr_t(key) ^ 1) : NULL;
+    return (key && key->isSingleObject()) ? key->asSingleObject() : nullptr;
 }
 
 inline TypeObject *
 TypeSet::getTypeObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
-    return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;
+    return (key && key->isTypeObject()) ? key->asTypeObject() : nullptr;
 }
 
 inline bool
@@ -1331,7 +1221,7 @@ TypeSet::getTypeOrSingleObject(JSContext *cx, unsigned i, TypeObject **result) c
     JS_ASSERT(result);
     JS_ASSERT(cx->compartment()->activeAnalysis);
 
-    *result = NULL;
+    *result = nullptr;
 
     TypeObject *type = getTypeObject(i);
     if (!type) {
@@ -1356,7 +1246,7 @@ TypeSet::getObjectClass(unsigned i) const
         return object->getClass();
     if (TypeObject *object = getTypeObject(i))
         return object->clasp;
-    return NULL;
+    return nullptr;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1407,15 +1297,15 @@ TypeObject::getProperty(ExclusiveContext *cx, jsid id)
         (cx->typeLifoAlloc(), propertySet, propertyCount, id);
     if (!pprop) {
         cx->compartment()->types.setPendingNukeTypes(cx);
-        return NULL;
+        return nullptr;
     }
 
     if (!*pprop) {
         setBasePropertyCount(propertyCount);
         if (!addProperty(cx, id, pprop)) {
             setBasePropertyCount(0);
-            propertySet = NULL;
-            return NULL;
+            propertySet = nullptr;
+            return nullptr;
         }
         if (propertyCount == OBJECT_FLAG_PROPERTY_COUNT_LIMIT) {
             markUnknown(cx);
@@ -1447,7 +1337,7 @@ TypeObject::maybeGetProperty(ExclusiveContext *cx, jsid id)
     Property *prop = HashSetLookup<jsid,Property,Property>
         (propertySet, basePropertyCount(), id);
 
-    return prop ? &prop->types : NULL;
+    return prop ? &prop->types : nullptr;
 }
 
 inline unsigned
@@ -1468,14 +1358,6 @@ TypeObject::getProperty(unsigned i)
         return (Property *) propertySet;
     }
     return propertySet[i];
-}
-
-inline int
-TypeObject::getTypedArrayType()
-{
-    if (IsTypedArrayClass(clasp))
-        return clasp - &TypedArrayObject::classes[0];
-    return ScalarTypeRepresentation::TYPE_MAX;
 }
 
 inline void
@@ -1509,6 +1391,54 @@ TypeNewScript::writeBarrierPre(TypeNewScript *newScript)
     }
 #endif
 }
+
+// Allocate a CompilerOutput for a finished compilation and generate the type
+// constraints for the compilation. Returns whether the type constraints
+// still hold.
+bool
+FinishCompilation(JSContext *cx, JSScript *script, jit::ExecutionMode executionMode,
+                  CompilerConstraintList *constraints, RecompileInfo *precompileInfo);
+
+class CompilerConstraint;
+class CompilerConstraintList
+{
+#ifdef JS_ION
+    // Generated constraints.
+    Vector<CompilerConstraint *, 0, jit::IonAllocPolicy> constraints;
+#endif
+
+    // OOM during generation of some constraint.
+    bool failed_;
+
+  public:
+    CompilerConstraintList()
+      : failed_(false)
+    {}
+
+    void add(CompilerConstraint *constraint);
+
+    size_t length() {
+#ifdef JS_ION
+        return constraints.length();
+#else
+        MOZ_CRASH();
+#endif
+    }
+    CompilerConstraint *get(size_t i) {
+#ifdef JS_ION
+        return constraints[i];
+#else
+        MOZ_CRASH();
+#endif
+    }
+
+    bool failed() {
+        return failed_;
+    }
+    void setFailed() {
+        failed_ = true;
+    }
+};
 
 } } /* namespace js::types */
 
@@ -1554,8 +1484,8 @@ inline void
 JSScript::clearAnalysis()
 {
     if (types) {
-        types->analysis = NULL;
-        types->bytecodeMap = NULL;
+        types->analysis = nullptr;
+        types->bytecodeMap = nullptr;
     }
 }
 

@@ -12,6 +12,7 @@ import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PluginLayer;
+import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.menu.GeckoMenu;
 import org.mozilla.gecko.menu.GeckoMenuInflater;
 import org.mozilla.gecko.menu.MenuPanel;
@@ -1823,7 +1824,9 @@ abstract public class GeckoApp
             Tabs.getInstance().loadUrl(uri);
         } else if (Intent.ACTION_VIEW.equals(action)) {
             String uri = intent.getDataString();
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createURILoadEvent(uri));
+            Tabs.getInstance().loadUrl(uri, Tabs.LOADURL_NEW_TAB |
+                                            Tabs.LOADURL_USER_ENTERED |
+                                            Tabs.LOADURL_EXTERNAL);
         } else if (action != null && action.startsWith(ACTION_WEBAPP_PREFIX)) {
             String uri = getURIFromIntent(intent);
             GeckoAppShell.sendEventToGecko(GeckoEvent.createWebappLoadEvent(uri));

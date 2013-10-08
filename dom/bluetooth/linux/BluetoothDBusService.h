@@ -61,9 +61,6 @@ public:
   AddReservedServicesInternal(const nsTArray<uint32_t>& aServices,
                               nsTArray<uint32_t>& aServiceHandlesContainer);
 
-  static bool
-  RemoveReservedServicesInternal(const nsTArray<uint32_t>& aServiceHandles);
-
   virtual nsresult
   GetScoSocket(const nsAString& aObjectPath,
                bool aAuth,
@@ -203,7 +200,7 @@ private:
   nsresult SendAsyncDBusMessage(const nsAString& aObjectPath,
                                 const char* aInterface,
                                 const nsAString& aMessage,
-                                void (*aCallback)(DBusMessage*, void*));
+                                mozilla::ipc::DBusReplyCallback aCallback);
 };
 
 END_BLUETOOTH_NAMESPACE

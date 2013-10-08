@@ -56,6 +56,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesViewController",
   "resource:///modules/devtools/VariablesViewController.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "EnvironmentClient",
+  "resource://gre/modules/devtools/dbg-client.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "ObjectClient",
   "resource://gre/modules/devtools/dbg-client.jsm");
 
@@ -165,6 +168,22 @@ var Scratchpad = {
   get notificationBox()
   {
     return document.getElementById("scratchpad-notificationbox");
+  },
+
+  /**
+   * Hide the menu bar.
+   */
+  hideMenu: function SP_hideMenu()
+  {
+    document.getElementById("sp-menubar").style.display = "none";
+  },
+
+  /**
+   * Show the menu bar.
+   */
+  showMenu: function SP_showMenu()
+  {
+    document.getElementById("sp-menubar").style.display = "";
   },
 
   /**
@@ -309,7 +328,10 @@ var Scratchpad = {
   evaluate: function SP_evaluate(aString)
   {
     let connection;
-    if (this.executionContext == SCRATCHPAD_CONTEXT_CONTENT) {
+    if (this.target) {
+      connection = ScratchpadTarget.consoleFor(this.target);
+    }
+    else if (this.executionContext == SCRATCHPAD_CONTEXT_CONTENT) {
       connection = ScratchpadTab.consoleFor(this.gBrowser.selectedTab);
     }
     else {
@@ -852,6 +874,8 @@ var Scratchpad = {
       fp.init(window, this.strings.GetStringFromName("openFile.title"),
               Ci.nsIFilePicker.modeOpen);
       fp.defaultString = "";
+      fp.appendFilter("JavaScript Files", "*.js; *.jsm; *.json");
+      fp.appendFilter("All Files", "*.*");
       fp.open(aResult => {
         if (aResult != Ci.nsIFilePicker.returnCancel) {
           promptCallback(fp.file);
@@ -1100,6 +1124,8 @@ var Scratchpad = {
     fp.init(window, this.strings.GetStringFromName("saveFileAs"),
             Ci.nsIFilePicker.modeSave);
     fp.defaultString = "scratchpad.js";
+    fp.appendFilter("JavaScript Files", "*.js; *.jsm; *.json");
+    fp.appendFilter("All Files", "*.*");
     fp.open(fpCallback);
   },
 
@@ -1271,22 +1297,20 @@ var Scratchpad = {
       3);
 
     let args = window.arguments;
+    let state = null;
 
     if (args && args[0] instanceof Ci.nsIDialogParamBlock) {
       args = args[0];
+      this._instanceId = args.GetString(0);
+
+      state = args.GetString(1) || null;
+      if (state) {
+        state = JSON.parse(state);
+        this.setState(state);
+        initialText = state.text;
+      }
     } else {
-      // If this Scratchpad window doesn't have any arguments, horrible
-      // things might happen so we need to report an error.
-      Cu.reportError(this.strings. GetStringFromName("scratchpad.noargs"));
-    }
-
-    this._instanceId = args.GetString(0);
-
-    let state = args.GetString(1) || null;
-    if (state) {
-      state = JSON.parse(state);
-      this.setState(state);
-      initialText = state.text;
+      this._instanceId = ScratchpadManager.createUid();
     }
 
     this.editor = new Editor({
@@ -1310,6 +1334,7 @@ var Scratchpad = {
       this._triggerObservers("Ready");
       this.populateRecentFilesMenu();
       PreferenceObserver.init();
+      CloseObserver.init();
     }).then(null, (err) => console.log(err.message));
   },
 
@@ -1454,8 +1479,10 @@ var Scratchpad = {
    */
   close: function SP_close(aCallback)
   {
+    let shouldClose;
+
     this.promptSave((aShouldClose, aSaved, aStatus) => {
-      let shouldClose = aShouldClose;
+       shouldClose = aShouldClose;
       if (aSaved && !Components.isSuccessCode(aStatus)) {
         shouldClose = false;
       }
@@ -1466,9 +1493,11 @@ var Scratchpad = {
       }
 
       if (aCallback) {
-        aCallback();
+        aCallback(shouldClose);
       }
     });
+
+    return shouldClose;
   },
 
   _observers: [],
@@ -1684,6 +1713,24 @@ ScratchpadWindow.prototype = Heritage.extend(ScratchpadTab.prototype, {
 });
 
 
+function ScratchpadTarget(aTarget)
+{
+  this._target = aTarget;
+}
+
+ScratchpadTarget.consoleFor = ScratchpadTab.consoleFor;
+
+ScratchpadTarget.prototype = Heritage.extend(ScratchpadTab.prototype, {
+  _attach: function ST__attach()
+  {
+    if (this._target.isRemote) {
+      return promise.resolve(this._target);
+    }
+    return this._target.makeRemote().then(() => this._target);
+  }
+});
+
+
 /**
  * Encapsulates management of the sidebar containing the VariablesView for
  * object inspection.
@@ -1744,6 +1791,9 @@ ScratchpadSidebar.prototype = {
         });
 
         VariablesViewController.attach(this.variablesView, {
+          getEnvironmentClient: aGrip => {
+            return new EnvironmentClient(this._scratchpad.debuggerClient, aGrip);
+          },
           getObjectClient: aGrip => {
             return new ObjectClient(this._scratchpad.debuggerClient, aGrip);
           },
@@ -1816,15 +1866,10 @@ ScratchpadSidebar.prototype = {
    */
   _update: function SS__update(aObject)
   {
+    let options = { objectActor: aObject };
     let view = this.variablesView;
     view.empty();
-
-    let scope = view.addScope();
-    scope.expanded = true;
-    scope.locked = true;
-
-    let container = scope.addItem();
-    return view.controller.expand(container, aObject);
+    return view.controller.setSingleVariable(options).expanded;
   }
 };
 
@@ -1884,6 +1929,35 @@ var PreferenceObserver = {
     this.branch.removeObserver("", this);
     this.branch = null;
   }
+};
+
+
+/**
+ * The CloseObserver listens for the last browser window closing and attempts to
+ * close the Scratchpad.
+ */
+var CloseObserver = {
+  init: function CO_init()
+  {
+    Services.obs.addObserver(this, "browser-lastwindow-close-requested", false);
+  },
+
+  observe: function CO_observe(aSubject)
+  {
+    if (Scratchpad.close()) {
+      this.uninit();
+    }
+    else {
+      aSubject.QueryInterface(Ci.nsISupportsPRBool);
+      aSubject.data = true;
+    }
+  },
+
+  uninit: function CO_uninit()
+  {
+    Services.obs.removeObserver(this, "browser-lastwindow-close-requested",
+                                false);
+  },
 };
 
 XPCOMUtils.defineLazyGetter(Scratchpad, "strings", function () {

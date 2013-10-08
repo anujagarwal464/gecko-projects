@@ -118,13 +118,13 @@ class ArenaIter
     }
 
     void init() {
-        aheader = NULL;
-        remainingHeader = NULL;
+        aheader = nullptr;
+        remainingHeader = nullptr;
     }
 
     void init(ArenaHeader *aheaderArg) {
         aheader = aheaderArg;
-        remainingHeader = NULL;
+        remainingHeader = nullptr;
     }
 
     void init(JS::Zone *zone, AllocKind kind) {
@@ -132,7 +132,7 @@ class ArenaIter
         remainingHeader = zone->allocator.arenas.getFirstArenaToSweep(kind);
         if (!aheader) {
             aheader = remainingHeader;
-            remainingHeader = NULL;
+            remainingHeader = nullptr;
         }
     }
 
@@ -148,7 +148,7 @@ class ArenaIter
         aheader = aheader->next;
         if (!aheader) {
             aheader = remainingHeader;
-            remainingHeader = NULL;
+            remainingHeader = nullptr;
         }
     }
 };
@@ -214,7 +214,7 @@ class CellIterImpl
                 break;
             }
             if (aiter.done()) {
-                cell = NULL;
+                cell = nullptr;
                 return;
             }
             ArenaHeader *aheader = aiter.get();
@@ -266,7 +266,7 @@ class CellIter : public CellIterImpl
             gc::FinishBackgroundFinalize(zone->runtimeFromMainThread());
         }
         if (lists->isSynchronizedFreeList(kind)) {
-            lists = NULL;
+            lists = nullptr;
         } else {
             JS_ASSERT(!zone->runtimeFromMainThread()->isHeapBusy());
             lists->copyFreeListToArena(kind);
@@ -351,7 +351,7 @@ typedef CompartmentsIterT<GCZoneGroupIter> GCCompartmentGroupIter;
 #ifdef JSGC_GENERATIONAL
 /*
  * Attempt to allocate a new GC thing out of the nursery. If there is not enough
- * room in the nursery or there is an OOM, this method will return NULL.
+ * room in the nursery or there is an OOM, this method will return nullptr.
  */
 template <typename T, AllowGC allowGC>
 inline T *
@@ -376,7 +376,7 @@ TryNewNurseryGCThing(ThreadSafeContext *cxArg, size_t thingSize)
             return t;
         }
     }
-    return NULL;
+    return nullptr;
 }
 #endif /* JSGC_GENERATIONAL */
 
@@ -394,18 +394,21 @@ NewGCThing(ThreadSafeContext *cx, AllocKind kind, size_t thingSize, InitialHeap 
 
     if (cx->isJSContext()) {
         JSContext *ncx = cx->asJSContext();
-        JS_ASSERT_IF(ncx->runtime()->isAtomsCompartment(ncx->compartment()),
+#ifdef JS_GC_ZEAL
+        JSRuntime *rt = ncx->runtime();
+#endif
+        JS_ASSERT_IF(rt->isAtomsCompartment(ncx->compartment()),
                      kind == FINALIZE_STRING ||
                      kind == FINALIZE_SHORT_STRING ||
                      kind == FINALIZE_IONCODE);
-        JS_ASSERT(!ncx->runtime()->isHeapBusy());
-        JS_ASSERT(!ncx->runtime()->noGCOrAllocationCheck);
+        JS_ASSERT(!rt->isHeapBusy());
+        JS_ASSERT(!rt->noGCOrAllocationCheck);
 
         /* For testing out of memory conditions */
         JS_OOM_POSSIBLY_FAIL_REPORT(ncx);
 
 #ifdef JS_GC_ZEAL
-        if (ncx->runtime()->needZealousGC() && allowGC)
+        if (rt->needZealousGC() && allowGC)
             js::gc::RunDebugGC(ncx);
 #endif
 

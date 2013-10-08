@@ -719,9 +719,11 @@ WrapCallable(JSContext *cx, JSObject *callable, JSObject *sandboxProtoProxy)
                  &xpc::sandboxProxyHandler);
 
     RootedValue priv(cx, ObjectValue(*callable));
+    js::ProxyOptions options;
+    options.setCallable(true);
     return js::NewProxyObject(cx, &xpc::sandboxCallableProxyHandler,
                               priv, nullptr,
-                              sandboxProtoProxy, js::ProxyIsCallable);
+                              sandboxProtoProxy, options);
 }
 
 template<typename Op>
@@ -1369,6 +1371,7 @@ ParseOptionsObject(JSContext *cx, jsval from, SandboxOptions &options)
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = GetGlobalPropertiesFromOptions(cx, optionsObject, options);
+    NS_ENSURE_SUCCESS(rv, rv);
 
     bool found;
     rv = GetPropFromOptions(cx, optionsObject,

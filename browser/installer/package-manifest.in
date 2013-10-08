@@ -593,6 +593,8 @@
 @BINPATH@/browser/chrome/browser.manifest
 @BINPATH@/browser/chrome/pdfjs.manifest
 @BINPATH@/browser/chrome/pdfjs/*
+@BINPATH@/browser/chrome/shumway.manifest
+@BINPATH@/browser/chrome/shumway/*
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/icon.png
 @BINPATH@/chrome/toolkit@JAREXT@
@@ -813,6 +815,11 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/metro/defaults
 @BINPATH@/metro/modules
 #endif
+
+@BINPATH@/components/DataStore.manifest
+@BINPATH@/components/DataStoreService.js
+@BINPATH@/components/dom_datastore.xpt
+
 
 #ifdef MOZ_ASAN
 @BINPATH@/llvm-symbolizer
