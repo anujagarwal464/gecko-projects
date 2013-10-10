@@ -2414,7 +2414,7 @@ class MCreateThisWithTemplate
     {
         return new MCreateThisWithTemplate(templateObject);
     }
-    JSObject *getTemplateObject() const {
+    JSObject *templateObject() const {
         return templateObject_;
     }
 
@@ -3658,6 +3658,10 @@ class MMathFunction
     bool possiblyCalls() const {
         return true;
     }
+
+    void printOpcode(FILE *fp) const;
+
+    static const char *FunctionName(Function function);
 };
 
 class MAdd : public MBinaryArithInstruction
