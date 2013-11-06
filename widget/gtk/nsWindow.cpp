@@ -633,7 +633,7 @@ nsWindow::Destroy(void)
     if (rollupListener) {
         nsCOMPtr<nsIWidget> rollupWidget = rollupListener->GetRollupWidget();
         if (static_cast<nsIWidget *>(this) == rollupWidget) {
-            rollupListener->Rollup(0, nullptr);
+            rollupListener->Rollup(0, nullptr, nullptr);
         }
     }
 
@@ -1980,10 +1980,17 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     if (!listener)
         return FALSE;
 
-    // Do an early async composite so that we at least have something on screen
-    // in the right place, even if the content is out of date.
-    if (GetLayerManager()->GetBackendType() == LAYERS_CLIENT && mCompositorParent) {
-        mCompositorParent->ScheduleRenderOnCompositorThread();
+    ClientLayerManager *clientLayers =
+        (GetLayerManager()->GetBackendType() == LAYERS_CLIENT)
+        ? static_cast<ClientLayerManager*>(GetLayerManager())
+        : nullptr;
+
+    if (clientLayers && mCompositorParent &&
+        !gdk_screen_is_composited(gdk_window_get_screen(mGdkWindow)))
+    {
+        // We need to paint to the screen even if nothing changed, since if we
+        // don't have a compositing window manager, our pixels could be stale.
+        clientLayers->SetNeedsComposite(true);
     }
 
     // Dispatch WillPaintWindow notification to allow scripts etc. to run
@@ -2002,6 +2009,11 @@ nsWindow::OnExposeEvent(cairo_t *cr)
             mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
         if (!listener)
             return FALSE;
+    }
+
+    if (clientLayers && mCompositorParent && clientLayers->NeedsComposite()) {
+        mCompositorParent->ScheduleRenderOnCompositorThread();
+        clientLayers->SetNeedsComposite(false);
     }
 
 #if (MOZ_WIDGET_GTK == 2)
@@ -2267,7 +2279,7 @@ nsWindow::UpdateAlpha(gfxPattern* aPattern, nsIntRect aBoundsRect)
                                   stride, FORMAT_A8);
 
       if (drawTarget) {
-          drawTarget->FillRect(ToRect(aBoundsRect),
+          drawTarget->FillRect(Rect(0, 0, aBoundsRect.width, aBoundsRect.height),
                                *aPattern->GetPattern(drawTarget),
                                DrawOptions(1.0, OP_SOURCE));
       }
@@ -3092,7 +3104,7 @@ nsWindow::OnScrollEvent(GdkEventScroll *aEvent)
     if (CheckForRollup(aEvent->x_root, aEvent->y_root, true, false))
         return;
 
-    WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, this);
+    WidgetWheelEvent wheelEvent(true, NS_WHEEL_WHEEL, this);
     wheelEvent.deltaMode = nsIDOMWheelEvent::DOM_DELTA_LINE;
     switch (aEvent->direction) {
     case GDK_SCROLL_UP:
@@ -4772,7 +4784,9 @@ nsWindow::CheckForRollup(gdouble aMouseX, gdouble aMouseY,
         } // if rollup listener knows about menus
 
         // if we've determined that we should still rollup, do it.
-        if (rollup && rollupListener->Rollup(popupsToRollup, nullptr)) {
+        bool usePoint = !aIsWheel && !aAlwaysRollup;
+        nsIntPoint point(aMouseX, aMouseY);
+        if (rollup && rollupListener->Rollup(popupsToRollup, usePoint ? &point : nullptr, nullptr)) {
             retVal = true;
         }
     }
@@ -6125,11 +6139,10 @@ nsWindow::BeginResizeDrag(WidgetGUIEvent* aEvent,
         return NS_ERROR_INVALID_ARG;
     }
 
-    WidgetMouseEvent* mouse_event = static_cast<WidgetMouseEvent*>(aEvent);
-
     GdkWindow *gdk_window;
     gint button, screenX, screenY;
-    if (!GetDragInfo(mouse_event, &gdk_window, &button, &screenX, &screenY)) {
+    if (!GetDragInfo(aEvent->AsMouseEvent(), &gdk_window, &button,
+                     &screenX, &screenY)) {
         return NS_ERROR_FAILURE;
     }
 

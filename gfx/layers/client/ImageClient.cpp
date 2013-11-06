@@ -98,18 +98,18 @@ TextureInfo ImageClientSingle::GetTextureInfo() const
 }
 
 void
-ImageClientSingle::FlushImage()
+ImageClientSingle::FlushAllImages(bool aExceptFront)
 {
-  if (mFrontBuffer) {
+  if (!aExceptFront && mFrontBuffer) {
     RemoveTextureClient(mFrontBuffer);
     mFrontBuffer = nullptr;
   }
 }
 
 void
-ImageClientBuffered::FlushImage()
+ImageClientBuffered::FlushAllImages(bool aExceptFront)
 {
-  if (mFrontBuffer) {
+  if (!aExceptFront && mFrontBuffer) {
     RemoveTextureClient(mFrontBuffer);
     mFrontBuffer = nullptr;
   }
@@ -291,13 +291,6 @@ TemporaryRef<BufferTextureClient>
 ImageClientSingle::CreateBufferTextureClient(gfx::SurfaceFormat aFormat, TextureFlags aFlags)
 {
   return CompositableClient::CreateBufferTextureClient(aFormat, mTextureFlags | aFlags);
-}
-
-TemporaryRef<BufferTextureClient>
-ImageClientSingle::CreateBufferTextureClient(gfx::SurfaceFormat aFormat)
-{
-  return CompositableClient::CreateBufferTextureClient(aFormat,
-    mTextureFlags | TEXTURE_FLAGS_DEFAULT);
 }
 
 void

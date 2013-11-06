@@ -6,10 +6,13 @@
 
 MODULE = 'necko'
 
-CPP_SOURCES += [
-    'moc_nsQtNetworkManager.cpp',
+SOURCES += [
     'nsQtNetworkLinkService.cpp',
     'nsQtNetworkManager.cpp',
+]
+
+GENERATED_SOURCES += [
+    'moc_nsQtNetworkManager.cpp',
 ]
 
 LIBRARY_NAME = 'neckosystem_s'

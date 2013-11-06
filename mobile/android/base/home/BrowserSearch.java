@@ -13,8 +13,8 @@ import org.mozilla.gecko.R;
 import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
-import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
+import org.mozilla.gecko.home.SearchEngine;
 import org.mozilla.gecko.home.SearchLoader.SearchCursorLoader;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.StringUtils;
@@ -132,7 +132,7 @@ public class BrowserSearch extends HomeFragment
     private View mSuggestionsOptInPrompt;
 
     public interface OnSearchListener {
-        public void onSearch(String engineId, String text);
+        public void onSearch(SearchEngine engine, String text);
     }
 
     public interface OnEditSuggestionListener {
@@ -140,7 +140,13 @@ public class BrowserSearch extends HomeFragment
     }
 
     public static BrowserSearch newInstance() {
-        return new BrowserSearch();
+        BrowserSearch browserSearch = new BrowserSearch();
+
+        final Bundle args = new Bundle();
+        args.putBoolean(HomePager.CAN_LOAD_ARG, true);
+        browserSearch.setArguments(args);
+
+        return browserSearch;
     }
 
     public BrowserSearch() {
@@ -216,8 +222,10 @@ public class BrowserSearch extends HomeFragment
 
         unregisterEventListener("SearchEngines:Data");
 
-        mView = null;
+        mList.setAdapter(null);
         mList = null;
+
+        mView = null;
         mSuggestionsOptInPrompt = null;
         mSuggestClient = null;
     }
@@ -280,7 +288,7 @@ public class BrowserSearch extends HomeFragment
         registerForContextMenu(mList);
         registerEventListener("SearchEngines:Data");
 
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Get", null));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:GetVisible", null));
     }
 
     @Override
@@ -313,7 +321,7 @@ public class BrowserSearch extends HomeFragment
 
     @Override
     protected void load() {
-        getLoaderManager().initLoader(LOADER_ID_SEARCH, null, mCursorLoaderCallbacks);
+        SearchLoader.init(getLoaderManager(), LOADER_ID_SEARCH, mCursorLoaderCallbacks, mSearchTerm);
     }
 
     private void handleAutocomplete(String searchTerm, Cursor c) {
@@ -385,7 +393,7 @@ public class BrowserSearch extends HomeFragment
     }
 
     private void setSuggestions(ArrayList<String> suggestions) {
-        mSearchEngines.get(0).suggestions = suggestions;
+        mSearchEngines.get(0).setSuggestions(suggestions);
         mAdapter.notifyDataSetChanged();
     }
 
@@ -409,14 +417,11 @@ public class BrowserSearch extends HomeFragment
             ArrayList<SearchEngine> searchEngines = new ArrayList<SearchEngine>();
             for (int i = 0; i < engines.length(); i++) {
                 final JSONObject engineJSON = engines.getJSONObject(i);
-                final String name = engineJSON.getString("name");
-                final String identifier = engineJSON.getString("identifier");
-                final String iconURI = engineJSON.getString("iconURI");
-                final Bitmap icon = BitmapUtils.getBitmapFromDataURI(iconURI);
+                final SearchEngine engine = new SearchEngine(engineJSON);
 
-                if (name.equals(suggestEngine) && suggestTemplate != null) {
-                    // Suggest engine should be at the front of the list
-                    searchEngines.add(0, new SearchEngine(name, identifier, icon));
+                if (engine.name.equals(suggestEngine) && suggestTemplate != null) {
+                    // Suggest engine should be at the front of the list.
+                    searchEngines.add(0, engine);
 
                     // The only time Tabs.getInstance().getSelectedTab() should
                     // be null is when we're restoring after a crash. We should
@@ -433,7 +438,7 @@ public class BrowserSearch extends HomeFragment
                                 SUGGESTION_TIMEOUT, SUGGESTION_MAX);
                     }
                 } else {
-                    searchEngines.add(new SearchEngine(name, identifier, icon));
+                    searchEngines.add(engine);
                 }
             }
 
@@ -604,7 +609,7 @@ public class BrowserSearch extends HomeFragment
             mAdapter.notifyDataSetChanged();
 
             // Restart loaders with the new search term
-            SearchLoader.restart(getLoaderManager(), LOADER_ID_SEARCH, mCursorLoaderCallbacks, mSearchTerm, false);
+            SearchLoader.restart(getLoaderManager(), LOADER_ID_SEARCH, mCursorLoaderCallbacks, mSearchTerm);
             filterSuggestions();
         }
     }
@@ -705,7 +710,7 @@ public class BrowserSearch extends HomeFragment
             // row contains multiple items, clicking the row will do nothing.
             final int index = getEngineIndex(position);
             if (index != -1) {
-                return mSearchEngines.get(index).suggestions.isEmpty();
+                return !mSearchEngines.get(index).hasSuggestions();
             }
 
             return true;
@@ -736,7 +741,7 @@ public class BrowserSearch extends HomeFragment
                 row.setSearchTerm(mSearchTerm);
 
                 final SearchEngine engine = mSearchEngines.get(getEngineIndex(position));
-                final boolean animate = (mAnimateSuggestions && engine.suggestions.size() > 0);
+                final boolean animate = (mAnimateSuggestions && engine.hasSuggestions());
                 row.updateFromSearchEngine(engine, animate);
                 if (animate) {
                     // Only animate suggestions the first time they are shown
@@ -869,13 +874,13 @@ public class BrowserSearch extends HomeFragment
         }
 
         @Override
-        public boolean onInterceptTouchEvent(MotionEvent event) {
+        public boolean onTouchEvent(MotionEvent event) {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 // Dismiss the soft keyboard.
                 requestFocus();
             }
 
-            return super.onInterceptTouchEvent(event);
+            return super.onTouchEvent(event);
         }
     }
 }

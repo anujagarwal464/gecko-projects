@@ -227,6 +227,17 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
       break;
     }
 #endif
+#ifdef USE_CAIRO
+  case BACKEND_CAIRO:
+    {
+      RefPtr<DrawTargetCairo> newTarget;
+      newTarget = new DrawTargetCairo();
+      if (newTarget->Init(aSize, aFormat)) {
+        retVal = newTarget;
+      }
+      break;
+    }
+#endif
   default:
     gfxDebug() << "Invalid draw target type specified.";
     return nullptr;
@@ -280,6 +291,17 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
       break;
     }
 #endif
+#ifdef USE_CAIRO
+  case BACKEND_CAIRO:
+    {
+      RefPtr<DrawTargetCairo> newTarget;
+      newTarget = new DrawTargetCairo();
+      if (newTarget->Init(aData, aSize, aStride, aFormat)) {
+        retVal = newTarget;
+      }
+      break;
+    }
+#endif
   default:
     gfxDebug() << "Invalid draw target type specified.";
     return nullptr;
@@ -290,9 +312,11 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
     return recordDT;
   }
 
-  gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
-  // Failed
-  return nullptr;
+  if (!retVal) {
+    gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
+  }
+
+  return retVal;
 }
 
 TemporaryRef<ScaledFont>
@@ -513,7 +537,21 @@ Factory::CreateDrawTargetSkiaWithGLContextAndGrGLInterface(GenericRefCountedBase
   RefPtr<DrawTarget> newTarget = newDrawTargetSkia;
   return newTarget;
 }
+
+void
+Factory::SetGlobalSkiaCacheLimits(int aCount, int aSizeInBytes)
+{
+    DrawTargetSkia::SetGlobalCacheLimits(aCount, aSizeInBytes);
+}
 #endif // USE_SKIA_GPU
+
+void
+Factory::PurgeTextureCaches()
+{
+#ifdef USE_SKIA_GPU
+  DrawTargetSkia::PurgeTextureCaches();
+#endif
+}
 
 #ifdef USE_SKIA_FREETYPE
 TemporaryRef<GlyphRenderingOptions>
@@ -544,6 +582,18 @@ Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSiz
     RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal);
     return recordDT;
   }
+#endif
+  return retVal;
+}
+
+TemporaryRef<SourceSurface>
+Factory::CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
+                                            SurfaceFormat aFormat)
+{
+  RefPtr<SourceSurface> retVal;
+
+#ifdef USE_CAIRO
+  retVal = DrawTargetCairo::CreateSourceSurfaceForCairoSurface(aSurface, aFormat);
 #endif
   return retVal;
 }

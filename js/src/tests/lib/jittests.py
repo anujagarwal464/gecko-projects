@@ -28,6 +28,7 @@ JS_DIR = os.path.dirname(os.path.dirname(TESTS_LIB_DIR))
 TOP_SRC_DIR = os.path.dirname(os.path.dirname(JS_DIR))
 TEST_DIR = os.path.join(JS_DIR, 'jit-test', 'tests')
 LIB_DIR = os.path.join(JS_DIR, 'jit-test', 'lib') + os.path.sep
+JS_CACHE_DIR = os.path.join(JS_DIR, 'jit-test', '.js-cache')
 ECMA6_DIR = posixpath.join(JS_DIR, 'tests', 'ecma_6')
 
 # Backported from Python 3.1 posixpath.py
@@ -100,6 +101,7 @@ class Test:
         return t
 
     COOKIE = '|jit-test|'
+    CacheDir = JS_CACHE_DIR
 
     @classmethod
     def from_file(cls, path, options):
@@ -178,7 +180,8 @@ class Test:
 
         # We may have specified '-a' or '-d' twice: once via --jitflags, once
         # via the "|jit-test|" line.  Remove dups because they are toggles.
-        cmd = prefix + list(set(self.jitflags)) + ['-e', expr, '-f', path]
+        cmd = prefix + ['--js-cache', Test.CacheDir]
+        cmd += list(set(self.jitflags)) + ['-e', expr, '-f', path]
         if self.valgrind:
             cmd = self.VALGRIND_CMD + cmd
         return cmd
@@ -298,6 +301,21 @@ def run_test(test, prefix, options):
     env = os.environ.copy()
     if test.tz_pacific:
         env['TZ'] = 'PST8PDT'
+
+    # Ensure interpreter directory is in shared library path.
+    pathvar = ''
+    if sys.platform.startswith('linux'):
+        pathvar = 'LD_LIBRARY_PATH'
+    elif sys.platform.startswith('darwin'):
+        pathvar = 'DYLD_LIBRARY_PATH'
+    elif sys.platform.startswith('win'):
+        pathvar = 'PATH'
+    if pathvar:
+        bin_dir = os.path.dirname(cmd[0])
+        if pathvar in env:
+            env[pathvar] = '%s%s%s' % (bin_dir, os.pathsep, env[pathvar])
+        else:
+            env[pathvar] = bin_dir
 
     out, err, code, timed_out = run(cmd, env, options.timeout)
     return TestOutput(test, cmd, out, err, code, None, timed_out)
@@ -639,6 +657,9 @@ def run_tests_remote(tests, prefix, options):
     push_libs(options, dm)
     push_progs(options, dm, [prefix[0]])
     dm.chmodDir(options.remote_test_root)
+
+    Test.CacheDir = posixpath.join(options.remote_test_root, '.js-cache')
+    dm.mkDirs(Test.CacheDir)
 
     dm.pushDir(ECMA6_DIR, posixpath.join(jit_tests_dir, 'tests', 'ecma_6'), timeout=600)
     dm.pushDir(os.path.dirname(TEST_DIR), options.remote_test_root, timeout=600)

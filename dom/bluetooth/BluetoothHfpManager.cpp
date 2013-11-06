@@ -15,19 +15,24 @@
 #include "BluetoothUtils.h"
 #include "BluetoothUuid.h"
 
-#include "MobileConnection.h"
+#include "jsapi.h"
 #include "mozilla/dom/bluetooth/BluetoothTypes.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "nsContentUtils.h"
 #include "nsIAudioManager.h"
-#include "nsIDOMIccInfo.h"
-#include "nsIIccProvider.h"
 #include "nsIObserverService.h"
 #include "nsISettingsService.h"
+#include "nsServiceManagerUtils.h"
+
+#ifdef MOZ_B2G_RIL
+#include "nsIDOMIccInfo.h"
+#include "nsIDOMMobileConnection.h"
+#include "nsIIccProvider.h"
+#include "nsIMobileConnectionProvider.h"
 #include "nsITelephonyProvider.h"
 #include "nsRadioInterfaceLayer.h"
-#include "nsServiceManagerUtils.h"
+#endif
 
 /**
  * BRSF bitmask of AG supported features. See 4.34.1 "Bluetooth Defined AT
@@ -44,6 +49,7 @@
 #define BRSF_BIT_EXTENDED_ERR_RESULT_CODES (1 << 8)
 #define BRSF_BIT_CODEC_NEGOTIATION         (1 << 9)
 
+#ifdef MOZ_B2G_RIL
 /**
  * These constants are used in result code such as +CLIP and +CCWA. The value
  * of these constants is the same as TOA_INTERNATIONAL/TOA_UNKNOWN defined in
@@ -51,6 +57,7 @@
  */
 #define TOA_UNKNOWN 0x81
 #define TOA_INTERNATIONAL 0x91
+#endif
 
 #define CR_LF "\xd\xa";
 
@@ -66,6 +73,7 @@ namespace {
   bool sInShutdown = false;
   static const char kHfpCrlf[] = "\xd\xa";
 
+#ifdef MOZ_B2G_RIL
   // Sending ringtone related
   static bool sStopSendingRingFlag = true;
   static int sRingInterval = 3000; //unit: ms
@@ -79,8 +87,10 @@ namespace {
   // The mechanism should be revised once we know the exact time at which
   // Dialer stops playing.
   static int sBusyToneInterval = 3700; //unit: ms
+#endif // MOZ_B2G_RIL
 } // anonymous namespace
 
+#ifdef MOZ_B2G_RIL
 /* CallState for sCINDItems[CINDType::CALL].value
  * - NO_CALL: there are no calls in progress
  * - IN_PROGRESS: at least one call is in progress
@@ -113,6 +123,7 @@ enum CallHeldState {
   ONHOLD_ACTIVE,
   ONHOLD_NOACTIVE
 };
+#endif // MOZ_B2G_RIL
 
 typedef struct {
   const char* name;
@@ -123,39 +134,27 @@ typedef struct {
 
 enum CINDType {
   BATTCHG = 1,
+#ifdef MOZ_B2G_RIL
   CALL,
   CALLHELD,
   CALLSETUP,
   SERVICE,
   SIGNAL,
   ROAM
+#endif
 };
 
 static CINDItem sCINDItems[] = {
   {},
   {"battchg", "0-5", 5, true},
+#ifdef MOZ_B2G_RIL
   {"call", "0,1", CallState::NO_CALL, true},
   {"callheld", "0-2", CallHeldState::NO_CALLHELD, true},
   {"callsetup", "0-3", CallSetupState::NO_CALLSETUP, true},
   {"service", "0,1", 0, true},
   {"signal", "0-5", 0, true},
   {"roam", "0,1", 0, true}
-};
-
-class mozilla::dom::bluetooth::Call {
-  public:
-    Call(uint16_t aState = nsITelephonyProvider::CALL_STATE_DISCONNECTED,
-         bool aDirection = false,
-         const nsAString& aNumber = EmptyString(),
-         int aType = TOA_UNKNOWN)
-      : mState(aState), mDirection(aDirection), mNumber(aNumber), mType(aType)
-    {
-    }
-
-    uint16_t mState;
-    bool mDirection; // true: incoming call; false: outgoing call
-    nsString mNumber;
-    int mType;
+#endif
 };
 
 class BluetoothHfpManager::GetVolumeTask : public nsISettingsServiceCallback
@@ -222,6 +221,7 @@ BluetoothHfpManager::Notify(const hal::BatteryInformation& aBatteryInfo)
   }
 }
 
+#ifdef MOZ_B2G_RIL
 class BluetoothHfpManager::RespondToBLDNTask : public Task
 {
 private:
@@ -281,6 +281,7 @@ private:
   nsString mNumber;
   int mType;
 };
+#endif // MOZ_B2G_RIL
 
 class BluetoothHfpManager::CloseScoTask : public Task
 {
@@ -293,6 +294,7 @@ private:
   }
 };
 
+#ifdef MOZ_B2G_RIL
 static bool
 IsValidDtmf(const char aChar) {
   // Valid DTMF: [*#0-9ABCD]
@@ -313,11 +315,39 @@ IsMandatoryIndicator(const CINDType aType) {
          (aType == CINDType::CALLSETUP);
 }
 
-BluetoothHfpManager::BluetoothHfpManager()
+/**
+ *  Call
+ */
+Call::Call()
 {
   Reset();
 }
 
+void
+Call::Reset()
+{
+  mState = nsITelephonyProvider::CALL_STATE_DISCONNECTED;
+  mDirection = false;
+  mNumber.Truncate();
+  mType = TOA_UNKNOWN;
+}
+
+bool
+Call::IsActive()
+{
+  return (mState == nsITelephonyProvider::CALL_STATE_CONNECTED);
+}
+#endif // MOZ_B2G_RIL
+
+/**
+ *  BluetoothHfpManager
+ */
+BluetoothHfpManager::BluetoothHfpManager() : mController(nullptr)
+{
+  Reset();
+}
+
+#ifdef MOZ_B2G_RIL
 void
 BluetoothHfpManager::ResetCallArray()
 {
@@ -326,26 +356,36 @@ BluetoothHfpManager::ResetCallArray()
   // index from RIL starts at 1.
   Call call;
   mCurrentCallArray.AppendElement(call);
+
+  if (mPhoneType == PhoneType::CDMA) {
+    mCdmaSecondCall.Reset();
+  }
 }
+#endif // MOZ_B2G_RIL
 
 void
 BluetoothHfpManager::Reset()
 {
+#ifdef MOZ_B2G_RIL
   sStopSendingRingFlag = true;
   sCINDItems[CINDType::CALL].value = CallState::NO_CALL;
   sCINDItems[CINDType::CALLSETUP].value = CallSetupState::NO_CALLSETUP;
   sCINDItems[CINDType::CALLHELD].value = CallHeldState::NO_CALLHELD;
+#endif
   for (uint8_t i = 1; i < ArrayLength(sCINDItems); i++) {
     sCINDItems[i].activated = true;
   }
 
+#ifdef MOZ_B2G_RIL
   mCCWA = false;
   mCLIP = false;
+  mDialingRequestProcessed = true;
+#endif
   mCMEE = false;
   mCMER = false;
   mReceiveVgsFlag = false;
-  mDialingRequestProcessed = true;
 
+#ifdef MOZ_B2G_RIL
   // We disable BSIR by default as it requires OEM implement BT SCO + SPEAKER
   // output audio path in audio driver. OEM can enable BSIR by setting
   // mBSIR=true here.
@@ -353,9 +393,8 @@ BluetoothHfpManager::Reset()
   // Please see Bug 878728 for more information.
   mBSIR = false;
 
-  mController = nullptr;
-
   ResetCallArray();
+#endif
 }
 
 bool
@@ -374,11 +413,13 @@ BluetoothHfpManager::Init()
 
   hal::RegisterBatteryObserver(this);
 
+#ifdef MOZ_B2G_RIL
   mListener = new BluetoothRilListener();
   if (!mListener->StartListening()) {
     BT_WARNING("Failed to start listening RIL");
     return false;
   }
+#endif
 
   nsCOMPtr<nsISettingsService> settings =
     do_GetService("@mozilla.org/settingsService;1");
@@ -405,10 +446,12 @@ BluetoothHfpManager::Init()
 
 BluetoothHfpManager::~BluetoothHfpManager()
 {
+#ifdef MOZ_B2G_RIL
   if (!mListener->StopListening()) {
     BT_WARNING("Failed to stop listening RIL");
   }
   mListener = nullptr;
+#endif
 
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
   NS_ENSURE_TRUE_VOID(obs);
@@ -474,6 +517,7 @@ BluetoothHfpManager::NotifyConnectionStatusChanged(const nsAString& aType)
   DispatchStatusChangedEvent(eventName, mDeviceAddress, status);
 }
 
+#ifdef MOZ_B2G_RIL
 void
 BluetoothHfpManager::NotifyDialer(const nsAString& aCommand)
 {
@@ -490,6 +534,7 @@ BluetoothHfpManager::NotifyDialer(const nsAString& aCommand)
     BT_WARNING("Failed to broadcast system message to dialer");
   }
 }
+#endif // MOZ_B2G_RIL
 
 void
 BluetoothHfpManager::HandleVolumeChanged(const nsAString& aData)
@@ -539,6 +584,7 @@ BluetoothHfpManager::HandleVolumeChanged(const nsAString& aData)
   }
 }
 
+#ifdef MOZ_B2G_RIL
 void
 BluetoothHfpManager::HandleVoiceConnectionChanged()
 {
@@ -547,8 +593,13 @@ BluetoothHfpManager::HandleVoiceConnectionChanged()
   NS_ENSURE_TRUE_VOID(connection);
 
   nsCOMPtr<nsIDOMMozMobileConnectionInfo> voiceInfo;
-  connection->GetVoiceConnectionInfo(getter_AddRefs(voiceInfo));
+  // TODO: Bug 921991 - B2G BT: support multiple sim cards
+  connection->GetVoiceConnectionInfo(0, getter_AddRefs(voiceInfo));
   NS_ENSURE_TRUE_VOID(voiceInfo);
+
+  nsString type;
+  voiceInfo->GetType(type);
+  mPhoneType = GetPhoneType(type);
 
   bool roaming;
   voiceInfo->GetRoaming(&roaming);
@@ -579,7 +630,8 @@ BluetoothHfpManager::HandleVoiceConnectionChanged()
    * - manual: set mNetworkSelectionMode to 1 (manual)
    */
   nsString mode;
-  connection->GetNetworkSelectionMode(mode);
+  // TODO: Bug 921991 - B2G BT: support multiple sim cards
+  connection->GetNetworkSelectionMode(0, mode);
   if (mode.EqualsLiteral("manual")) {
     mNetworkSelectionMode = 1;
   } else {
@@ -613,13 +665,15 @@ BluetoothHfpManager::HandleIccInfoChanged()
   NS_ENSURE_TRUE_VOID(icc);
 
   nsCOMPtr<nsIDOMMozIccInfo> iccInfo;
-  icc->GetIccInfo(getter_AddRefs(iccInfo));
+  // TODO: Bug 921991 - B2G BT: support multiple sim cards
+  icc->GetIccInfo(0, getter_AddRefs(iccInfo));
   NS_ENSURE_TRUE_VOID(iccInfo);
 
   nsCOMPtr<nsIDOMMozGsmIccInfo> gsmIccInfo = do_QueryInterface(iccInfo);
   NS_ENSURE_TRUE_VOID(gsmIccInfo);
   gsmIccInfo->GetMsisdn(mMsisdn);
 }
+#endif // MOZ_B2G_RIL
 
 void
 BluetoothHfpManager::HandleShutdown()
@@ -647,13 +701,22 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
   // For more information, please refer to 4.34.1 "Bluetooth Defined AT
   // Capabilities" in Bluetooth hands-free profile 1.6
   if (msg.Find("AT+BRSF=") != -1) {
-    uint32_t brsf = BRSF_BIT_THREE_WAY_CALLING |
-                    BRSF_BIT_ABILITY_TO_REJECT_CALL |
+#ifdef MOZ_B2G_RIL
+    uint32_t brsf = BRSF_BIT_ABILITY_TO_REJECT_CALL |
                     BRSF_BIT_ENHANCED_CALL_STATUS;
+
+    // No support for three way calling in CDMA since
+    // CDMA disallows to hang existing call for CHLD=1
+    if (mPhoneType != PhoneType::CDMA) {
+      brsf |= BRSF_BIT_THREE_WAY_CALLING;
+    }
 
     if (mBSIR) {
       brsf |= BRSF_BIT_IN_BAND_RING_TONE;
     }
+#else
+    uint32_t brsf = 0;
+#endif // MOZ_B2G_RIL
 
     SendCommand("+BRSF: ", brsf);
   } else if (msg.Find("AT+CIND=?") != -1) {
@@ -694,6 +757,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
     // AT+CMEE = 1: use numeric <err>
     // AT+CMEE = 2: use verbose <err>
     mCMEE = !atCommandValues[0].EqualsLiteral("0");
+#ifdef MOZ_B2G_RIL
   } else if (msg.Find("AT+COPS=") != -1) {
     ParseAtCommand(msg, 8, atCommandValues);
 
@@ -732,6 +796,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
       message += atCommandValues[0].get()[0];
       NotifyDialer(NS_ConvertUTF8toUTF16(message));
     }
+#endif // MOZ_B2G_RIL
   } else if (msg.Find("AT+VGM=") != -1) {
     ParseAtCommand(msg, 7, atCommandValues);
 
@@ -749,6 +814,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
 
     NS_ASSERTION(vgm >= 0 && vgm <= 15, "Received invalid VGM value");
     mCurrentVgm = vgm;
+#ifdef MOZ_B2G_RIL
   } else if (msg.Find("AT+CHLD=?") != -1) {
     SendLine("+CHLD: (0,1,2)");
   } else if (msg.Find("AT+CHLD=") != -1) {
@@ -799,6 +865,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
       SendLine("ERROR");
       return;
     }
+#endif // MOZ_B2G_RIL
   } else if (msg.Find("AT+VGS=") != -1) {
     // Adjust volume by headset
     mReceiveVgsFlag = true;
@@ -826,6 +893,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
     nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
     data.AppendInt(newVgs);
     os->NotifyObservers(nullptr, "bluetooth-volume-change", data.get());
+#ifdef MOZ_B2G_RIL
   } else if ((msg.Find("AT+BLDN") != -1) || (msg.Find("ATD>") != -1)) {
     // Dialer app of FFOS v1 does not have plan to support Memory Dailing.
     // However, in order to pass Bluetooth HFP certification, we still have to
@@ -951,6 +1019,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
         // Ignore requests to activate/deactivate mandatory indicators
       }
     }
+#endif // MOZ_B2G_RIL
   } else {
     nsCString warningMsg;
     warningMsg.Append(NS_LITERAL_CSTRING("Unsupported AT command: "));
@@ -989,18 +1058,11 @@ BluetoothHfpManager::Connect(const nsAString& aDeviceAddress,
     return;
   }
 
-  mNeedsUpdatingSdpRecords = true;
-  mIsHandsfree = !IS_HEADSET(aController->GetCod());
-
   nsString uuid;
-  if (mIsHandsfree) {
-    BluetoothUuidHelper::GetString(BluetoothServiceClass::HANDSFREE, uuid);
-  } else {
-    BluetoothUuidHelper::GetString(BluetoothServiceClass::HEADSET, uuid);
-  }
+  BluetoothUuidHelper::GetString(BluetoothServiceClass::HANDSFREE, uuid);
 
   if (NS_FAILED(bs->GetServiceChannel(aDeviceAddress, uuid, this))) {
-    aController->OnConnect(NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
+    aController->OnConnect(NS_LITERAL_STRING(ERR_NO_AVAILABLE_RESOURCE));
     return;
   }
 
@@ -1080,8 +1142,71 @@ BluetoothHfpManager::Disconnect(BluetoothProfileController* aController)
 
   mController = aController;
   mSocket->Disconnect();
-  mSocket = nullptr;
 }
+
+#ifdef MOZ_B2G_RIL
+void
+BluetoothHfpManager::SendCCWA(const nsAString& aNumber, int aType)
+{
+  if (mCCWA) {
+    nsAutoCString ccwaMsg("+CCWA: \"");
+    ccwaMsg.Append(NS_ConvertUTF16toUTF8(aNumber));
+    ccwaMsg.AppendLiteral("\",");
+    ccwaMsg.AppendInt(aType);
+    SendLine(ccwaMsg.get());
+  }
+}
+
+bool
+BluetoothHfpManager::SendCLCC(const Call& aCall, int aIndex)
+{
+  if (aCall.mState == nsITelephonyProvider::CALL_STATE_DISCONNECTED) {
+    return true;
+  }
+
+  nsAutoCString message("+CLCC: ");
+  message.AppendInt(aIndex);
+  message.AppendLiteral(",");
+  message.AppendInt(aCall.mDirection);
+  message.AppendLiteral(",");
+
+  int status = 0;
+  switch (aCall.mState) {
+    case nsITelephonyProvider::CALL_STATE_CONNECTED:
+      if (mPhoneType == PhoneType::CDMA && aIndex == 1) {
+        status = (mCdmaSecondCall.IsActive()) ? 1 : 0;
+      }
+      message.AppendInt(status);
+      break;
+    case nsITelephonyProvider::CALL_STATE_HELD:
+      message.AppendInt(1);
+      break;
+    case nsITelephonyProvider::CALL_STATE_DIALING:
+      message.AppendInt(2);
+      break;
+    case nsITelephonyProvider::CALL_STATE_ALERTING:
+      message.AppendInt(3);
+      break;
+    case nsITelephonyProvider::CALL_STATE_INCOMING:
+      if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
+        message.AppendInt(4);
+      } else {
+        message.AppendInt(5);
+      }
+      break;
+    default:
+      BT_WARNING("Not handling call status for CLCC");
+      break;
+  }
+
+  message.AppendLiteral(",0,0,\"");
+  message.Append(NS_ConvertUTF16toUTF8(aCall.mNumber));
+  message.AppendLiteral("\",");
+  message.AppendInt(aCall.mType);
+
+  return SendLine(message.get());
+}
+#endif // MOZ_B2G_RIL
 
 bool
 BluetoothHfpManager::SendLine(const char* aMessage)
@@ -1147,53 +1272,24 @@ BluetoothHfpManager::SendCommand(const char* aCommand, uint32_t aValue)
         message.AppendLiteral(",");
       }
     }
+#ifdef MOZ_B2G_RIL
   } else if (!strcmp(aCommand, "+CLCC: ")) {
     bool rv = true;
     uint32_t callNumbers = mCurrentCallArray.Length();
-    for (uint32_t i = 1; i < callNumbers; i++) {
-      Call& call = mCurrentCallArray[i];
-      if (call.mState == nsITelephonyProvider::CALL_STATE_DISCONNECTED) {
-        continue;
-      }
-
-      message.AssignLiteral("+CLCC: ");
-      message.AppendInt(i);
-      message.AppendLiteral(",");
-      message.AppendInt(call.mDirection);
-      message.AppendLiteral(",");
-
-      switch (call.mState) {
-        case nsITelephonyProvider::CALL_STATE_CONNECTED:
-          message.AppendInt(0);
-          break;
-        case nsITelephonyProvider::CALL_STATE_HELD:
-          message.AppendInt(1);
-          break;
-        case nsITelephonyProvider::CALL_STATE_DIALING:
-          message.AppendInt(2);
-          break;
-        case nsITelephonyProvider::CALL_STATE_ALERTING:
-          message.AppendInt(3);
-          break;
-        case nsITelephonyProvider::CALL_STATE_INCOMING:
-          if (!FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
-            message.AppendInt(4);
-          } else {
-            message.AppendInt(5);
-          }
-          break;
-        default:
-          BT_WARNING("Not handling call status for CLCC");
-          break;
-      }
-      message.AppendLiteral(",0,0,\"");
-      message.Append(NS_ConvertUTF16toUTF8(call.mNumber));
-      message.AppendLiteral("\",");
-      message.AppendInt(call.mType);
-
-      rv &= SendLine(message.get());
+    uint32_t i;
+    for (i = 1; i < callNumbers; i++) {
+      rv &= SendCLCC(mCurrentCallArray[i], i);
     }
+
+    if (!mCdmaSecondCall.mNumber.IsEmpty()) {
+      MOZ_ASSERT(mPhoneType == PhoneType::CDMA);
+      MOZ_ASSERT(i == 2);
+
+      rv &= SendCLCC(mCdmaSecondCall, 2);
+    }
+
     return rv;
+#endif // MOZ_B2G_RIL
   } else {
     message.AppendInt(aValue);
   }
@@ -1201,6 +1297,7 @@ BluetoothHfpManager::SendCommand(const char* aCommand, uint32_t aValue)
   return SendLine(message.get());
 }
 
+#ifdef MOZ_B2G_RIL
 void
 BluetoothHfpManager::UpdateCIND(uint8_t aType, uint8_t aValue, bool aSend)
 {
@@ -1283,13 +1380,7 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
       break;
     case nsITelephonyProvider::CALL_STATE_INCOMING:
       if (FindFirstCall(nsITelephonyProvider::CALL_STATE_CONNECTED)) {
-        if (mCCWA) {
-          nsAutoCString ccwaMsg("+CCWA: \"");
-          ccwaMsg.Append(NS_ConvertUTF16toUTF8(aNumber));
-          ccwaMsg.AppendLiteral("\",");
-          ccwaMsg.AppendInt(mCurrentCallArray[aCallIndex].mType);
-          SendLine(ccwaMsg.get());
-        }
+        SendCCWA(aNumber, mCurrentCallArray[aCallIndex].mType);
         UpdateCIND(CINDType::CALLSETUP, CallSetupState::INCOMING, aSend);
       } else {
         // Start sending RING indicator to HF
@@ -1417,11 +1508,85 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
   }
 }
 
+PhoneType
+BluetoothHfpManager::GetPhoneType(const nsAString& aType)
+{
+  // FIXME: Query phone type from RIL after RIL implements new API (bug 912019)
+  if (aType.EqualsLiteral("gsm") || aType.EqualsLiteral("gprs") ||
+      aType.EqualsLiteral("edge") || aType.EqualsLiteral("umts") ||
+      aType.EqualsLiteral("hspa") || aType.EqualsLiteral("hsdpa") ||
+      aType.EqualsLiteral("hsupa") || aType.EqualsLiteral("hspa+")) {
+    return PhoneType::GSM;
+  } else if (aType.EqualsLiteral("is95a") || aType.EqualsLiteral("is95b") ||
+             aType.EqualsLiteral("1xrtt") || aType.EqualsLiteral("evdo0") ||
+             aType.EqualsLiteral("evdoa") || aType.EqualsLiteral("evdob")) {
+    return PhoneType::CDMA;
+  }
+
+  return PhoneType::NONE;
+}
+
+void
+BluetoothHfpManager::UpdateSecondNumber(const nsAString& aNumber)
+{
+  MOZ_ASSERT(mPhoneType == PhoneType::CDMA);
+
+  // Always regard second call as incoming call since v1.2 RIL
+  // doesn't support outgoing second call in CDMA.
+  mCdmaSecondCall.mDirection = true;
+
+  mCdmaSecondCall.mNumber = aNumber;
+  mCdmaSecondCall.mType = (aNumber[0] == '+') ? TOA_INTERNATIONAL :
+                                                TOA_UNKNOWN;
+
+  SendCCWA(aNumber, mCdmaSecondCall.mType);
+  UpdateCIND(CINDType::CALLSETUP, CallSetupState::INCOMING, true);
+}
+
+void
+BluetoothHfpManager::AnswerWaitingCall()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mPhoneType == PhoneType::CDMA);
+
+  // Pick up second call. First call is held now.
+  mCdmaSecondCall.mState = nsITelephonyProvider::CALL_STATE_CONNECTED;
+  UpdateCIND(CINDType::CALLSETUP, CallSetupState::NO_CALLSETUP, true);
+
+  sCINDItems[CINDType::CALLHELD].value = CallHeldState::ONHOLD_ACTIVE;
+  SendCommand("+CIEV: ", CINDType::CALLHELD);
+}
+
+void
+BluetoothHfpManager::IgnoreWaitingCall()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mPhoneType == PhoneType::CDMA);
+
+  mCdmaSecondCall.Reset();
+  UpdateCIND(CINDType::CALLSETUP, CallSetupState::NO_CALLSETUP, true);
+}
+
+void
+BluetoothHfpManager::ToggleCalls()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mPhoneType == PhoneType::CDMA);
+
+  // Toggle acitve and held calls
+  mCdmaSecondCall.mState = (mCdmaSecondCall.IsActive()) ?
+                             nsITelephonyProvider::CALL_STATE_HELD :
+                             nsITelephonyProvider::CALL_STATE_CONNECTED;
+}
+#endif // MOZ_B2G_RIL
+
 void
 BluetoothHfpManager::OnSocketConnectSuccess(BluetoothSocket* aSocket)
 {
   MOZ_ASSERT(aSocket);
+#ifdef MOZ_B2G_RIL
   MOZ_ASSERT(mListener);
+#endif
 
   // Success to create a SCO socket
   if (aSocket == mScoSocket) {
@@ -1450,10 +1615,12 @@ BluetoothHfpManager::OnSocketConnectSuccess(BluetoothSocket* aSocket)
     mHandsfreeSocket = nullptr;
   }
 
+#ifdef MOZ_B2G_RIL
   // Enumerate current calls
   mListener->EnumerateCalls();
 
   mFirstCKPD = true;
+#endif
 
   // Cache device path for NotifySettings() since we can't get socket address
   // when a headset disconnect with us
@@ -1509,25 +1676,9 @@ BluetoothHfpManager::OnSocketDisconnect(BluetoothSocket* aSocket)
 void
 BluetoothHfpManager::OnUpdateSdpRecords(const nsAString& aDeviceAddress)
 {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(!aDeviceAddress.IsEmpty());
-  MOZ_ASSERT(mRunnable);
-
-  BluetoothService* bs = BluetoothService::Get();
-  NS_ENSURE_TRUE_VOID(bs);
-
-  nsString uuid;
-  if (mIsHandsfree) {
-    BluetoothUuidHelper::GetString(BluetoothServiceClass::HANDSFREE, uuid);
-  } else {
-    BluetoothUuidHelper::GetString(BluetoothServiceClass::HEADSET, uuid);
-  }
-
-  // Since we have updated SDP records of the target device, we should
-  // try to get the channel of target service again.
-  if (NS_FAILED(bs->GetServiceChannel(aDeviceAddress, uuid, this))) {
-    OnConnect(NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
-  }
+  // UpdateSdpRecord() is not called so this callback function should not
+  // be invoked.
+  MOZ_ASSUME_UNREACHABLE("UpdateSdpRecords() should be called somewhere");
 }
 
 void
@@ -1541,18 +1692,23 @@ BluetoothHfpManager::OnGetServiceChannel(const nsAString& aDeviceAddress,
   BluetoothService* bs = BluetoothService::Get();
   NS_ENSURE_TRUE_VOID(bs);
 
-  BluetoothValue v;
-
   if (aChannel < 0) {
-    if (mNeedsUpdatingSdpRecords) {
-      mNeedsUpdatingSdpRecords = false;
-      bs->UpdateSdpRecords(aDeviceAddress, this);
-    } else {
+    // If we can't find Handsfree server channel number on the remote device,
+    // try to create HSP connection instead.
+    nsString hspUuid;
+    BluetoothUuidHelper::GetString(BluetoothServiceClass::HEADSET, hspUuid);
+
+    if (aServiceUuid.Equals(hspUuid)) {
       OnConnect(NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
+    } else if (NS_FAILED(bs->GetServiceChannel(aDeviceAddress,
+                                               hspUuid, this))) {
+      OnConnect(NS_LITERAL_STRING(ERR_NO_AVAILABLE_RESOURCE));
     }
 
     return;
   }
+
+  MOZ_ASSERT(mSocket);
 
   if (!mSocket->Connect(NS_ConvertUTF16toUTF8(aDeviceAddress), aChannel)) {
     OnConnect(NS_LITERAL_STRING("SocketConnectionError"));
@@ -1716,8 +1872,8 @@ BluetoothHfpManager::OnConnect(const nsAString& aErrorStr)
    */
   NS_ENSURE_TRUE_VOID(mController);
 
-  mController->OnConnect(aErrorStr);
-  mController = nullptr;
+  nsRefPtr<BluetoothProfileController> controller = mController.forget();
+  controller->OnConnect(aErrorStr);
 }
 
 void
@@ -1735,8 +1891,8 @@ BluetoothHfpManager::OnDisconnect(const nsAString& aErrorStr)
    */
   NS_ENSURE_TRUE_VOID(mController);
 
-  mController->OnDisconnect(aErrorStr);
-  mController = nullptr;
+  nsRefPtr<BluetoothProfileController> controller = mController.forget();
+  controller->OnDisconnect(aErrorStr);
 }
 
 NS_IMPL_ISUPPORTS1(BluetoothHfpManager, nsIObserver)

@@ -10,7 +10,7 @@ EXPORTS += [
     'nsUCvTWCID.h',
 ]
 
-CPP_SOURCES += [
+UNIFIED_SOURCES += [
     'nsBIG5HKSCSToUnicode.cpp',
     'nsBIG5ToUnicode.cpp',
     'nsUnicodeToBIG5.cpp',

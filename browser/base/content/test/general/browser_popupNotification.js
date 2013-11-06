@@ -149,11 +149,27 @@ function basicNotification() {
       }
     }
   };
-  this.addOptions = function(options) {
-    for (let [name, value] in Iterator(options))
-      self.options[name] = value;
-  }
 }
+
+basicNotification.prototype.addOptions = function(options) {
+  for (let [name, value] in Iterator(options))
+    this.options[name] = value;
+};
+
+function errorNotification() {
+  var self = this;
+  this.mainAction.callback = function () {
+    self.mainActionClicked = true;
+    throw new Error("Oops!");
+  };
+  this.secondaryActions[0].callback = function () {
+    self.secondaryActionClicked = true;
+    throw new Error("Oops!");
+  };
+}
+
+errorNotification.prototype = new basicNotification();
+errorNotification.prototype.constructor = errorNotification;
 
 var wrongBrowserNotificationObject = new basicNotification();
 var wrongBrowserNotification;
@@ -813,25 +829,105 @@ var tests = [
       });
     }
   },
-  { // Test #28 - location change in embedded frame removes notification
+  { // Test #28 - location change in an embedded frame should not remove a notification
     run: function () {
-      loadURI("data:text/html,<iframe id='iframe' src='http://example.com/'>", function () {
-        let notifyObj = new basicNotification();
-        notifyObj.options.eventCallback = function (eventName) {
+      loadURI("data:text/html;charset=utf8,<iframe id='iframe' src='http://example.com/'>", function () {
+        this.notifyObj = new basicNotification();
+        this.notifyObj.options.eventCallback = function (eventName) {
           if (eventName == "removed") {
-            ok(true, "Notification removed in background tab after reloading");
-            executeSoon(goNext);
+            ok(false, "Test 28: Notification removed from browser when subframe navigated");
           }
         };
-        showNotification(notifyObj);
-        executeSoon(function () {
-          content.document.getElementById("iframe")
-                          .setAttribute("src", "http://example.org/");
-        });
-      });
+        showNotification(this.notifyObj);
+      }.bind(this));
+    },
+    onShown: function (popup) {
+      let self = this;
+      let progressListener = {
+        onLocationChange: function onLocationChange(aBrowser) {
+          if (aBrowser != gBrowser.selectedBrowser) {
+            return;
+          }
+          let notification = PopupNotifications.getNotification(self.notifyObj.id,
+                                                                self.notifyObj.browser);
+          ok(notification != null, "Test 28: Notification remained when subframe navigated");
+          self.notifyObj.options.eventCallback = undefined;
+
+          notification.remove();
+          gBrowser.removeTabsProgressListener(progressListener);
+        },
+      };
+
+      info("Test 28: Adding progress listener and performing navigation");
+      gBrowser.addTabsProgressListener(progressListener);
+      content.document.getElementById("iframe")
+                      .setAttribute("src", "http://example.org/");
+    },
+    onHidden: function () {}
+  },
+  { // Test #29 - Popup Notifications should catch exceptions from callbacks
+    run: function () {
+      let callbackCount = 0;
+      this.testNotif1 = new basicNotification();
+      this.testNotif1.message += " 1";
+      showNotification(this.testNotif1);
+      this.testNotif1.options.eventCallback = function (eventName) {
+        info("notifyObj1.options.eventCallback: " + eventName);
+        if (eventName == "dismissed") {
+          throw new Error("Oops 1!");
+          if (++callbackCount == 2) {
+            executeSoon(goNext);
+          }
+        }
+      };
+
+      this.testNotif2 = new basicNotification();
+      this.testNotif2.message += " 2";
+      this.testNotif2.id += "-2";
+      this.testNotif2.options.eventCallback = function (eventName) {
+        info("notifyObj2.options.eventCallback: " + eventName);
+        if (eventName == "dismissed") {
+          throw new Error("Oops 2!");
+          if (++callbackCount == 2) {
+            executeSoon(goNext);
+          }
+        }
+      };
+      showNotification(this.testNotif2);
+    },
+    onShown: function (popup) {
+      is(popup.childNodes.length, 2, "two notifications are shown");
+      dismissNotification(popup);
+    },
+    onHidden: function () {}
+  },
+  { // Test #30 - Popup Notifications main actions should catch exceptions from callbacks
+    run: function () {
+      this.testNotif = new errorNotification();
+      showNotification(this.testNotif);
+    },
+    onShown: function (popup) {
+      checkPopup(popup, this.testNotif);
+      triggerMainCommand(popup);
+    },
+    onHidden: function (popup) {
+      ok(this.testNotif.mainActionClicked, "main action has been triggered");
     }
   },
-  { // Test #29 -  Existing popup notification shouldn't disappear when adding a dismissed notification
+  { // Test #31 - Popup Notifications secondary actions should catch exceptions from callbacks
+    run: function () {
+      this.testNotif = new errorNotification();
+      showNotification(this.testNotif);
+    },
+    onShown: function (popup) {
+      checkPopup(popup, this.testNotif);
+      triggerSecondaryCommand(popup, 0);
+    },
+    onHidden: function (popup) {
+      ok(this.testNotif.secondaryActionClicked, "secondary action has been triggered");
+    }
+  },
+  { // Test #32 -  Existing popup notification shouldn't disappear when adding a dismissed notification
     run: function () {
       this.notifyObj1 = new basicNotification();
       this.notifyObj1.id += "_1";
@@ -862,7 +958,7 @@ var tests = [
       this.notification2.remove();
     }
   },
-  { // Test #30 - Showing should be able to modify the popup data
+  { // Test #33 - Showing should be able to modify the popup data
     run: function() {
       this.notifyObj = new basicNotification();
       var normalCallback = this.notifyObj.options.eventCallback;

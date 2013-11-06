@@ -8,6 +8,7 @@ var SelectionHandler = {
   init: function init() {
     this.type = kContentSelector;
     this.snap = true;
+    this.lastYPos = this.lastXPos = null;
     addMessageListener("Browser:SelectionStart", this);
     addMessageListener("Browser:SelectionAttach", this);
     addMessageListener("Browser:SelectionEnd", this);
@@ -24,6 +25,7 @@ var SelectionHandler = {
     addMessageListener("Browser:SelectionSwitchMode", this);
     addMessageListener("Browser:RepositionInfoRequest", this);
     addMessageListener("Browser:SelectionHandlerPing", this);
+    addMessageListener("Browser:ResetLastPos", this);
   },
 
   shutdown: function shutdown() {
@@ -43,6 +45,7 @@ var SelectionHandler = {
     removeMessageListener("Browser:SelectionSwitchMode", this);
     removeMessageListener("Browser:RepositionInfoRequest", this);
     removeMessageListener("Browser:SelectionHandlerPing", this);
+    removeMessageListener("Browser:ResetLastPos", this);
   },
 
   sendAsync: function sendAsync(aMsg, aJson) {
@@ -340,6 +343,11 @@ var SelectionHandler = {
     this.sendAsync("Content:SelectionHandlerPong", { id: aId });
   },
 
+  onClickCoords: function (xPos, yPos) {
+    this.lastXPos = xPos;
+    this.lastYPos = yPos;
+  },
+
   /*************************************************
    * Selection helpers
    */
@@ -412,9 +420,12 @@ var SelectionHandler = {
    */
   _calcNewContentPosition: function _calcNewContentPosition(aNewViewHeight) {
     // We have no target element but the keyboard is up
-    // so lets not cover content
+    // so lets not cover content that is below the keyboard
     if (!this._cache || !this._cache.element) {
-      return Services.metro.keyboardHeight;
+      if (this.lastYPos != null && this.lastYPos > aNewViewHeight) {
+        return Services.metro.keyboardHeight;
+      }
+      return 0;
     }
 
     let position = Util.centerElementInView(aNewViewHeight, this._cache.element);
@@ -523,11 +534,20 @@ var SelectionHandler = {
         break;
 
       case "Browser:RepositionInfoRequest":
-        this._repositionInfoRequest(json);
+        // This message is sent simultaneously with a tap event.
+        // Wait a bit to make sure we have the most up-to-date tap co-ordinates
+        // before a call to _calcNewContentPosition() which accesses them.
+        content.setTimeout (function () {
+          SelectionHandler._repositionInfoRequest(json);
+        }, 50);
         break;
 
       case "Browser:SelectionHandlerPing":
         this._onPing(json.id);
+        break;
+
+      case "Browser:ResetLastPos":
+        this._onClickCoords(json.xPos, json.yPos);
         break;
     }
   },

@@ -27,7 +27,6 @@
 #include <string.h>
 
 #include "double-conversion.h"
-#include "jsapi.h"
 #include "jsatom.h"
 #include "jscntxt.h"
 #include "jsdtoa.h"
@@ -494,7 +493,7 @@ IsNumber(HandleValue v)
     return v.isNumber() || (v.isObject() && v.toObject().is<NumberObject>());
 }
 
-inline double
+static inline double
 Extract(const Value &v)
 {
     if (v.isNumber())
@@ -652,7 +651,7 @@ js::Int32ToAtom<NoGC>(ExclusiveContext *cx, int32_t si);
 static char *
 IntToCString(ToCStringBuf *cbuf, int i, size_t *len, int base = 10)
 {
-    unsigned u = (i < 0) ? -i : i;
+    unsigned u = (i < 0) ? -unsigned(i) : i;
 
     RangedPtr<char> cp(cbuf->sbuf + ToCStringBuf::sbufSize - 1, cbuf->sbuf, ToCStringBuf::sbufSize);
     char *end = cp.get();
@@ -853,7 +852,7 @@ num_toLocaleString_impl(JSContext *cx, CallArgs args)
     return true;
 }
 
-bool
+static bool
 num_toLocaleString(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -876,7 +875,7 @@ js_num_valueOf(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsNumber, num_valueOf_impl>(cx, args);
 }
 
-const unsigned MAX_PRECISION = 100;
+static const unsigned MAX_PRECISION = 100;
 
 static bool
 ComputePrecisionInRange(JSContext *cx, int minPrecision, int maxPrecision, HandleValue v,
@@ -932,7 +931,7 @@ num_toFixed_impl(JSContext *cx, CallArgs args)
     return DToStrResult(cx, Extract(args.thisv()), DTOSTR_FIXED, precision, args);
 }
 
-bool
+static bool
 num_toFixed(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -958,7 +957,7 @@ num_toExponential_impl(JSContext *cx, CallArgs args)
     return DToStrResult(cx, Extract(args.thisv()), mode, precision + 1, args);
 }
 
-bool
+static bool
 num_toExponential(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -996,7 +995,7 @@ num_toPrecision_impl(JSContext *cx, CallArgs args)
     return DToStrResult(cx, d, mode, precision, args);
 }
 
-bool
+static bool
 num_toPrecision(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1127,7 +1126,7 @@ static JSConstDoubleSpec number_constants[] = {
  * Set the exception mask to mask all exceptions and set the FPU precision
  * to 53 bit mantissa (64 bit doubles).
  */
-inline void FIX_FPU() {
+static inline void FIX_FPU() {
     short control;
     asm("fstcw %0" : "=m" (control) : );
     control &= ~0x300; // Lower bits 8 and 9 (precision control).

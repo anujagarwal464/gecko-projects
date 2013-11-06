@@ -136,12 +136,11 @@ var PageStyleActor = protocol.ActorClass({
    *   }
    */
   getComputed: method(function(node, options) {
-    let win = node.rawNode.ownerDocument.defaultView;
     let ret = Object.create(null);
 
     this.cssLogic.sourceFilter = options.filter || CssLogic.FILTER.UA;
     this.cssLogic.highlight(node.rawNode);
-    let computed = this.cssLogic._computedStyle;
+    let computed = this.cssLogic._computedStyle || [];
 
     Array.prototype.forEach.call(computed, name => {
       let matched = undefined;
@@ -233,6 +232,7 @@ var PageStyleActor = protocol.ActorClass({
         rule: rule,
         sourceText: this.getSelectorSource(selectorInfo, node.rawNode),
         selector: selectorInfo.selector.text,
+        name: selectorInfo.property,
         value: selectorInfo.value,
         status: selectorInfo.status
       });
@@ -244,7 +244,7 @@ var PageStyleActor = protocol.ActorClass({
       matched: matched,
       rules: [...rules],
       sheets: [...sheets],
-    }
+    };
   }, {
     request: {
       node: Arg(0, "domnode"),

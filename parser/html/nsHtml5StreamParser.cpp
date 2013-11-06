@@ -302,7 +302,7 @@ nsHtml5StreamParser::SetupDecodingAndWriteSniffingBufferAndCurrentSegment(const 
   rv = convManager->GetUnicodeDecoder(mCharset.get(), getter_AddRefs(mUnicodeDecoder));
   if (rv == NS_ERROR_UCONV_NOCONV) {
     mCharset.AssignLiteral("windows-1252"); // lower case is the raw form
-    mCharsetSource = kCharsetFromWeakDocTypeDefault;
+    mCharsetSource = kCharsetFromFallback;
     rv = convManager->GetUnicodeDecoderRaw(mCharset.get(), getter_AddRefs(mUnicodeDecoder));
     mTreeBuilder->SetDocumentCharset(mCharset, mCharsetSource);
   }
@@ -612,10 +612,10 @@ nsHtml5StreamParser::FinalizeSniffing(const uint8_t* aFromSegment, // can be nul
   if (mCharsetSource == kCharsetUninitialized) {
     // Hopefully this case is never needed, but dealing with it anyway
     mCharset.AssignLiteral("windows-1252");
-    mCharsetSource = kCharsetFromWeakDocTypeDefault;
+    mCharsetSource = kCharsetFromFallback;
     mTreeBuilder->SetDocumentCharset(mCharset, mCharsetSource);
   } else if (mMode == LOAD_AS_DATA &&
-             mCharsetSource == kCharsetFromWeakDocTypeDefault) {
+             mCharsetSource == kCharsetFromFallback) {
     NS_ASSERTION(mReparseForbidden, "Reparse should be forbidden for XHR");
     NS_ASSERTION(!mFeedChardet, "Should not feed chardet for XHR");
     NS_ASSERTION(mCharset.EqualsLiteral("UTF-8"),
@@ -731,7 +731,7 @@ nsHtml5StreamParser::SniffStreamBytes(const uint8_t* aFromSegment,
       // nsHTMLDocument is supposed to make sure this does not happen. Let's
       // deal with this anyway, since who knows how kCharsetFromOtherComponent
       // is used.
-      mCharsetSource = kCharsetFromWeakDocTypeDefault;
+      mCharsetSource = kCharsetFromFallback;
     }
   }
 
@@ -799,8 +799,13 @@ nsHtml5StreamParser::WriteStreamBytes(const uint8_t* aFromSegment,
                                       uint32_t* aWriteCount)
 {
   NS_ASSERTION(IsParserThread(), "Wrong thread!");
-  // mLastBuffer always points to a buffer of the size
+  // mLastBuffer should always point to a buffer of the size
   // NS_HTML5_STREAM_PARSER_READ_BUFFER_SIZE.
+  if (!mLastBuffer) {
+    NS_WARNING("mLastBuffer should not be null!");
+    MarkAsBroken();
+    return NS_ERROR_NULL_POINTER;
+  }
   if (mLastBuffer->getEnd() == NS_HTML5_STREAM_PARSER_READ_BUFFER_SIZE) {
     nsRefPtr<nsHtml5OwningUTF16Buffer> newBuf =
       nsHtml5OwningUTF16Buffer::FalliblyCreate(
@@ -976,7 +981,7 @@ nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest, nsISupports* aContext)
   // if we failed to get a decoder, there will be fallback, so don't propagate
   //  the error.
   if (NS_FAILED(rv)) {
-    mCharsetSource = kCharsetFromWeakDocTypeDefault;
+    mCharsetSource = kCharsetFromFallback;
   }
   return NS_OK;
 }

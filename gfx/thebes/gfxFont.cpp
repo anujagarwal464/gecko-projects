@@ -707,26 +707,22 @@ gfxFontEntry::CheckForGraphiteTables()
 /* static */ size_t
 gfxFontEntry::FontTableHashEntry::SizeOfEntryExcludingThis
     (FontTableHashEntry *aEntry,
-     MallocSizeOf   aMallocSizeOf,
-     void*               aUserArg)
+     MallocSizeOf aMallocSizeOf,
+     void* aUserArg)
 {
-    FontListSizes *sizes = static_cast<FontListSizes*>(aUserArg);
+    size_t n = 0;
     if (aEntry->mBlob) {
-        sizes->mFontTableCacheSize += aMallocSizeOf(aEntry->mBlob);
+        n += aMallocSizeOf(aEntry->mBlob);
     }
     if (aEntry->mSharedBlobData) {
-        sizes->mFontTableCacheSize +=
-            aEntry->mSharedBlobData->SizeOfIncludingThis(aMallocSizeOf);
+        n += aEntry->mSharedBlobData->SizeOfIncludingThis(aMallocSizeOf);
     }
-
-    // the size of the table is recorded in the FontListSizes record,
-    // so we return 0 here for the function result
-    return 0;
+    return n;
 }
 
 void
-gfxFontEntry::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
-                                  FontListSizes*    aSizes) const
+gfxFontEntry::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
+                                     FontListSizes* aSizes) const
 {
     aSizes->mFontListSize += mName.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 
@@ -739,16 +735,16 @@ gfxFontEntry::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
         aSizes->mFontTableCacheSize +=
             mFontTableCache->SizeOfExcludingThis(
                 FontTableHashEntry::SizeOfEntryExcludingThis,
-                aMallocSizeOf, aSizes);
+                aMallocSizeOf);
     }
 }
 
 void
-gfxFontEntry::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
-                                  FontListSizes*    aSizes) const
+gfxFontEntry::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
+                                     FontListSizes* aSizes) const
 {
     aSizes->mFontListSize += aMallocSizeOf(this);
-    SizeOfExcludingThis(aMallocSizeOf, aSizes);
+    AddSizeOfExcludingThis(aMallocSizeOf, aSizes);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1330,8 +1326,8 @@ gfxFontFamily::FindFont(const nsAString& aPostscriptName)
 }
 
 void
-gfxFontFamily::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
-                                   FontListSizes*    aSizes) const
+gfxFontFamily::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
+                                      FontListSizes* aSizes) const
 {
     aSizes->mFontListSize +=
         mName.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
@@ -1343,19 +1339,19 @@ gfxFontFamily::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
     for (uint32_t i = 0; i < mAvailableFonts.Length(); ++i) {
         gfxFontEntry *fe = mAvailableFonts[i];
         if (fe) {
-            fe->SizeOfIncludingThis(aMallocSizeOf, aSizes);
+            fe->AddSizeOfIncludingThis(aMallocSizeOf, aSizes);
         }
     }
 }
 
 void
-gfxFontFamily::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
-                                   FontListSizes*    aSizes) const
+gfxFontFamily::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
+                                      FontListSizes* aSizes) const
 {
     aSizes->mFontListSize += aMallocSizeOf(this);
-    SizeOfExcludingThis(aMallocSizeOf, aSizes);
+    AddSizeOfExcludingThis(aMallocSizeOf, aSizes);
 }
- 
+
 /*
  * gfxFontCache - global cache of gfxFont instances.
  * Expires unused fonts after a short interval;
@@ -1364,16 +1360,7 @@ gfxFontFamily::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
  * shaped-word caches to free up memory.
  */
 
-NS_IMPL_ISUPPORTS1(gfxFontCache::MemoryReporter, nsIMemoryReporter)
-
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(FontCacheMallocSizeOf)
-
-NS_IMETHODIMP
-gfxFontCache::MemoryReporter::GetName(nsACString &aName)
-{
-    aName.AssignLiteral("font-cache");
-    return NS_OK;
-}
 
 NS_IMETHODIMP
 gfxFontCache::MemoryReporter::CollectReports
@@ -1382,8 +1369,8 @@ gfxFontCache::MemoryReporter::CollectReports
 {
     FontCacheSizes sizes;
 
-    gfxFontCache::GetCache()->SizeOfIncludingThis(&FontCacheMallocSizeOf,
-                                                  &sizes);
+    gfxFontCache::GetCache()->AddSizeOfIncludingThis(&FontCacheMallocSizeOf,
+                                                     &sizes);
 
     aCb->Callback(EmptyCString(),
                   NS_LITERAL_CSTRING("explicit/gfx/font-cache"),
@@ -1459,6 +1446,9 @@ gfxFontCache::gfxFontCache()
         obs->AddObserver(new Observer, "memory-pressure", false);
     }
 
+#ifndef RELEASE_BUILD
+    // Currently disabled for release builds, due to unexplained crashes
+    // during expiration; see bug 717175 & 894798.
     mWordCacheExpirationTimer = do_CreateInstance("@mozilla.org/timer;1");
     if (mWordCacheExpirationTimer) {
         mWordCacheExpirationTimer->
@@ -1466,6 +1456,7 @@ gfxFontCache::gfxFontCache()
                                  SHAPED_WORD_TIMEOUT_SECONDS * 1000,
                                  nsITimer::TYPE_REPEATING_SLACK);
     }
+#endif
 }
 
 gfxFontCache::~gfxFontCache()
@@ -1596,35 +1587,36 @@ gfxFontCache::ClearCachedWordsForFont(HashEntry* aHashEntry, void* aUserData)
 
 /*static*/
 size_t
-gfxFontCache::SizeOfFontEntryExcludingThis(HashEntry*        aHashEntry,
-                                           MallocSizeOf aMallocSizeOf,
-                                           void*             aUserArg)
+gfxFontCache::AddSizeOfFontEntryExcludingThis(HashEntry* aHashEntry,
+                                              MallocSizeOf aMallocSizeOf,
+                                              void* aUserArg)
 {
     HashEntry *entry = static_cast<HashEntry*>(aHashEntry);
     FontCacheSizes *sizes = static_cast<FontCacheSizes*>(aUserArg);
-    entry->mFont->SizeOfExcludingThis(aMallocSizeOf, sizes);
+    entry->mFont->AddSizeOfExcludingThis(aMallocSizeOf, sizes);
 
-    // The font records its size in the |sizes| parameter, so we return zero
+    // The entry's size is recorded in the |sizes| parameter, so we return zero
     // here to the hashtable enumerator.
     return 0;
 }
 
 void
-gfxFontCache::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
-                                  FontCacheSizes*   aSizes) const
+gfxFontCache::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
+                                     FontCacheSizes* aSizes) const
 {
     // TODO: add the overhead of the expiration tracker (generation arrays)
 
-    mFonts.SizeOfExcludingThis(SizeOfFontEntryExcludingThis,
-                               aMallocSizeOf, aSizes);
+    aSizes->mFontInstances +=
+        mFonts.SizeOfExcludingThis(AddSizeOfFontEntryExcludingThis,
+                                   aMallocSizeOf, aSizes);
 }
 
 void
-gfxFontCache::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
-                                  FontCacheSizes*   aSizes) const
+gfxFontCache::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
+                                     FontCacheSizes* aSizes) const
 {
     aSizes->mFontInstances += aMallocSizeOf(this);
-    SizeOfExcludingThis(aMallocSizeOf, aSizes);
+    AddSizeOfExcludingThis(aMallocSizeOf, aSizes);
 }
 
 #define MAX_SSXX_VALUE 99
@@ -2646,7 +2638,10 @@ gfxFont::Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
       DrawOptions drawOptions;
       drawOptions.mAntialiasMode = Get2DAAMode(mAntialiasOption);
 
-      if (mScaledFont) {
+      // The cairo DrawTarget backend uses the cairo_scaled_font directly
+      // and so has the font skew matrix applied already.
+      if (mScaledFont &&
+          dt->GetType() != BACKEND_CAIRO) {
         cairo_matrix_t matrix;
         cairo_scaled_font_get_font_matrix(mScaledFont, &matrix);
         if (matrix.xy != 0) {
@@ -3833,8 +3828,8 @@ gfxFont::WordCacheEntrySizeOfExcludingThis(CacheHashEntry*   aHashEntry,
 }
 
 void
-gfxFont::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
-                             FontCacheSizes*   aSizes) const
+gfxFont::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
+                                FontCacheSizes* aSizes) const
 {
     for (uint32_t i = 0; i < mGlyphExtentsArray.Length(); ++i) {
         aSizes->mFontInstances +=
@@ -3848,11 +3843,11 @@ gfxFont::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
 }
 
 void
-gfxFont::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
-                             FontCacheSizes*   aSizes) const
+gfxFont::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
+                                FontCacheSizes* aSizes) const
 {
     aSizes->mFontInstances += aMallocSizeOf(this);
-    SizeOfExcludingThis(aMallocSizeOf, aSizes);
+    AddSizeOfExcludingThis(aMallocSizeOf, aSizes);
 }
 
 void
@@ -4180,9 +4175,9 @@ gfxFontGroup::IsInvalidChar(PRUnichar ch)
     if (ch <= 0x9f) {
         return true;
     }
-    return ((ch & 0xFF00) == 0x2000 /* Unicode control character */ &&
-         (ch == 0x200B/*ZWSP*/ || ch == 0x2028/*LSEP*/ || ch == 0x2029/*PSEP*/ ||
-          IS_BIDI_CONTROL_CHAR(ch)));
+    return (((ch & 0xFF00) == 0x2000 /* Unicode control character */ &&
+             (ch == 0x200B/*ZWSP*/ || ch == 0x2028/*LSEP*/ || ch == 0x2029/*PSEP*/)) ||
+            IsBidiControl(ch));
 }
 
 bool
@@ -5346,11 +5341,14 @@ gfxShapedText::SetGlyphs(uint32_t aIndex, CompressedGlyph aGlyph,
 
 #define ZWNJ 0x200C
 #define ZWJ  0x200D
+// U+061C ARABIC LETTER MARK is expected to be added to XIDMOD_DEFAULT_IGNORABLE
+// in a future Unicode update. Add it manually for now
+#define ALM  0x061C
 static inline bool
 IsDefaultIgnorable(uint32_t aChar)
 {
     return GetIdentifierModification(aChar) == XIDMOD_DEFAULT_IGNORABLE ||
-           aChar == ZWNJ || aChar == ZWJ;
+           aChar == ZWNJ || aChar == ZWJ || aChar == ALM;
 }
 
 void

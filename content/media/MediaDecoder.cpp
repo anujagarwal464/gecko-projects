@@ -1172,20 +1172,8 @@ void MediaDecoder::ChangeState(PlayState aState)
     }
   }
   mPlayState = aState;
-  if (mDecoderStateMachine) {
-    switch (aState) {
-    case PLAY_STATE_PLAYING:
-      mDecoderStateMachine->Play();
-      break;
-    case PLAY_STATE_SEEKING:
-      mDecoderStateMachine->Seek(mRequestedSeekTime);
-      mRequestedSeekTime = -1.0;
-      break;
-    default:
-      /* No action needed */
-      break;
-    }
-  }
+
+  ApplyStateToStateMachine(mPlayState);
 
   if (aState!= PLAY_STATE_LOADING) {
     mIsDormant = false;
@@ -1193,6 +1181,27 @@ void MediaDecoder::ChangeState(PlayState aState)
   }
 
   GetReentrantMonitor().NotifyAll();
+}
+
+void MediaDecoder::ApplyStateToStateMachine(PlayState aState)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  GetReentrantMonitor().AssertCurrentThreadIn();
+
+  if (mDecoderStateMachine) {
+    switch (aState) {
+      case PLAY_STATE_PLAYING:
+        mDecoderStateMachine->Play();
+        break;
+      case PLAY_STATE_SEEKING:
+        mDecoderStateMachine->Seek(mRequestedSeekTime);
+        mRequestedSeekTime = -1.0;
+        break;
+      default:
+        /* No action needed */
+        break;
+    }
+  }
 }
 
 void MediaDecoder::PlaybackPositionChanged()
@@ -1697,6 +1706,15 @@ MediaDecoder::IsWebMEnabled()
 }
 #endif
 
+#ifdef MOZ_RTSP
+bool
+MediaDecoder::IsRtspEnabled()
+{
+  //Currently the Rtsp decoded by omx.
+  return (Preferences::GetBool("media.rtsp.enabled", false) && IsOmxEnabled());
+}
+#endif
+
 #ifdef MOZ_GSTREAMER
 bool
 MediaDecoder::IsGStreamerEnabled()
@@ -1745,16 +1763,12 @@ MediaDecoder::IsAppleMP3Enabled()
 }
 #endif
 
-class MediaReporter MOZ_FINAL : public nsIMemoryReporter
+class MediaReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-  NS_DECL_ISUPPORTS
-
-  NS_IMETHOD GetName(nsACString& aName)
-  {
-    aName.AssignLiteral("media");
-    return NS_OK;
-  }
+  MediaReporter()
+    : MemoryMultiReporter("media")
+  {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCb,
                             nsISupports* aClosure)
@@ -1781,8 +1795,6 @@ public:
     return NS_OK;
   }
 };
-
-NS_IMPL_ISUPPORTS1(MediaReporter, nsIMemoryReporter)
 
 MediaDecoderOwner*
 MediaDecoder::GetOwner()

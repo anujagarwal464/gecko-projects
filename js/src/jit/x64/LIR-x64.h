@@ -55,6 +55,10 @@ class LUnbox : public LUnboxBase {
     LUnbox(const LAllocation &input)
       : LUnboxBase(input)
     { }
+
+    const char *extraName() const {
+        return StringFromMIRType(mir()->type());
+    }
 };
 
 class LUnboxFloatingPoint : public LUnboxBase {
@@ -83,6 +87,17 @@ class LAsmJSUInt32ToDouble : public LInstructionHelper<1, 1, 0>
     LIR_HEADER(AsmJSUInt32ToDouble)
 
     LAsmJSUInt32ToDouble(const LAllocation &input) {
+        setOperand(0, input);
+    }
+};
+
+// Convert a 32-bit unsigned integer to a float32.
+class LAsmJSUInt32ToFloat32 : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(AsmJSUInt32ToFloat32)
+
+    LAsmJSUInt32ToFloat32(const LAllocation &input) {
         setOperand(0, input);
     }
 };

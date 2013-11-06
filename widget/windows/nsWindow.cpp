@@ -172,6 +172,8 @@
 #include "mozilla/HangMonitor.h"
 #include "WinIMEHandler.h"
 
+#include "npapi.h"
+
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
@@ -251,7 +253,7 @@ uint32_t        nsWindow::sOOPPPluginFocusEvent   =
 static const char *sScreenManagerContractID       = "@mozilla.org/gfx/screenmanager;1";
 
 #ifdef PR_LOGGING
-PRLogModuleInfo* gWindowsLog                      = nullptr;
+extern PRLogModuleInfo* gWindowsLog;
 #endif
 
 // Global used in Show window enumerations.
@@ -309,12 +311,6 @@ static const int32_t kResizableBorderMinSize = 3;
 
 nsWindow::nsWindow() : nsWindowBase()
 {
-#ifdef PR_LOGGING
-  if (!gWindowsLog) {
-    gWindowsLog = PR_NewLogModule("nsWindow");
-  }
-#endif
-
   mIconSmall            = nullptr;
   mIconBig              = nullptr;
   mWnd                  = nullptr;
@@ -1515,8 +1511,7 @@ nsWindow::BeginResizeDrag(WidgetGUIEvent* aEvent,
     return NS_ERROR_INVALID_ARG;
   }
 
-  WidgetMouseEvent* mouseEvent = static_cast<WidgetMouseEvent*>(aEvent);
-  if (mouseEvent->button != WidgetMouseEvent::eLeftButton) {
+  if (aEvent->AsMouseEvent()->button != WidgetMouseEvent::eLeftButton) {
     // you can only begin a resize drag with the left mouse button
     return NS_ERROR_INVALID_ARG;
   }
@@ -3674,6 +3669,13 @@ bool nsWindow::DispatchStandardEvent(uint32_t aMsg)
 }
 
 bool nsWindow::DispatchKeyboardEvent(WidgetGUIEvent* event)
+{
+  nsEventStatus status;
+  DispatchEvent(event, status);
+  return ConvertStatus(status);
+}
+
+bool nsWindow::DispatchScrollEvent(WidgetGUIEvent* event)
 {
   nsEventStatus status;
   DispatchEvent(event, status);
@@ -6223,7 +6225,7 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
 
     nsEventStatus status;
 
-    WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, this);
+    WidgetWheelEvent wheelEvent(true, NS_WHEEL_WHEEL, this);
 
     ModifierKeyState modifierKeyState;
     modifierKeyState.InitInputEvent(wheelEvent);
@@ -6518,7 +6520,7 @@ void nsWindow::OnDestroy()
   }
   if (this == rollupWidget) {
     if ( rollupListener )
-      rollupListener->Rollup(0, nullptr);
+      rollupListener->Rollup(0, nullptr, nullptr);
     CaptureRollupEvents(nullptr, false);
   }
 
@@ -6647,6 +6649,9 @@ nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
   GetLayerManagerPrefs(&prefs);
 
   if (!prefs.mDisableAcceleration) {
+    if (prefs.mPreferOpenGL) {
+      aHints.AppendElement(LAYERS_OPENGL);
+    }
     if (!prefs.mPreferD3D9) {
       aHints.AppendElement(LAYERS_D3D11);
     }
@@ -7337,9 +7342,21 @@ nsWindow::DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLPara
     else if (rollup) {
       // only need to deal with the last rollup for left mouse down events.
       NS_ASSERTION(!mLastRollup, "mLastRollup is null");
-      bool consumeRollupEvent =
-        rollupListener->Rollup(popupsToRollup, inMsg == WM_LBUTTONDOWN ? &mLastRollup : nullptr);
-      NS_IF_ADDREF(mLastRollup);
+
+      bool consumeRollupEvent;
+      if (inMsg == WM_LBUTTONDOWN) {
+        POINT pt;
+        pt.x = GET_X_LPARAM(inLParam);
+        pt.y = GET_Y_LPARAM(inLParam);
+        ::ClientToScreen(inWnd, &pt);
+        nsIntPoint pos(pt.x, pt.y);
+
+        consumeRollupEvent = rollupListener->Rollup(popupsToRollup, &pos, &mLastRollup);
+        NS_IF_ADDREF(mLastRollup);
+      }
+      else {
+        consumeRollupEvent = rollupListener->Rollup(popupsToRollup, nullptr, nullptr);
+      }
 
       // Tell hook to stop processing messages
       sProcessHook = false;

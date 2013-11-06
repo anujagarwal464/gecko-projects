@@ -87,7 +87,7 @@ class MathCache;
 class WorkerThreadState;
 
 namespace jit {
-class IonRuntime;
+class JitRuntime;
 class JitActivation;
 struct PcScriptCache;
 }
@@ -592,6 +592,7 @@ class PerThreadData : public PerThreadDataFriendFields,
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
     inline JSRuntime *runtimeFromMainThread();
+    inline JSRuntime *runtimeIfOnOwnerThread();
 };
 
 template<class Client>
@@ -675,7 +676,7 @@ class MarkingValidator;
 typedef Vector<JS::Zone *, 4, SystemAllocPolicy> ZoneVector;
 
 class AutoLockForExclusiveAccess;
-class AutoPauseWorkersForGC;
+class AutoPauseWorkersForTracing;
 class ThreadDataIter;
 
 void RecomputeStackLimit(JSRuntime *rt, StackKind kind);
@@ -719,38 +720,41 @@ struct JSRuntime : public JS::shadow::Runtime,
     /* Branch callback */
     JSOperationCallback operationCallback;
 
-#ifdef JS_THREADSAFE
   private:
     /*
      * Lock taken when triggering the operation callback from another thread.
      * Protects all data that is touched in this process.
      */
+#ifdef JS_THREADSAFE
     PRLock *operationCallbackLock;
     PRThread *operationCallbackOwner;
-  public:
+#else
+    bool operationCallbackLockTaken;
 #endif // JS_THREADSAFE
+  public:
 
     class AutoLockForOperationCallback {
-#ifdef JS_THREADSAFE
         JSRuntime *rt;
       public:
         AutoLockForOperationCallback(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM) : rt(rt) {
             MOZ_GUARD_OBJECT_NOTIFIER_INIT;
             JS_ASSERT(!rt->currentThreadOwnsOperationCallbackLock());
+#ifdef JS_THREADSAFE
             PR_Lock(rt->operationCallbackLock);
             rt->operationCallbackOwner = PR_GetCurrentThread();
+#else
+            rt->operationCallbackLockTaken = true;
+#endif // JS_THREADSAFE
         }
         ~AutoLockForOperationCallback() {
-            JS_ASSERT(rt->operationCallbackOwner == PR_GetCurrentThread());
+            JS_ASSERT(rt->currentThreadOwnsOperationCallbackLock());
+#ifdef JS_THREADSAFE
             rt->operationCallbackOwner = nullptr;
             PR_Unlock(rt->operationCallbackLock);
-        }
-#else // JS_THREADSAFE
-      public:
-        AutoLockForOperationCallback(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-            MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        }
+#else
+            rt->operationCallbackLockTaken = false;
 #endif // JS_THREADSAFE
+        }
 
         MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
     };
@@ -759,7 +763,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 #if defined(JS_THREADSAFE)
         return operationCallbackOwner == PR_GetCurrentThread();
 #else
-        return true;
+        return operationCallbackLockTaken;
 #endif
     }
 
@@ -786,7 +790,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     size_t numExclusiveThreads;
 
     friend class js::AutoLockForExclusiveAccess;
-    friend class js::AutoPauseWorkersForGC;
+    friend class js::AutoPauseWorkersForTracing;
     friend class js::ThreadDataIter;
 
   public:
@@ -856,7 +860,7 @@ struct JSRuntime : public JS::shadow::Runtime,
      */
     JSC::ExecutableAllocator *execAlloc_;
     WTF::BumpPointerAllocator *bumpAlloc_;
-    js::jit::IonRuntime *ionRuntime_;
+    js::jit::JitRuntime *jitRuntime_;
 
     JSObject *selfHostingGlobal_;
 
@@ -865,7 +869,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     JSC::ExecutableAllocator *createExecutableAllocator(JSContext *cx);
     WTF::BumpPointerAllocator *createBumpPointerAllocator(JSContext *cx);
-    js::jit::IonRuntime *createIonRuntime(JSContext *cx);
+    js::jit::JitRuntime *createJitRuntime(JSContext *cx);
 
   public:
     JSC::ExecutableAllocator *getExecAlloc(JSContext *cx) {
@@ -881,14 +885,14 @@ struct JSRuntime : public JS::shadow::Runtime,
     WTF::BumpPointerAllocator *getBumpPointerAllocator(JSContext *cx) {
         return bumpAlloc_ ? bumpAlloc_ : createBumpPointerAllocator(cx);
     }
-    js::jit::IonRuntime *getIonRuntime(JSContext *cx) {
-        return ionRuntime_ ? ionRuntime_ : createIonRuntime(cx);
+    js::jit::JitRuntime *getJitRuntime(JSContext *cx) {
+        return jitRuntime_ ? jitRuntime_ : createJitRuntime(cx);
     }
-    js::jit::IonRuntime *ionRuntime() {
-        return ionRuntime_;
+    js::jit::JitRuntime *jitRuntime() const {
+        return jitRuntime_;
     }
-    bool hasIonRuntime() const {
-        return !!ionRuntime_;
+    bool hasJitRuntime() const {
+        return !!jitRuntime_;
     }
     js::InterpreterStack &interpreterStack() {
         return interpreterStack_;
@@ -982,16 +986,17 @@ struct JSRuntime : public JS::shadow::Runtime,
     js::gc::ChunkPool   gcChunkPool;
 
     js::RootedValueMap  gcRootsHash;
-    volatile size_t     gcBytes;
+
+    /* This is updated by both the main and GC helper threads. */
+    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> gcBytes;
+
     size_t              gcMaxBytes;
     size_t              gcMaxMallocBytes;
 
     /*
      * Number of the committed arenas in all GC chunks including empty chunks.
-     * The counter is volatile as it is read without the GC lock, see comments
-     * in MaybeGC.
      */
-    volatile uint32_t   gcNumArenasFreeCommitted;
+    mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> gcNumArenasFreeCommitted;
     js::GCMarker        gcMarker;
     void                *gcVerifyPreData;
     void                *gcVerifyPostData;
@@ -1349,6 +1354,9 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     /* Call this to accumulate telemetry data. */
     JSAccumulateTelemetryDataCallback telemetryCallback;
+
+    /* AsmJSCache callbacks are runtime-wide. */
+    JS::AsmJSCacheOps asmJSCacheOps;
 
     /*
      * The propertyRemovals counter is incremented for every JSObject::clear,
@@ -1787,6 +1795,12 @@ PerThreadData::runtimeFromMainThread()
 {
     JS_ASSERT(js::CurrentThreadCanAccessRuntime(runtime_));
     return runtime_;
+}
+
+inline JSRuntime *
+PerThreadData::runtimeIfOnOwnerThread()
+{
+    return js::CurrentThreadCanAccessRuntime(runtime_) ? runtime_ : nullptr;
 }
 
 /************************************************************************/

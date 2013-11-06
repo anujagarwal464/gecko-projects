@@ -170,7 +170,6 @@ private:
   bool mGCOnDestruction;
   bool mProcessingScriptTag;
 
-  uint32_t mDefaultJSOptions;
   PRTime mOperationCallbackTime;
 
   PRTime mModalStateTime;
@@ -209,7 +208,7 @@ public:
   AsyncErrorReporter(JSRuntime* aRuntime,
                      JSErrorReport* aErrorReport,
                      const char* aFallbackMessage,
-                     nsIPrincipal* aGlobalPrincipal, // To determine category
+                     bool aIsChromeError, // To determine category
                      nsPIDOMWindow* aWindow);
 
   NS_IMETHOD Run()

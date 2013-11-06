@@ -134,7 +134,7 @@ XULTreeAccessible::Value(nsString& aValue)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// XULTreeAccessible: nsAccessNode implementation
+// XULTreeAccessible: Accessible implementation
 
 void
 XULTreeAccessible::Shutdown()
@@ -150,9 +150,6 @@ XULTreeAccessible::Shutdown()
 
   AccessibleWrap::Shutdown();
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// XULTreeAccessible: Accessible implementation (put methods here)
 
 role
 XULTreeAccessible::NativeRole()
@@ -442,9 +439,9 @@ XULTreeAccessible::ChildCount() const
 }
 
 Relation
-XULTreeAccessible::RelationByType(uint32_t aType)
+XULTreeAccessible::RelationByType(RelationType aType)
 {
-  if (aType == nsIAccessibleRelation::RELATION_NODE_PARENT_OF) {
+  if (aType == RelationType::NODE_PARENT_OF) {
     if (mTreeView)
       return Relation(new XULTreeItemIterator(this, mTreeView, -1));
 
@@ -808,11 +805,11 @@ XULTreeItemAccessibleBase::TakeFocus()
 }
 
 Relation
-XULTreeItemAccessibleBase::RelationByType(uint32_t aType)
+XULTreeItemAccessibleBase::RelationByType(RelationType aType)
 {
 
   switch (aType) {
-    case nsIAccessibleRelation::RELATION_NODE_CHILD_OF: {
+    case RelationType::NODE_CHILD_OF: {
       int32_t parentIndex = -1;
       if (!NS_SUCCEEDED(mTreeView->GetParentIndex(mRow, &parentIndex)))
         return Relation();
@@ -824,7 +821,7 @@ XULTreeItemAccessibleBase::RelationByType(uint32_t aType)
       return Relation(treeAcc->GetTreeItemAccessible(parentIndex));
     }
 
-    case nsIAccessibleRelation::RELATION_NODE_PARENT_OF: {
+    case RelationType::NODE_PARENT_OF: {
       bool isTrue = false;
       if (NS_FAILED(mTreeView->IsContainerEmpty(mRow, &isTrue)) || isTrue)
         return Relation();
@@ -889,7 +886,7 @@ XULTreeItemAccessibleBase::DoAction(uint8_t aIndex)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// XULTreeItemAccessibleBase: nsAccessNode implementation
+// XULTreeItemAccessibleBase: Accessible implementation
 
 void
 XULTreeItemAccessibleBase::Shutdown()
@@ -901,10 +898,6 @@ XULTreeItemAccessibleBase::Shutdown()
   AccessibleWrap::Shutdown();
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// XULTreeItemAccessibleBase: Accessible public methods
-
-// nsIAccessible::groupPosition
 GroupPos
 XULTreeItemAccessibleBase::GroupPosition()
 {
@@ -1134,7 +1127,7 @@ XULTreeItemAccessible::Name(nsString& aName)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// XULTreeItemAccessible: nsAccessNode implementation
+// XULTreeItemAccessible: Accessible implementation
 
 void
 XULTreeItemAccessible::Shutdown()
@@ -1142,9 +1135,6 @@ XULTreeItemAccessible::Shutdown()
   mColumn = nullptr;
   XULTreeItemAccessibleBase::Shutdown();
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// XULTreeItemAccessible: Accessible implementation
 
 role
 XULTreeItemAccessible::NativeRole()

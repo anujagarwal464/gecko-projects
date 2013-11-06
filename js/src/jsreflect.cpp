@@ -495,8 +495,6 @@ class NodeBuilder
 
     bool identifier(HandleValue name, TokenPos *pos, MutableHandleValue dst);
 
-    bool module(TokenPos *pos, HandleValue name, HandleValue body, MutableHandleValue dst);
-
     bool function(ASTType type, TokenPos *pos,
                   HandleValue id, NodeVector &args, NodeVector &defaults,
                   HandleValue body, HandleValue rest, bool isGenerator, bool isExpression,
@@ -1457,20 +1455,6 @@ NodeBuilder::arrayPattern(NodeVector &elts, TokenPos *pos, MutableHandleValue ds
 }
 
 bool
-NodeBuilder::module(TokenPos *pos, HandleValue name, HandleValue body, MutableHandleValue dst)
-{
-    RootedValue cb(cx, callbacks[AST_MODULE_DECL]);
-    if (!cb.isNull()) {
-        return callback(cb, name, body, pos, dst);
-    }
-
-    return newNode(AST_MODULE_DECL, pos,
-                   "name", name,
-                   "body", body,
-                   dst);
-}
-
-bool
 NodeBuilder::function(ASTType type, TokenPos *pos,
                       HandleValue id, NodeVector &args, NodeVector &defaults,
                       HandleValue body, HandleValue rest,
@@ -1546,8 +1530,10 @@ class ASTSerializer
     }
 
     bool forInit(ParseNode *pn, MutableHandleValue dst);
-    bool forOfOrIn(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
-                   MutableHandleValue dst);
+    bool forIn(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
+               MutableHandleValue dst);
+    bool forOf(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
+               MutableHandleValue dst);
     bool statement(ParseNode *pn, MutableHandleValue dst);
     bool blockStatement(ParseNode *pn, MutableHandleValue dst);
     bool switchStatement(ParseNode *pn, MutableHandleValue dst);
@@ -1584,11 +1570,10 @@ class ASTSerializer
     bool arrayPattern(ParseNode *pn, VarDeclKind *pkind, MutableHandleValue dst);
     bool objectPattern(ParseNode *pn, VarDeclKind *pkind, MutableHandleValue dst);
 
-    bool module(ParseNode *pn, MutableHandleValue dst);
     bool function(ParseNode *pn, ASTType type, MutableHandleValue dst);
     bool functionArgsAndBody(ParseNode *pn, NodeVector &args, NodeVector &defaults,
                              MutableHandleValue body, MutableHandleValue rest);
-    bool moduleOrFunctionBody(ParseNode *pn, TokenPos *pos, MutableHandleValue dst);
+    bool functionBody(ParseNode *pn, TokenPos *pos, MutableHandleValue dst);
 
     bool comprehensionBlock(ParseNode *pn, MutableHandleValue dst);
     bool comprehension(ParseNode *pn, MutableHandleValue dst);
@@ -2018,17 +2003,24 @@ ASTSerializer::forInit(ParseNode *pn, MutableHandleValue dst)
 }
 
 bool
-ASTSerializer::forOfOrIn(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
+ASTSerializer::forOf(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
+                         MutableHandleValue dst)
+{
+    RootedValue expr(cx);
+
+    return expression(head->pn_kid3, &expr) &&
+        builder.forOfStatement(var, expr, stmt, &loop->pn_pos, dst);
+}
+
+bool
+ASTSerializer::forIn(ParseNode *loop, ParseNode *head, HandleValue var, HandleValue stmt,
                          MutableHandleValue dst)
 {
     RootedValue expr(cx);
     bool isForEach = loop->pn_iflags & JSITER_FOREACH;
-    bool isForOf = loop->pn_iflags & JSITER_FOR_OF;
-    JS_ASSERT(!isForOf || !isForEach);
 
     return expression(head->pn_kid3, &expr) &&
-        (isForOf ? builder.forOfStatement(var, expr, stmt, &loop->pn_pos, dst) :
-         builder.forInStatement(var, expr, stmt, isForEach, &loop->pn_pos, dst));
+        builder.forInStatement(var, expr, stmt, isForEach, &loop->pn_pos, dst);
 }
 
 bool
@@ -2036,9 +2028,6 @@ ASTSerializer::statement(ParseNode *pn, MutableHandleValue dst)
 {
     JS_CHECK_RECURSION(cx, return false);
     switch (pn->getKind()) {
-      case PNK_MODULE:
-        return module(pn, dst);
-
       case PNK_FUNCTION:
       case PNK_VAR:
       case PNK_CONST:
@@ -2139,7 +2128,17 @@ ASTSerializer::statement(ParseNode *pn, MutableHandleValue dst)
                     : head->pn_kid1->isKind(PNK_LEXICALSCOPE)
                     ? variableDeclaration(head->pn_kid1->pn_expr, true, &var)
                     : variableDeclaration(head->pn_kid1, false, &var)) &&
-                forOfOrIn(pn, head, var, stmt, dst);
+                forIn(pn, head, var, stmt, dst);
+        }
+
+        if (head->isKind(PNK_FOROF)) {
+            RootedValue var(cx);
+            return (!head->pn_kid1
+                    ? pattern(head->pn_kid2, nullptr, &var)
+                    : head->pn_kid1->isKind(PNK_LEXICALSCOPE)
+                    ? variableDeclaration(head->pn_kid1->pn_expr, true, &var)
+                    : variableDeclaration(head->pn_kid1, false, &var)) &&
+                forOf(pn, head, var, stmt, dst);
         }
 
         RootedValue init(cx), test(cx), update(cx);
@@ -2169,7 +2168,7 @@ ASTSerializer::statement(ParseNode *pn, MutableHandleValue dst)
 
         RootedValue stmt(cx);
 
-        return statement(loop->pn_right, &stmt) && forOfOrIn(loop, head, var, stmt, dst);
+        return statement(loop->pn_right, &stmt) && forIn(loop, head, var, stmt, dst);
       }
 
       case PNK_BREAK:
@@ -2262,10 +2261,10 @@ ASTSerializer::comprehensionBlock(ParseNode *pn, MutableHandleValue dst)
 
     ParseNode *in = pn->pn_left;
 
-    LOCAL_ASSERT(in && in->isKind(PNK_FORIN));
+    LOCAL_ASSERT(in && (in->isKind(PNK_FORIN) || in->isKind(PNK_FOROF)));
 
     bool isForEach = pn->pn_iflags & JSITER_FOREACH;
-    bool isForOf = pn->pn_iflags & JSITER_FOR_OF;
+    bool isForOf = in->isKind(PNK_FOROF);
 
     RootedValue patt(cx), src(cx);
     return pattern(in->pn_kid2, nullptr, &patt) &&
@@ -2818,15 +2817,6 @@ ASTSerializer::identifier(ParseNode *pn, MutableHandleValue dst)
 }
 
 bool
-ASTSerializer::module(ParseNode *pn, MutableHandleValue dst)
-{
-    RootedValue name(cx, StringValue(pn->atom()));
-    RootedValue body(cx);
-    return moduleOrFunctionBody(pn->pn_body->pn_head, &pn->pn_body->pn_pos, &body) &&
-           builder.module(&pn->pn_pos, name, body, dst);
-}
-
-bool
 ASTSerializer::function(ParseNode *pn, ASTType type, MutableHandleValue dst)
 {
     RootedFunction func(cx, pn->pn_funbox->function());
@@ -2911,7 +2901,7 @@ ASTSerializer::functionArgsAndBody(ParseNode *pn, NodeVector &args, NodeVector &
                                : pnbody->pn_head;
 
         return functionArgs(pn, pnargs, pndestruct, pnbody, args, defaults, rest) &&
-               moduleOrFunctionBody(pnstart, &pnbody->pn_pos, body);
+               functionBody(pnstart, &pnbody->pn_pos, body);
       }
 
       default:
@@ -2980,7 +2970,7 @@ ASTSerializer::functionArgs(ParseNode *pn, ParseNode *pnargs, ParseNode *pndestr
 }
 
 bool
-ASTSerializer::moduleOrFunctionBody(ParseNode *pn, TokenPos *pos, MutableHandleValue dst)
+ASTSerializer::functionBody(ParseNode *pn, TokenPos *pos, MutableHandleValue dst)
 {
     NodeVector elts(cx);
 

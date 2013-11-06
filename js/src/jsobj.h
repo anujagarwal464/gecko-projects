@@ -378,7 +378,7 @@ class JSObject : public js::ObjectImpl
     static void shrinkSlots(js::ThreadSafeContext *cx, js::HandleObject obj, uint32_t oldCount,
                             uint32_t newCount);
 
-    bool hasDynamicSlots() const { return slots != nullptr; }
+    bool hasDynamicSlots() const { return !!slots; }
 
   protected:
     static inline bool updateSlotsForSpan(js::ThreadSafeContext *cx,
@@ -667,7 +667,24 @@ class JSObject : public js::ObjectImpl
     void initDenseElements(uint32_t dstStart, const js::Value *src, uint32_t count) {
         JS_ASSERT(dstStart + count <= getDenseCapacity());
         memcpy(&elements[dstStart], src, count * sizeof(js::HeapSlot));
-        DenseRangeWriteBarrierPost(runtimeFromAnyThread(), this, dstStart, count);
+        DenseRangeWriteBarrierPost(runtimeFromMainThread(), this, dstStart, count);
+    }
+
+    void initDenseElementsUnbarriered(uint32_t dstStart, const js::Value *src, uint32_t count) {
+        /*
+         * For use by parallel threads, which since they cannot see nursery
+         * things do not require a barrier.
+         */
+        JS_ASSERT(dstStart + count <= getDenseCapacity());
+#if defined(DEBUG) && defined(JSGC_GENERATIONAL)
+        JS::shadow::Runtime *rt = JS::shadow::Runtime::asShadowRuntime(runtimeFromAnyThread());
+        for (uint32_t index = 0; index < count; ++index) {
+            const JS::Value& value = src[index];
+            if (value.isMarkable())
+                JS_ASSERT(js::gc::IsInsideNursery(rt, value.toGCThing()));
+        }
+#endif
+        memcpy(&elements[dstStart], src, count * sizeof(js::HeapSlot));
     }
 
     void moveDenseElements(uint32_t dstStart, uint32_t srcStart, uint32_t count) {
@@ -807,9 +824,9 @@ class JSObject : public js::ObjectImpl
     void freeSlot(uint32_t slot);
 
   public:
-    static bool reportReadOnly(JSContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
-    bool reportNotConfigurable(JSContext* cx, jsid id, unsigned report = JSREPORT_ERROR);
-    bool reportNotExtensible(JSContext *cx, unsigned report = JSREPORT_ERROR);
+    static bool reportReadOnly(js::ThreadSafeContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
+    bool reportNotConfigurable(js::ThreadSafeContext *cx, jsid id, unsigned report = JSREPORT_ERROR);
+    bool reportNotExtensible(js::ThreadSafeContext *cx, unsigned report = JSREPORT_ERROR);
 
     /*
      * Get the property with the given id, then call it as a function with the
@@ -1251,12 +1268,6 @@ HasOwnProperty(JSContext *cx, LookupGenericOp lookup,
                typename MaybeRooted<JSObject*, allowGC>::MutableHandleType objp,
                typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp);
 
-bool
-IsStandardClassResolved(JSObject *obj, const js::Class *clasp);
-
-void
-MarkStandardClassInitializedNoProto(JSObject *obj, const js::Class *clasp);
-
 typedef JSObject *(*ClassInitializerOp)(JSContext *cx, JS::HandleObject obj);
 
 } /* namespace js */
@@ -1367,7 +1378,7 @@ CreateThisForFunctionWithProto(JSContext *cx, js::HandleObject callee, JSObject 
 
 // Specialized call for constructing |this| with a known function callee.
 extern JSObject *
-CreateThisForFunction(JSContext *cx, js::HandleObject callee, bool newType);
+CreateThisForFunction(JSContext *cx, js::HandleObject callee, NewObjectKind newKind);
 
 // Generic call for constructing |this|.
 extern JSObject *

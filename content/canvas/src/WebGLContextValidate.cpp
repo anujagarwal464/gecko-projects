@@ -65,7 +65,7 @@ WebGLProgram::UpdateInfo()
         mContext->gl->fGetActiveAttrib(mGLName, i, mAttribMaxNameLength, &attrnamelen, &attrsize, &attrtype, nameBuf);
         if (attrnamelen > 0) {
             GLint loc = mContext->gl->fGetAttribLocation(mGLName, nameBuf);
-            NS_ABORT_IF_FALSE(loc >= 0, "major oops in managing the attributes of a WebGL program");
+            MOZ_ASSERT(loc >= 0, "major oops in managing the attributes of a WebGL program");
             if (loc < mContext->mGLMaxVertexAttribs) {
                 mAttribsInUse[loc] = true;
             } else {
@@ -300,6 +300,32 @@ bool WebGLContext::ValidateGLSLString(const nsAString& string, const char *info)
     return true;
 }
 
+bool WebGLContext::ValidateTexImage2DFormat(GLenum format, const char* info)
+{
+    if (IsExtensionEnabled(EXT_sRGB)) {
+        switch (format) {
+            case LOCAL_GL_SRGB_EXT:
+            case LOCAL_GL_SRGB_ALPHA_EXT:
+                return true;
+        }
+    }
+
+    switch (format) {
+        case LOCAL_GL_RGB:
+        case LOCAL_GL_RGBA:
+        case LOCAL_GL_ALPHA:
+        case LOCAL_GL_LUMINANCE:
+        case LOCAL_GL_LUMINANCE_ALPHA:
+        case LOCAL_GL_DEPTH_COMPONENT:
+        case LOCAL_GL_DEPTH_STENCIL:
+            return true;
+            break;
+    }
+
+    ErrorInvalidEnumInfo(info, format);
+    return false;
+}
+
 bool WebGLContext::ValidateTexImage2DTarget(GLenum target, GLsizei width, GLsizei height,
                                             const char* info)
 {
@@ -464,8 +490,10 @@ uint32_t WebGLContext::GetBitsPerTexel(GLenum format, GLenum type)
             case LOCAL_GL_LUMINANCE_ALPHA:
                 return 2 * multiplier;
             case LOCAL_GL_RGB:
+            case LOCAL_GL_SRGB_EXT:
                 return 3 * multiplier;
             case LOCAL_GL_RGBA:
+            case LOCAL_GL_SRGB_ALPHA_EXT:
                 return 4 * multiplier;
             case LOCAL_GL_COMPRESSED_RGB_PVRTC_2BPPV1:
             case LOCAL_GL_COMPRESSED_RGBA_PVRTC_2BPPV1:
@@ -491,7 +519,7 @@ uint32_t WebGLContext::GetBitsPerTexel(GLenum format, GLenum type)
         return 16;
     }
 
-    NS_ABORT();
+    MOZ_ASSERT(false);
     return 0;
 }
 
@@ -562,9 +590,11 @@ bool WebGLContext::ValidateTexFormatAndType(GLenum format, GLenum type, int jsAr
                 *texelSize = 2 * texMultiplier;
                 return true;
             case LOCAL_GL_RGB:
+            case LOCAL_GL_SRGB_EXT:
                 *texelSize = 3 * texMultiplier;
                 return true;
             case LOCAL_GL_RGBA:
+            case LOCAL_GL_SRGB_ALPHA_EXT:
                 *texelSize = 4 * texMultiplier;
                 return true;
             default:
@@ -766,7 +796,7 @@ WebGLContext::ValidateUniformSetter(const char* name, WebGLUniformLocation *loca
 
 bool WebGLContext::ValidateAttribIndex(GLuint index, const char *info)
 {
-    return mBoundVertexArray->EnsureAttribIndex(index, info);
+    return mBoundVertexArray->EnsureAttrib(index, info);
 }
 
 bool WebGLContext::ValidateStencilParamsForDrawCall()
@@ -998,7 +1028,7 @@ WebGLContext::InitAndValidateGL()
     }
 
     mDefaultVertexArray = new WebGLVertexArray(this);
-    mDefaultVertexArray->mAttribBuffers.SetLength(mGLMaxVertexAttribs);
+    mDefaultVertexArray->mAttribs.SetLength(mGLMaxVertexAttribs);
     mBoundVertexArray = mDefaultVertexArray;
 
     return true;

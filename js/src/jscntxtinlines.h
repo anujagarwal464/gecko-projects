@@ -433,14 +433,14 @@ JSContext::setPendingException(js::Value v) {
 inline void
 JSContext::setDefaultCompartmentObject(JSObject *obj)
 {
-    JS_ASSERT(!hasOption(JSOPTION_NO_DEFAULT_COMPARTMENT_OBJECT));
+    JS_ASSERT(!options().noDefaultCompartmentObject());
     defaultCompartmentObject_ = obj;
 }
 
 inline void
 JSContext::setDefaultCompartmentObjectIfUnset(JSObject *obj)
 {
-    if (!hasOption(JSOPTION_NO_DEFAULT_COMPARTMENT_OBJECT) &&
+    if (!options().noDefaultCompartmentObject() &&
         !defaultCompartmentObject_)
     {
         setDefaultCompartmentObject(obj);
@@ -557,10 +557,10 @@ JSNativeThreadSafeWrapper(JSContext *cx, unsigned argc, JS::Value *vp)
 }
 
 template <JSThreadSafeNative threadSafeNative>
-inline js::ParallelResult
+inline bool
 JSParallelNativeThreadSafeWrapper(js::ForkJoinSlice *slice, unsigned argc, JS::Value *vp)
 {
-    return threadSafeNative(slice, argc, vp) ? js::TP_SUCCESS : js::TP_FATAL;
+    return threadSafeNative(slice, argc, vp);
 }
 
 /* static */ inline JSContext *

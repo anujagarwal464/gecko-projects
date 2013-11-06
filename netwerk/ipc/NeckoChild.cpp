@@ -16,6 +16,10 @@
 #include "mozilla/net/RemoteOpenFileChild.h"
 #include "mozilla/dom/network/TCPSocketChild.h"
 #include "mozilla/dom/network/TCPServerSocketChild.h"
+#ifdef MOZ_RTSP
+#include "mozilla/net/RtspControllerChild.h"
+#endif
+#include "SerializedLoadContext.h"
 
 using mozilla::dom::TCPSocketChild;
 using mozilla::dom::TCPServerSocketChild;
@@ -152,6 +156,23 @@ NeckoChild::DeallocPWebSocketChild(PWebSocketChild* child)
 {
   WebSocketChannelChild* p = static_cast<WebSocketChannelChild*>(child);
   p->ReleaseIPDLReference();
+  return true;
+}
+
+PRtspControllerChild*
+NeckoChild::AllocPRtspControllerChild()
+{
+  NS_NOTREACHED("AllocPRtspController should not be called");
+  return nullptr;
+}
+
+bool
+NeckoChild::DeallocPRtspControllerChild(PRtspControllerChild* child)
+{
+#ifdef MOZ_RTSP
+  RtspControllerChild* p = static_cast<RtspControllerChild*>(child);
+  p->ReleaseIPDLReference();
+#endif
   return true;
 }
 

@@ -17,7 +17,7 @@ function run_test() {
     Object.prototype.protoProp = "common";
     var wasCalled = false;
     var _this = this;
-    var funToExport = function(a, obj, native, mixed) {
+    this.funToExport = function(a, obj, native, mixed) {
       do_check_eq(a, 42);
       do_check_neq(obj, subsb.tobecloned);
       do_check_eq(obj.cloned, "cloned");
@@ -70,4 +70,30 @@ function run_test() {
       do_check_true(e.toString().indexOf('Permission denied') > -1);
     }
   }.toSource() + ")()", epsb);
+
+  // Let's create an object in the target scope and add privileged
+  // function to it as a property.
+  Cu.evalInSandbox("(" + function() {
+    var newContentObject = createObjectIn(subsb, {defineAs:"importedObject"});
+    exportFunction(funToExport, newContentObject, "privMethod");
+  }.toSource() + ")()", epsb);
+
+  Cu.evalInSandbox("(" + function () {
+    importedObject.privMethod(42, tobecloned, native, mixed);
+  }.toSource() + ")()", subsb);
+
+  Cu.evalInSandbox("(" + function() {
+    checkIfCalled();
+  }.toSource() + ")()", epsb);
+
+  // exportFunction and createObjectIn should be available from Cu too.
+  var newContentObject = Cu.createObjectIn(subsb, {defineAs:"importedObject2"});
+  var wasCalled = false;
+  Cu.exportFunction(function(arg){wasCalled = arg.wasCalled;}, newContentObject, "privMethod");
+
+  Cu.evalInSandbox("(" + function () {
+    importedObject2.privMethod({wasCalled: true});
+  }.toSource() + ")()", subsb);
+
+  do_check_true(wasCalled, true);
 }

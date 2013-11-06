@@ -257,7 +257,7 @@ enum {
   NSMutableArray* mPendingDirtyRects;
   BOOL mPendingFullDisplay;
   BOOL mPendingDisplay;
-  
+
   // WheelStart/Stop events should always come in pairs. This BOOL records the
   // last received event so that, when we receive one of the events, we make sure
   // to send its pair event first, in case we didn't yet for any reason.
@@ -301,6 +301,7 @@ enum {
 #ifdef __LP64__
   // Support for fluid swipe tracking.
   BOOL* mCancelSwipeAnimation;
+  uint32_t mCurrentSwipeDir;
 #endif
 
   // Whether this uses off-main-thread compositing.
@@ -333,9 +334,8 @@ enum {
                             enter:(BOOL)aEnter
                              type:(mozilla::WidgetMouseEvent::exitType)aType;
 
-- (void)update;
-- (void)lockFocus;
-- (void) _surfaceNeedsUpdate:(NSNotification*)notification;
+- (void)updateGLContext;
+- (void)_surfaceNeedsUpdate:(NSNotification*)notification;
 
 - (BOOL)isPluginView;
 
@@ -344,7 +344,8 @@ enum {
 - (BOOL)isInFailingLeftClickThrough;
 
 - (void)setGLContext:(NSOpenGLContext *)aGLContext;
-- (void)preRender:(NSOpenGLContext *)aGLContext;
+- (bool)preRender:(NSOpenGLContext *)aGLContext;
+- (void)postRender:(NSOpenGLContext *)aGLContext;
 
 - (BOOL)isCoveringTitlebar;
 
@@ -373,7 +374,9 @@ enum {
 // Support for fluid swipe tracking.
 #ifdef __LP64__
 - (void)maybeTrackScrollEventAsSwipe:(NSEvent *)anEvent
-                      scrollOverflow:(double)overflow;
+                     scrollOverflowX:(double)anOverflowX
+                     scrollOverflowY:(double)anOverflowY
+              viewPortIsOverscrolled:(BOOL)aViewPortIsOverscrolled;
 #endif
 
 - (void)setUsingOMTCompositor:(BOOL)aUseOMTC;
@@ -550,7 +553,8 @@ public:
   virtual gfxASurface* GetThebesSurface();
   virtual void PrepareWindowEffects() MOZ_OVERRIDE;
   virtual void CleanupWindowEffects() MOZ_OVERRIDE;
-  virtual void PreRender(LayerManager* aManager) MOZ_OVERRIDE;
+  virtual bool PreRender(LayerManager* aManager) MOZ_OVERRIDE;
+  virtual void PostRender(LayerManager* aManager) MOZ_OVERRIDE;
   virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) MOZ_OVERRIDE;
 
   virtual void UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries);
@@ -651,6 +655,10 @@ protected:
 
 
   nsRefPtr<gfxASurface> mTempThebesSurface;
+
+  // Protects the view from being teared down while a composition is in
+  // progress on the compositor thread.
+  mozilla::Mutex mViewTearDownLock;
 
   mozilla::Mutex mEffectsLock;
 

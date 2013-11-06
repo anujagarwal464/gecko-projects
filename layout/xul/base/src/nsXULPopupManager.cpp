@@ -180,7 +180,7 @@ nsXULPopupManager::GetInstance()
 }
 
 bool
-nsXULPopupManager::Rollup(uint32_t aCount, nsIContent** aLastRolledUp)
+nsXULPopupManager::Rollup(uint32_t aCount, const nsIntPoint* pos, nsIContent** aLastRolledUp)
 {
   bool consume = false;
 
@@ -202,6 +202,20 @@ nsXULPopupManager::Rollup(uint32_t aCount, nsIContent** aLastRolledUp)
     }
 
     consume = item->Frame()->ConsumeOutsideClicks();
+    // If the click was over the anchor, always consume the click. This way,
+    // clicking on a menu doesn't reopen the menu.
+    if (!consume && pos) {
+      nsCOMPtr<nsIContent> anchor = item->Frame()->GetAnchor();
+      if (anchor && anchor->GetPrimaryFrame()) {
+        // It's possible that some other element is above the anchor at the same
+        // position, but the only thing that would happen is that the mouse
+        // event will get consumed, so here only a quick coordinates check is
+        // done rather than a slower complete check of what is at that location.
+        if (anchor->GetPrimaryFrame()->GetScreenRect().Contains(*pos)) {
+          consume = true;
+        }
+      }
+    }
 
     // if a number of popups to close has been specified, determine the last
     // popup to close
@@ -480,9 +494,9 @@ nsXULPopupManager::InitTriggerEvent(nsIDOMEvent* aEvent, nsIContent* aPopup,
     NS_ASSERTION(aPopup, "Expected a popup node");
     WidgetEvent* event = aEvent->GetInternalNSEvent();
     if (event) {
-      if (event->eventStructType == NS_MOUSE_EVENT ||
-          event->eventStructType == NS_KEY_EVENT) {
-        mCachedModifiers = static_cast<WidgetInputEvent*>(event)->modifiers;
+      WidgetInputEvent* inputEvent = event->AsInputEvent();
+      if (inputEvent) {
+        mCachedModifiers = inputEvent->modifiers;
       }
       nsIDocument* doc = aPopup->GetCurrentDoc();
       if (doc) {
@@ -498,7 +512,7 @@ nsXULPopupManager::InitTriggerEvent(nsIDOMEvent* aEvent, nsIContent* aPopup,
           if ((event->eventStructType == NS_MOUSE_EVENT || 
                event->eventStructType == NS_MOUSE_SCROLL_EVENT ||
                event->eventStructType == NS_WHEEL_EVENT) &&
-               !(static_cast<WidgetGUIEvent*>(event))->widget) {
+               !event->AsGUIEvent()->widget) {
             // no widget, so just use the client point if available
             nsCOMPtr<nsIDOMMouseEvent> mouseEvent = do_QueryInterface(aEvent);
             nsIntPoint clientPt;
@@ -1769,14 +1783,6 @@ nsXULPopupManager::CancelMenuTimer(nsMenuParent* aMenuParent)
   }
 }
 
-static WidgetGUIEvent*
-DOMKeyEventToGUIEvent(nsIDOMEvent* aEvent)
-{
-  WidgetEvent* evt = aEvent ? aEvent->GetInternalNSEvent() : nullptr;
-  return evt && evt->eventStructType == NS_KEY_EVENT ?
-         static_cast<WidgetGUIEvent*>(evt) : nullptr;
-}
-
 bool
 nsXULPopupManager::HandleShortcutNavigation(nsIDOMKeyEvent* aKeyEvent,
                                             nsMenuPopupFrame* aFrame)
@@ -1791,7 +1797,7 @@ nsXULPopupManager::HandleShortcutNavigation(nsIDOMKeyEvent* aKeyEvent,
     if (result) {
       aFrame->ChangeMenuItem(result, false);
       if (action) {
-        WidgetGUIEvent* evt = DOMKeyEventToGUIEvent(aKeyEvent);
+        WidgetGUIEvent* evt = aKeyEvent->GetInternalNSEvent()->AsGUIEvent();
         nsMenuFrame* menuToOpen = result->Enter(evt);
         if (menuToOpen) {
           nsCOMPtr<nsIContent> content = menuToOpen->GetContent();
@@ -1854,7 +1860,8 @@ nsXULPopupManager::HandleKeyboardNavigation(uint32_t aKeyCode)
     return false;
 
   nsNavigationDirection theDirection;
-  NS_ASSERTION(aKeyCode >= NS_VK_END && aKeyCode <= NS_VK_DOWN, "Illegal key code");
+  NS_ASSERTION(aKeyCode >= nsIDOMKeyEvent::DOM_VK_END &&
+                 aKeyCode <= nsIDOMKeyEvent::DOM_VK_DOWN, "Illegal key code");
   theDirection = NS_DIRECTION_FROM_KEY_CODE(itemFrame, aKeyCode);
 
   // if a popup is open, first check for navigation within the popup
@@ -2012,7 +2019,7 @@ nsXULPopupManager::HandleKeyboardEventWithKeyCode(
 #endif
       // close popups or deactivate menubar when Tab or F10 are pressed
       if (aTopVisibleMenuItem) {
-        Rollup(0, nullptr);
+        Rollup(0, nullptr, nullptr);
       } else if (mActiveMenuBar) {
         mActiveMenuBar->MenuClosed();
       }
@@ -2024,7 +2031,7 @@ nsXULPopupManager::HandleKeyboardEventWithKeyCode(
       // Otherwise, tell the active menubar, if any, to activate the menu. The
       // Enter method will return a menu if one needs to be opened as a result.
       nsMenuFrame* menuToOpen = nullptr;
-      WidgetGUIEvent* GUIEvent = DOMKeyEventToGUIEvent(aKeyEvent);
+      WidgetGUIEvent* GUIEvent = aKeyEvent->GetInternalNSEvent()->AsGUIEvent();
       if (aTopVisibleMenuItem) {
         menuToOpen = aTopVisibleMenuItem->Frame()->Enter(GUIEvent);
       } else if (mActiveMenuBar) {
@@ -2247,7 +2254,7 @@ nsXULPopupManager::KeyDown(nsIDOMKeyEvent* aKeyEvent)
         // The access key just went down and no other
         // modifiers are already down.
         if (mPopups)
-          Rollup(0, nullptr);
+          Rollup(0, nullptr, nullptr);
         else if (mActiveMenuBar)
           mActiveMenuBar->MenuClosed();
       }
@@ -2362,8 +2369,8 @@ nsXULMenuCommandEvent::Run()
     if (mCloseMenuMode != CloseMenuMode_None)
       menuFrame->SelectMenu(false);
 
-    nsAutoHandlingUserInputStatePusher userInpStatePusher(mUserInput, nullptr,
-                                                          shell->GetDocument());
+    AutoHandlingUserInputStatePusher userInpStatePusher(mUserInput, nullptr,
+                                                        shell->GetDocument());
     nsContentUtils::DispatchXULCommand(mMenu, mIsTrusted, nullptr, shell,
                                        mControl, mAlt, mShift, mMeta);
   }

@@ -2,6 +2,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 importScripts('worker_test_osfile_shared.js');
+importScripts("resource://gre/modules/workers/require.js");
+
+let SharedAll = require("resource://gre/modules/osfile/osfile_shared_allthreads.jsm");
+SharedAll.Config.DEBUG = true;
 
 function should_throw(f) {
   try {
@@ -59,9 +63,9 @@ function test_offsetby() {
   }
 
   // Walk through the array with offsetBy by 8 bits
-  let uint8 = OS.Shared.Type.uint8_t.in_ptr.implementation(buf);
+  let uint8 = SharedAll.Type.uint8_t.in_ptr.implementation(buf);
   for (i = 0; i < LENGTH; ++i) {
-    let value = OS.Shared.offsetBy(uint8, i).contents;
+    let value = SharedAll.offsetBy(uint8, i).contents;
     if (value != i%256) {
       is(value, i % 256, "test_offsetby: Walking through array with offsetBy (8 bits)");
       break;
@@ -69,10 +73,10 @@ function test_offsetby() {
   }
 
   // Walk again by 16 bits
-  let uint16 = OS.Shared.Type.uint16_t.in_ptr.implementation(buf);
+  let uint16 = SharedAll.Type.uint16_t.in_ptr.implementation(buf);
   let view2 = new Uint16Array(buf);
   for (i = 0; i < LENGTH/2; ++i) {
-    let value = OS.Shared.offsetBy(uint16, i).contents;
+    let value = SharedAll.offsetBy(uint16, i).contents;
     if (value != view2[i]) {
       is(value, view2[i], "test_offsetby: Walking through array with offsetBy (16 bits)");
       break;
@@ -80,15 +84,15 @@ function test_offsetby() {
   }
 
   // Ensure that offsetBy(..., 0) is idempotent
-  let startptr = OS.Shared.offsetBy(uint8, 0);
-  let startptr2 = OS.Shared.offsetBy(startptr, 0);
+  let startptr = SharedAll.offsetBy(uint8, 0);
+  let startptr2 = SharedAll.offsetBy(startptr, 0);
   is(startptr.toString(), startptr2.toString(), "test_offsetby: offsetBy(..., 0) is idmpotent");
 
   // Ensure that offsetBy(ptr, ...) does not work if ptr is a void*
   let ptr = ctypes.voidptr_t(0);
   let exn;
   try {
-    OS.Shared.Utils.offsetBy(ptr, 1);
+    SharedAll.offsetBy(ptr, 1);
   } catch (x) {
     exn = x;
   }
@@ -840,4 +844,16 @@ function test_remove_file()
     OS.File.remove(absent_file_name);
   });
   ok(!exn, "test_remove_file: ignoreAbsent works");
+
+  if (OS.Win) {
+    let file_name = "test_osfile_front_file_to_remove.tmp";
+    let file = OS.File.open(file_name, {write: true});
+    file.close();
+    ok(OS.File.exists(file_name), "test_remove_file: test file exists");
+    OS.Win.File.SetFileAttributes(file_name,
+                                  OS.Constants.Win.FILE_ATTRIBUTE_READONLY);
+    OS.File.remove(file_name);
+    ok(!OS.File.exists(file_name),
+       "test_remove_file: test file has been removed");
+  }
 }

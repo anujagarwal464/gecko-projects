@@ -89,7 +89,14 @@ function waitForCondition(condition, nextTest, errorMsg) {
       ok(false, errorMsg);
       moveOn();
     }
-    if (condition()) {
+    var conditionPassed;
+    try {
+      conditionPassed = condition();
+    } catch (e) {
+      ok(false, e + "\n" + e.stack);
+      conditionPassed = false;
+    }
+    if (conditionPassed) {
       moveOn();
     }
     tries++;
@@ -230,9 +237,14 @@ function whenNewTabLoaded(aWindow, aCallback) {
     return;
   }
 
+  whenTabLoaded(aWindow.gBrowser.selectedTab, aCallback);
+}
+
+function whenTabLoaded(aTab, aCallback) {
+  let browser = aTab.linkedBrowser;
   browser.addEventListener("load", function onLoad() {
     browser.removeEventListener("load", onLoad, true);
-    aCallback();
+    executeSoon(aCallback);
   }, true);
 }
 

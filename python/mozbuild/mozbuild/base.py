@@ -172,15 +172,22 @@ class MozbuildObject(ProcessExecutionMixin):
         # inside an objdir you probably want to perform actions on that objdir,
         # not another one. This prevents accidental usage of the wrong objdir
         # when the current objdir is ambiguous.
-        if topobjdir and config_topobjdir \
-            and not samepath(topobjdir, config_topobjdir) \
-            and not samepath(topobjdir, os.path.join(config_topobjdir, "mozilla")):
+        if topobjdir and config_topobjdir:
+            mozilla_dir = os.path.join(config_topobjdir, 'mozilla')
+            if not samepath(topobjdir, config_topobjdir) \
+                and (os.path.exists(mozilla_dir) and not samepath(topobjdir,
+                mozilla_dir)):
 
-            raise ObjdirMismatchException(topobjdir, config_topobjdir)
+                raise ObjdirMismatchException(topobjdir, config_topobjdir)
 
         topobjdir = topobjdir or config_topobjdir
         if topobjdir:
             topobjdir = os.path.normpath(topobjdir)
+
+            if topsrcdir == topobjdir:
+                raise BadEnvironmentException('The object directory appears '
+                    'to be the same as your source directory (%s). This build '
+                    'configuration is not supported.' % topsrcdir)
 
         # If we can't resolve topobjdir, oh well. The constructor will figure
         # it out via config.guess.
@@ -397,7 +404,7 @@ class MozbuildObject(ProcessExecutionMixin):
         args = self._make_path(force_pymake=force_pymake)
 
         if directory:
-            args.extend(['-C', directory])
+            args.extend(['-C', directory.replace(os.sep, '/')])
 
         if filename:
             args.extend(['-f', filename])
@@ -456,6 +463,13 @@ class MozbuildObject(ProcessExecutionMixin):
         return fn(**params)
 
     def _make_path(self, force_pymake=False):
+        if self._is_windows() and not force_pymake:
+            # Use mozmake if it's available.
+            try:
+                return [which.which('mozmake')]
+            except which.WhichError:
+                pass
+
         if self._is_windows() or force_pymake:
             make_py = os.path.join(self.topsrcdir, 'build', 'pymake',
                 'make.py').replace(os.sep, '/')

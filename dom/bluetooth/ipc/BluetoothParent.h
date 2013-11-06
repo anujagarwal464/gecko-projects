@@ -190,6 +190,17 @@ protected:
   bool
   DoRequest(const IsScoConnectedRequest& aRequest);
 
+#ifdef MOZ_B2G_RIL
+  bool
+  DoRequest(const AnswerWaitingCallRequest& aRequest);
+
+  bool
+  DoRequest(const IgnoreWaitingCallRequest& aRequest);
+
+  bool
+  DoRequest(const ToggleCallsRequest& aRequest);
+#endif
+
   bool
   DoRequest(const SendMetaDataRequest& aRequest);
 

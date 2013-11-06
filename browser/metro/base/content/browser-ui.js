@@ -112,6 +112,7 @@ var BrowserUI = {
     NewTabUtils.init();
     SettingsCharm.init();
     NavButtonSlider.init();
+    SelectionHelperUI.init();
 
     // We can delay some initialization until after startup.  We wait until
     // the first page is shown, then dispatch a UIReadyDelayed event.
@@ -193,6 +194,10 @@ var BrowserUI = {
       DebuggerServer.init();
       DebuggerServer.addBrowserActors();
       DebuggerServer.addActors('chrome://browser/content/dbg-metro-actors.js');
+
+      // Add these globally for chrome, until per-window chrome debugging is supported (bug 928018):
+      DebuggerServer.addGlobalActor(DebuggerServer.tabActorFactories.inspectorActor, "inspectorActor");
+      DebuggerServer.addGlobalActor(DebuggerServer.tabActorFactories.styleEditorActor, "styleEditorActor");
     }
     DebuggerServer.openListener(port);
   },

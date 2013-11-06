@@ -133,33 +133,16 @@ class PropertyIteratorObject : public JSObject
     static void finalize(FreeOp *fop, JSObject *obj);
 };
 
-/*
- * Array iterators are roughly like this:
- *
- *   Array.prototype.iterator = function iterator() {
- *       for (var i = 0; i < (this.length >>> 0); i++)
- *           yield this[i];
- *   }
- *
- * However they are not generators. They are a different class. The semantics
- * of Array iterators will be given in the eventual ES6 spec in full detail.
- */
-class ElementIteratorObject : public JSObject
+class ArrayIteratorObject : public JSObject
 {
   public:
     static const Class class_;
+};
 
-    static JSObject *create(JSContext *cx, Handle<Value> target);
-    static const JSFunctionSpec methods[];
-
-    enum {
-        TargetSlot,
-        IndexSlot,
-        NumSlots
-    };
-
-    static bool next(JSContext *cx, unsigned argc, Value *vp);
-    static bool next_impl(JSContext *cx, JS::CallArgs args);
+class StringIteratorObject : public JSObject
+{
+  public:
+    static const Class class_;
 };
 
 bool
@@ -208,7 +191,7 @@ UnwindIteratorForUncatchableException(JSContext *cx, JSObject *obj);
 bool
 IteratorConstructor(JSContext *cx, unsigned argc, Value *vp);
 
-}
+} /* namespace js */
 
 extern bool
 js_SuppressDeletedProperty(JSContext *cx, js::HandleObject obj, jsid id);
@@ -265,14 +248,7 @@ class ForOfIterator
   public:
     ForOfIterator(JSContext *cx) : cx(cx), iterator(cx) { }
 
-    bool init(HandleValue iterable) {
-        RootedValue iterv(cx, iterable);
-        if (!ValueToIterator(cx, JSITER_FOR_OF, &iterv))
-            return false;
-        iterator = &iterv.get().toObject();
-        return true;
-    }
-
+    bool init(HandleValue iterable);
     bool next(MutableHandleValue val, bool *done);
 };
 

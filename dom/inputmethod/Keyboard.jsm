@@ -90,7 +90,7 @@ this.Keyboard = {
 
   receiveMessage: function keyboardReceiveMessage(msg) {
     // If we get a 'Keyboard:XXX' message, check that the sender has the
-    // keyboard permission.
+    // input permission.
     if (msg.name.indexOf("Keyboard:") != -1) {
       if (!this.messageManager) {
         return;
@@ -110,9 +110,9 @@ this.Keyboard = {
         return;
       }
 
-      if (!mm.assertPermission("keyboard")) {
+      if (!mm.assertPermission("input")) {
         dump("Keyboard message " + msg.name +
-        " from a content process with no 'keyboard' privileges.");
+        " from a content process with no 'input' privileges.");
         return;
       }
     }
@@ -189,9 +189,15 @@ this.Keyboard = {
 
     let browser = Services.wm.getMostRecentWindow("navigator:browser");
 
+    // Chrome event, used also to render value selectors; that's why we need
+    // the info about choices / min / max here as well...
     browser.shell.sendChromeEvent({
       type: 'inputmethod-contextchange',
-      inputType: msg.data.type
+      inputType: msg.data.type,
+      value: msg.data.value,
+      choices: JSON.stringify(msg.data.choices),
+      min: msg.data.min,
+      max: msg.data.max
     });
   },
 

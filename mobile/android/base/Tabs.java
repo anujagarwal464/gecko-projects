@@ -6,8 +6,8 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.home.HomePager;
-import org.mozilla.gecko.ReaderModeUtils;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.ThreadUtils;
@@ -17,10 +17,10 @@ import org.json.JSONObject;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.accounts.OnAccountsUpdateListener;
-import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
@@ -73,10 +73,12 @@ public class Tabs implements GeckoEventListener {
     private final Runnable mPersistTabsRunnable = new Runnable() {
         @Override
         public void run() {
-            boolean syncIsSetup = SyncAccounts.syncAccountsExist(getAppContext());
-            if (syncIsSetup) {
-                TabsAccessor.persistLocalTabs(getContentResolver(), getTabsInOrder());
-            }
+            try {
+                boolean syncIsSetup = SyncAccounts.syncAccountsExist(getAppContext());
+                if (syncIsSetup) {
+                    TabsAccessor.persistLocalTabs(getContentResolver(), getTabsInOrder());
+                }
+            } catch (SecurityException se) {} // will fail without android.permission.GET_ACCOUNTS
         }
     };
 
@@ -101,6 +103,7 @@ public class Tabs implements GeckoEventListener {
         registerEventListener("Link:Favicon");
         registerEventListener("Link:Feed");
         registerEventListener("DesktopMode:Changed");
+        registerEventListener("Tab:ViewportMetadata");
     }
 
     public synchronized void attachToContext(Context context) {
@@ -272,7 +275,15 @@ public class Tabs implements GeckoEventListener {
         return tab != null && tab == mSelectedTab;
     }
 
+    public boolean isSelectedTabId(int tabId) {
+        final Tab selected = mSelectedTab;
+        return selected != null && selected.getId() == tabId;
+    }
+
     public synchronized Tab getTab(int id) {
+        if (id == -1)
+            return null;
+
         if (mTabs.size() == 0)
             return null;
 
@@ -461,9 +472,31 @@ public class Tabs implements GeckoEventListener {
             } else if (event.equals("DesktopMode:Changed")) {
                 tab.setDesktopMode(message.getBoolean("desktopMode"));
                 notifyListeners(tab, TabEvents.DESKTOP_MODE_CHANGE);
+            } else if (event.equals("Tab:ViewportMetadata")) {
+                tab.setZoomConstraints(new ZoomConstraints(message));
+                tab.setIsRTL(message.getBoolean("isRTL"));
+                notifyListeners(tab, TabEvents.VIEWPORT_CHANGE);
             }
         } catch (Exception e) {
             Log.w(LOGTAG, "handleMessage threw for " + event, e);
+        }
+    }
+
+    /**
+     * Set the favicon for any tabs loaded with this page URL.
+     */
+    public void updateFaviconForURL(String pageURL, Bitmap favicon) {
+        // The tab might be pointing to another URL by the time the
+        // favicon is finally loaded, in which case we won't find the tab.
+        // See also: Bug 920331.
+        for (Tab tab : mOrder) {
+            String tabURL = tab.getURL();
+            if (pageURL.equals(tabURL)) {
+                tab.setFaviconLoadId(Favicons.NOT_LOADING);
+                if (tab.updateFavicon(favicon)) {
+                    notifyListeners(tab, TabEvents.FAVICON);
+                }
+            }
         }
     }
 
@@ -514,7 +547,8 @@ public class Tabs implements GeckoEventListener {
         LINK_FEED,
         SECURITY_CHANGE,
         READER_ENABLED,
-        DESKTOP_MODE_CHANGE
+        DESKTOP_MODE_CHANGE,
+        VIEWPORT_CHANGE
     }
 
     public void notifyListeners(Tab tab, TabEvents msg) {
@@ -605,6 +639,15 @@ public class Tabs implements GeckoEventListener {
         }
 
         return -1;
+    }
+
+    public int getTabIdForUrl(String url) {
+        return getTabIdForUrl(url, Tabs.getInstance().getSelectedTab().isPrivate());
+    }
+
+    public synchronized Tab getTabForUrl(String url) {
+        int tabId = getTabIdForUrl(url);
+        return getTab(tabId);
     }
 
     /**

@@ -7,15 +7,15 @@
 #define _Accessible_H_
 
 #include "mozilla/a11y/AccTypes.h"
+#include "mozilla/a11y/RelationType.h"
 #include "mozilla/a11y/Role.h"
 #include "mozilla/a11y/States.h"
-#include "nsAccessNode.h"
 
 #include "nsIAccessible.h"
 #include "nsIAccessibleHyperLink.h"
-#include "nsIAccessibleSelectable.h"
 #include "nsIAccessibleValue.h"
 #include "nsIAccessibleStates.h"
+#include "xpcAccessibleSelectable.h"
 
 #include "nsIContent.h"
 #include "nsString.h"
@@ -35,6 +35,7 @@ namespace a11y {
 class Accessible;
 class AccEvent;
 class AccGroupInfo;
+class DocAccessible;
 class EmbeddedObjCollector;
 class HTMLImageMapAccessible;
 class HTMLLIAccessible;
@@ -42,6 +43,7 @@ class HyperTextAccessible;
 class ImageAccessible;
 class KeyBinding;
 class Relation;
+class RootAccessible;
 class TableAccessible;
 class TableCellAccessible;
 class TextLeafAccessible;
@@ -100,32 +102,67 @@ typedef nsRefPtrHashtable<nsPtrHashKey<const void>, Accessible>
   { 0xbd, 0x50, 0x42, 0x6b, 0xd1, 0xd6, 0xe1, 0xad }    \
 }
 
-class Accessible : public nsAccessNode,
-                   public nsIAccessible,
+class Accessible : public nsIAccessible,
                    public nsIAccessibleHyperLink,
-                   public nsIAccessibleSelectable,
+                   public xpcAccessibleSelectable,
                    public nsIAccessibleValue
 {
 public:
   Accessible(nsIContent* aContent, DocAccessible* aDoc);
   virtual ~Accessible();
 
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(Accessible, nsAccessNode)
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(Accessible, nsIAccessible)
 
   NS_DECL_NSIACCESSIBLE
   NS_DECL_NSIACCESSIBLEHYPERLINK
-  NS_DECL_NSIACCESSIBLESELECTABLE
   NS_DECL_NSIACCESSIBLEVALUE
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ACCESSIBLE_IMPL_IID)
 
   //////////////////////////////////////////////////////////////////////////////
-  // nsAccessNode
-
-  virtual void Shutdown();
-
-  //////////////////////////////////////////////////////////////////////////////
   // Public methods
+
+  /**
+   * Return the document accessible for this accessible.
+   */
+  DocAccessible* Document() const { return mDoc; }
+
+  /**
+   * Return the root document accessible for this accessible.
+   */
+  a11y::RootAccessible* RootAccessible() const;
+
+  /**
+   * Return frame for this accessible.
+   */
+  virtual nsIFrame* GetFrame() const;
+
+  /**
+   * Return DOM node associated with the accessible.
+   */
+  virtual nsINode* GetNode() const;
+  inline already_AddRefed<nsIDOMNode> DOMNode() const
+  {
+    nsCOMPtr<nsIDOMNode> DOMNode = do_QueryInterface(GetNode());
+    return DOMNode.forget();
+  }
+  nsIContent* GetContent() const { return mContent; }
+
+  /**
+   * Return node type information of DOM node associated with the accessible.
+   */
+  bool IsContent() const
+    { return GetNode() && GetNode()->IsNodeOfType(nsINode::eCONTENT); }
+
+  /**
+   * Return the unique identifier of the accessible.
+   */
+  void* UniqueID() { return static_cast<void*>(this); }
+
+  /**
+   * Return language associated with the accessible.
+   */
+  void Language(nsAString& aLocale);
 
   /**
    * Get the description of this accessible.
@@ -144,15 +181,6 @@ public:
    * aName.IsEmpty() when the author missed name, AT can try to repair a name.
    */
   virtual ENameValueFlag Name(nsString& aName);
-
-  /**
-   * Return DOM node associated with this accessible.
-   */
-  inline already_AddRefed<nsIDOMNode> DOMNode() const
-  {
-    nsCOMPtr<nsIDOMNode> DOMNode = do_QueryInterface(GetNode());
-    return DOMNode.forget();
-  }
 
   /**
    * Maps ARIA state attributes to state of accessible. Note the given state
@@ -294,10 +322,15 @@ public:
   /**
    * Get the relation of the given type.
    */
-  virtual mozilla::a11y::Relation RelationByType(uint32_t aType);
+  virtual Relation RelationByType(RelationType aType);
 
   //////////////////////////////////////////////////////////////////////////////
   // Initializing methods
+
+  /**
+   * Shutdown this accessible object.
+   */
+  virtual void Shutdown();
 
   /**
    * Set the ARIA role map entry for a new accessible.
@@ -382,7 +415,6 @@ public:
     uint32_t childCount = ChildCount();
     return childCount != 0 ? GetChildAt(childCount - 1) : nullptr;
   }
-
 
   /**
    * Return embedded accessible children count.
@@ -756,6 +788,11 @@ protected:
   // Initializing, cache and tree traverse methods
 
   /**
+   * Destroy the object.
+   */
+  void LastRelease();
+
+  /**
    * Cache accessible children.
    */
   virtual void CacheChildren();
@@ -899,6 +936,9 @@ protected:
   AccGroupInfo* GetGroupInfo();
 
   // Data Members
+  nsCOMPtr<nsIContent> mContent;
+  DocAccessible* mDoc;
+
   nsRefPtr<Accessible> mParent;
   nsTArray<nsRefPtr<Accessible> > mChildren;
   int32_t mIndexInParent;
@@ -931,6 +971,12 @@ protected:
    * Non-null indicates author-supplied role; possibly state & value as well
    */
   nsRoleMapEntry* mRoleMapEntry;
+
+private:
+  Accessible() MOZ_DELETE;
+  Accessible(const Accessible&) MOZ_DELETE;
+  Accessible& operator =(const Accessible&) MOZ_DELETE;
+
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Accessible,

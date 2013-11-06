@@ -22,7 +22,6 @@
 #endif
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/CompositorParent.h"
-#include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "nsDeque.h"
 #include "APZController.h"
@@ -74,6 +73,7 @@ public:
   // nsWindowBase
   virtual bool DispatchWindowEvent(mozilla::WidgetGUIEvent* aEvent) MOZ_OVERRIDE;
   virtual bool DispatchKeyboardEvent(mozilla::WidgetGUIEvent* aEvent) MOZ_OVERRIDE;
+  virtual bool DispatchScrollEvent(mozilla::WidgetGUIEvent* aEvent) MOZ_OVERRIDE;
   virtual bool DispatchPluginEvent(const MSG &aMsg) MOZ_OVERRIDE { return false; }
   virtual bool IsTopLevelWidget() MOZ_OVERRIDE { return true; }
   virtual nsWindowBase* GetParentWindowBase(bool aIncludeOwner) MOZ_OVERRIDE { return nullptr; }
@@ -84,6 +84,7 @@ public:
 
   // nsBaseWidget
   virtual CompositorParent* NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight);
+  virtual void SetWidgetListener(nsIWidgetListener* aWidgetListener);
 
   // nsIWidget interface
   NS_IMETHOD    Create(nsIWidget *aParent,
@@ -234,10 +235,6 @@ protected:
   void DispatchAsyncScrollEvent(DispatchMsg* aEvent);
   void DeliverNextScrollEvent();
   void DeliverNextKeyboardEvent();
-  DispatchMsg* CreateDispatchMsg(UINT aMsg, WPARAM aWParam, LPARAM aLParam);
-
-public:
-  static nsRefPtr<mozilla::layers::APZCTreeManager> sAPZC;
 
 protected:
   OleInitializeWrapper mOleInitializeWrapper;
@@ -251,7 +248,7 @@ protected:
   WNDPROC mMetroWndProc;
   bool mTempBasicLayerInUse;
   uint64_t mRootLayerTreeId;
-  nsDeque mMsgEventQueue;
+  nsDeque mEventQueue;
   nsDeque mKeyEventQueue;
   nsRefPtr<APZController> mController;
 };

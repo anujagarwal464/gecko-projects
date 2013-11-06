@@ -2486,6 +2486,26 @@ Proxy::get(JSContext *cx, HandleObject proxy, HandleObject receiver, HandleId id
 }
 
 bool
+Proxy::callProp(JSContext *cx, HandleObject proxy, HandleObject receiver, HandleId id,
+                MutableHandleValue vp)
+{
+    // The inline caches need an access point for JSOP_CALLPROP sites that accounts
+    // for the possibility of __noSuchMethod__
+    if (!Proxy::get(cx, proxy, receiver, id, vp))
+        return false;
+
+#if JS_HAS_NO_SUCH_METHOD
+    if (JS_UNLIKELY(vp.isPrimitive())) {
+        if (!OnUnknownMethod(cx, proxy, IdToValue(id), vp))
+            return false;
+    }
+#endif
+
+    return true;
+}
+
+
+bool
 Proxy::getElementIfPresent(JSContext *cx, HandleObject proxy, HandleObject receiver, uint32_t index,
                            MutableHandleValue vp, bool *present)
 {
@@ -3252,7 +3272,7 @@ proxy_createFunction(JSContext *cx, unsigned argc, Value *vp)
     RootedObject call(cx, ValueToCallable(cx, vp[3], argc - 2));
     if (!call)
         return false;
-    JSObject *construct = nullptr;
+    RootedObject construct(cx, nullptr);
     if (argc > 2) {
         construct = ValueToCallable(cx, vp[4], argc - 3);
         if (!construct)
@@ -3293,7 +3313,7 @@ static const JSFunctionSpec static_methods[] = {
 JS_FRIEND_API(JSObject *)
 js_InitProxyClass(JSContext *cx, HandleObject obj)
 {
-    Rooted<GlobalObject*> global(cx);
+    Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
     RootedFunction ctor(cx);
     ctor = global->createConstructor(cx, proxy, cx->names().Proxy, 2);
     if (!ctor)
@@ -3306,6 +3326,6 @@ js_InitProxyClass(JSContext *cx, HandleObject obj)
         return nullptr;
     }
 
-    MarkStandardClassInitializedNoProto(obj, &ProxyObject::uncallableClass_);
+    global->markStandardClassInitializedNoProto(&ProxyObject::uncallableClass_);
     return ctor;
 }

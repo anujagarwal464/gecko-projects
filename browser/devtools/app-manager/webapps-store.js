@@ -25,21 +25,27 @@ module.exports = WebappsStore = function(connection) {
 
   this._resetStore();
 
-  this._destroy = this._destroy.bind(this);
+  this.destroy = this.destroy.bind(this);
   this._onStatusChanged = this._onStatusChanged.bind(this);
 
   this._connection = connection;
-  this._connection.once(Connection.Events.DESTROYED, this._destroy);
+  this._connection.once(Connection.Events.DESTROYED, this.destroy);
   this._connection.on(Connection.Events.STATUS_CHANGED, this._onStatusChanged);
   this._onStatusChanged();
   return this;
 }
 
 WebappsStore.prototype = {
-  _destroy: function() {
-    this._connection.off(Connection.Events.STATUS_CHANGED, this._onStatusChanged);
-    _knownWebappsStores.delete(this._connection);
-    this._connection = null;
+  destroy: function() {
+    if (this._connection) {
+      // While this.destroy is bound using .once() above, that event may not
+      // have occurred when the WebappsStore client calls destroy, so we
+      // manually remove it here.
+      this._connection.off(Connection.Events.DESTROYED, this.destroy);
+      this._connection.off(Connection.Events.STATUS_CHANGED, this._onStatusChanged);
+      _knownWebappsStores.delete(this._connection);
+      this._connection = null;
+    }
   },
 
   _resetStore: function() {
@@ -258,6 +264,10 @@ WebappsStore.prototype = {
           proxifiedApp.iconURL = res.url;
         }
       });
+
+      // This app may have been running while being installed, so check the list
+      // of running apps again to get the right answer.
+      this._getRunningApps();
     });
   },
 

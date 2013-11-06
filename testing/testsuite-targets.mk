@@ -34,15 +34,15 @@ RUN_MOCHITEST_B2G_DESKTOP = \
   $(PYTHON) _tests/testing/mochitest/runtestsb2g.py --autorun --close-when-done \
     --console-level=INFO --log-file=./$@.log --file-level=INFO \
     --desktop --profile ${GAIA_PROFILE_DIR} \
-    --failure-file=$(call core_abspath,_tests/testing/mochitest/makefailures.json) \
+    --failure-file=$(abspath _tests/testing/mochitest/makefailures.json) \
     $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
 
 RUN_MOCHITEST = \
   rm -f ./$@.log && \
   $(PYTHON) _tests/testing/mochitest/runtests.py --autorun --close-when-done \
     --console-level=INFO --log-file=./$@.log --file-level=INFO \
-    --failure-file=$(call core_abspath,_tests/testing/mochitest/makefailures.json) \
-    --testing-modules-dir=$(call core_abspath,_tests/modules) \
+    --failure-file=$(abspath _tests/testing/mochitest/makefailures.json) \
+    --testing-modules-dir=$(abspath _tests/modules) \
     --extra-profile-file=$(DIST)/plugins \
     $(SYMBOLS_PATH) $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
 
@@ -51,7 +51,7 @@ RERUN_MOCHITEST = \
   $(PYTHON) _tests/testing/mochitest/runtests.py --autorun --close-when-done \
     --console-level=INFO --log-file=./$@.log --file-level=INFO \
     --run-only-tests=makefailures.json \
-    --testing-modules-dir=$(call core_abspath,_tests/modules) \
+    --testing-modules-dir=$(abspath _tests/modules) \
     --extra-profile-file=$(DIST)/plugins \
     $(SYMBOLS_PATH) $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
 
@@ -60,7 +60,7 @@ RUN_MOCHITEST_REMOTE = \
   $(PYTHON) _tests/testing/mochitest/runtestsremote.py --autorun --close-when-done \
     --console-level=INFO --log-file=./$@.log --file-level=INFO $(DM_FLAGS) --dm_trans=$(DM_TRANS) \
     --app=$(TEST_PACKAGE_NAME) --deviceIP=${TEST_DEVICE} --xre-path=${MOZ_HOST_BIN} \
-    --testing-modules-dir=$(call core_abspath,_tests/modules) --httpd-path=. \
+    --testing-modules-dir=$(abspath _tests/modules) --httpd-path=. \
     $(SYMBOLS_PATH) $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
 
 RUN_MOCHITEST_ROBOCOP = \
@@ -90,8 +90,12 @@ endif
 
 mochitest-remote: DM_TRANS?=adb
 mochitest-remote:
-	@if [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
-        echo "please prepare your host with the environment variable MOZ_HOST_BIN"; \
+	@if [ "${MOZ_HOST_BIN}" = "" ]; then \
+        echo "environment variable MOZ_HOST_BIN must be set to a directory containing host xpcshell"; \
+    elif [ ! -d ${MOZ_HOST_BIN} ]; then \
+        echo "MOZ_HOST_BIN does not specify a directory"; \
+    elif [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
+        echo "xpcshell not found in MOZ_HOST_BIN"; \
     elif [ "${TEST_DEVICE}" = "" -a "$(DM_TRANS)" != "adb" ]; then \
         echo "please prepare your host with the environment variable TEST_DEVICE"; \
     else \
@@ -103,8 +107,12 @@ mochitest-robotium: mochitest-robocop
 
 mochitest-robocop: DM_TRANS?=adb
 mochitest-robocop:
-	@if [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
-        echo "please prepare your host with the environment variable MOZ_HOST_BIN"; \
+	@if [ "${MOZ_HOST_BIN}" = "" ]; then \
+        echo "environment variable MOZ_HOST_BIN must be set to a directory containing host xpcshell"; \
+    elif [ ! -d ${MOZ_HOST_BIN} ]; then \
+        echo "MOZ_HOST_BIN does not specify a directory"; \
+    elif [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
+        echo "xpcshell not found in MOZ_HOST_BIN"; \
     elif [ "${TEST_DEVICE}" = "" -a "$(DM_TRANS)" != "adb" ]; then \
         echo "please prepare your host with the environment variable TEST_DEVICE"; \
     else \
@@ -212,8 +220,12 @@ reftest:
 reftest-remote: TEST_PATH?=layout/reftests/reftest.list
 reftest-remote: DM_TRANS?=adb
 reftest-remote:
-	@if [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
-        echo "please prepare your host with the environment variable MOZ_HOST_BIN"; \
+	@if [ "${MOZ_HOST_BIN}" = "" ]; then \
+        echo "environment variable MOZ_HOST_BIN must be set to a directory containing host xpcshell"; \
+    elif [ ! -d ${MOZ_HOST_BIN} ]; then \
+        echo "MOZ_HOST_BIN does not specify a directory"; \
+    elif [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
+        echo "xpcshell not found in MOZ_HOST_BIN"; \
     elif [ "${TEST_DEVICE}" = "" -a "$(DM_TRANS)" != "adb" ]; then \
         echo "please prepare your host with the environment variable TEST_DEVICE"; \
     else \
@@ -224,8 +236,12 @@ reftest-remote:
 
 reftest-b2g: TEST_PATH?=layout/reftests/reftest.list
 reftest-b2g:
-	@if [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
-        echo "please set the MOZ_HOST_BIN environment variable"; \
+	@if [ "${MOZ_HOST_BIN}" = "" ]; then \
+		echo "environment variable MOZ_HOST_BIN must be set to a directory containing host xpcshell"; \
+	elif [ ! -d ${MOZ_HOST_BIN} ]; then \
+		echo "MOZ_HOST_BIN does not specify a directory"; \
+	elif [ ! -f ${MOZ_HOST_BIN}/xpcshell ]; then \
+		echo "xpcshell not found in MOZ_HOST_BIN"; \
 	elif [ "${B2G_PATH}" = "" -o "${ADB_PATH}" = "" ]; then \
 		echo "please set the B2G_PATH and ADB_PATH environment variables"; \
 	else \
@@ -287,9 +303,9 @@ xpcshell-tests:
 	  --build-info-json=$(DEPTH)/mozinfo.json \
 	  --no-logfiles \
 	  --test-plugin-path="$(DIST)/plugins" \
-	  --tests-root-dir=$(call core_abspath,_tests/xpcshell) \
-	  --testing-modules-dir=$(call core_abspath,_tests/modules) \
-	  --xunit-file=$(call core_abspath,_tests/xpcshell/results.xml) \
+	  --tests-root-dir=$(abspath _tests/xpcshell) \
+	  --testing-modules-dir=$(abspath _tests/modules) \
+	  --xunit-file=$(abspath _tests/xpcshell/results.xml) \
 	  --xunit-suite-name=xpcshell \
           $(SYMBOLS_PATH) \
 	  $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS) \
@@ -334,7 +350,7 @@ xpcshell-tests-remote:
 	    --manifest=$(DEPTH)/_tests/xpcshell/xpcshell_android.ini \
 	    --build-info-json=$(DEPTH)/mozinfo.json \
 	    --no-logfiles \
-	    --testing-modules-dir=$(call core_abspath,_tests/modules) \
+	    --testing-modules-dir=$(abspath _tests/modules) \
 	    --dm_trans=$(DM_TRANS) \
 	    --deviceIP=${TEST_DEVICE} \
 	    --objdir=$(DEPTH) \
@@ -423,7 +439,7 @@ else
 endif
 	find $(PKG_STAGE) -name "*.pyc" -exec rm {} \;
 	cd $(PKG_STAGE) && \
-	  zip -rq9D "$(call core_abspath,$(DIST)/$(PKG_PATH)$(TEST_PACKAGE))" \
+	  zip -rq9D "$(abspath $(DIST)/$(PKG_PATH)$(TEST_PACKAGE))" \
 	  * -x \*/.mkdir.done
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),android)
@@ -514,6 +530,8 @@ endif
 ifeq ($(MOZ_WIDGET_TOOLKIT),android)
 	$(NSINSTALL) $(topsrcdir)/testing/android_cppunittest_manifest.txt $(PKG_STAGE)/cppunittests
 endif
+	$(NSINSTALL) $(topsrcdir)/startupcache/test/TestStartupCacheTelemetry.js $(PKG_STAGE)/cppunittests
+	$(NSINSTALL) $(topsrcdir)/startupcache/test/TestStartupCacheTelemetry.manifest $(PKG_STAGE)/cppunittests
 
 stage-jittest:
 	$(NSINSTALL) -D $(PKG_STAGE)/jit-test/tests

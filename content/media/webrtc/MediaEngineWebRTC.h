@@ -26,6 +26,7 @@
 #include "AudioSegment.h"
 #include "StreamBuffer.h"
 #include "MediaStreamGraph.h"
+#include "LoadMonitor.h"
 
 // WebRTC library includes follow
 
@@ -129,7 +130,7 @@ public:
     , mHeight(0)
     , mInitDone(false)
     , mInSnapshotMode(false)
-    , mSnapshotPath(NULL) {
+    , mSnapshotPath(nullptr) {
     MOZ_ASSERT(aVideoEnginePtr);
     mState = kReleased;
     Init();
@@ -353,18 +354,14 @@ public:
     , mAudioEngineInit(false)
     , mCameraManager(aCameraManager)
     , mWindowId(aWindowId)
+    , mHasTabVideoSource(false)
   {
     AsyncLatencyLogger::Get(true)->AddRef();
+    mLoadMonitor = new LoadMonitor();
+    mLoadMonitor->Init(mLoadMonitor);
   }
 #else
-  MediaEngineWebRTC()
-    : mMutex("mozilla::MediaEngineWebRTC")
-    , mVideoEngine(nullptr)
-    , mVoiceEngine(nullptr)
-    , mVideoEngineInit(false)
-    , mAudioEngineInit(false)
-  {
-  }
+  MediaEngineWebRTC();
 #endif
   ~MediaEngineWebRTC() {
     Shutdown();
@@ -390,6 +387,7 @@ private:
   // Need this to avoid unneccesary WebRTC calls while enumerating.
   bool mVideoEngineInit;
   bool mAudioEngineInit;
+  bool mHasTabVideoSource;
 
   // Store devices we've already seen in a hashtable for quick return.
   // Maps UUID to MediaEngineSource (one set for audio, one for video).
@@ -407,6 +405,8 @@ private:
   nsDOMCameraManager* mCameraManager;
   uint64_t mWindowId;
 #endif
+
+   nsRefPtr<LoadMonitor> mLoadMonitor;
 };
 
 }

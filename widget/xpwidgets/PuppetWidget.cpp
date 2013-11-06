@@ -275,17 +275,17 @@ PuppetWidget::DispatchEvent(WidgetGUIEvent* event, nsEventStatus& aStatus)
   }
   switch (event->eventStructType) {
   case NS_COMPOSITION_EVENT:
-    mIMELastReceivedSeqno = static_cast<WidgetCompositionEvent*>(event)->seqno;
+    mIMELastReceivedSeqno = event->AsCompositionEvent()->seqno;
     if (mIMELastReceivedSeqno < mIMELastBlurSeqno)
       return NS_OK;
     break;
   case NS_TEXT_EVENT:
-    mIMELastReceivedSeqno = static_cast<WidgetTextEvent*>(event)->seqno;
+    mIMELastReceivedSeqno = event->AsTextEvent()->seqno;
     if (mIMELastReceivedSeqno < mIMELastBlurSeqno)
       return NS_OK;
     break;
   case NS_SELECTION_EVENT:
-    mIMELastReceivedSeqno = static_cast<WidgetSelectionEvent*>(event)->seqno;
+    mIMELastReceivedSeqno = event->AsSelectionEvent()->seqno;
     if (mIMELastReceivedSeqno < mIMELastBlurSeqno)
       return NS_OK;
     break;
@@ -324,8 +324,11 @@ PuppetWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
 #endif
     if (!mLayerManager) {
       mLayerManager = new ClientLayerManager(this);
-      mLayerManager->AsShadowForwarder()->SetShadowManager(aShadowManager);
     }
+  }
+  ShadowLayerForwarder* lf = mLayerManager->AsShadowForwarder();
+  if (!lf->HasShadowManager() && aShadowManager) {
+    lf->SetShadowManager(aShadowManager);
   }
   if (aAllowRetaining) {
     *aAllowRetaining = true;

@@ -116,6 +116,7 @@
 #include "nsIFaviconService.h"
 #include "mozIAsyncFavicons.h"
 #endif
+#include "nsINetworkSeer.h"
 
 // Editor-related
 #include "nsIEditingSession.h"
@@ -765,6 +766,7 @@ nsDocShell::nsDocShell():
     mInEnsureScriptEnv(false),
 #endif
     mAffectPrivateSessionLifetime(true),
+    mInvisible(false),
     mDefaultLoadFlags(nsIRequest::LOAD_NORMAL),
     mFrameType(eFrameTypeRegular),
     mOwnOrContainingAppId(nsIScriptSecurityManager::UNKNOWN_APP_ID),
@@ -1858,20 +1860,15 @@ nsDocShell::SetCurrentURI(nsIURI *aURI, nsIRequest *aRequest,
 }
 
 NS_IMETHODIMP
-nsDocShell::GetCharset(char** aCharset)
+nsDocShell::GetCharset(nsACString& aCharset)
 {
-    NS_ENSURE_ARG_POINTER(aCharset);
-    *aCharset = nullptr; 
+    aCharset.Truncate();
 
     nsIPresShell* presShell = GetPresShell();
     NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
     nsIDocument *doc = presShell->GetDocument();
     NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
-    *aCharset = ToNewCString(doc->GetDocumentCharacterSet());
-    if (!*aCharset) {
-        return NS_ERROR_OUT_OF_MEMORY;
-    }
-
+    aCharset = doc->GetDocumentCharacterSet();
     return NS_OK;
 }
 
@@ -1899,8 +1896,7 @@ nsDocShell::GatherCharsetMenuTelemetry()
 
   int32_t charsetSource = doc->GetDocumentCharacterSetSource();
   switch (charsetSource) {
-    case kCharsetFromWeakDocTypeDefault:
-    case kCharsetFromUserDefault:
+    case kCharsetFromFallback:
     case kCharsetFromDocTypeDefault:
     case kCharsetFromCache:
     case kCharsetFromParentFrame:
@@ -1944,23 +1940,10 @@ nsDocShell::GatherCharsetMenuTelemetry()
 }
 
 NS_IMETHODIMP
-nsDocShell::SetCharset(const char* aCharset)
+nsDocShell::SetCharset(const nsACString& aCharset)
 {
-    // set the default charset
-    nsCOMPtr<nsIContentViewer> viewer;
-    GetContentViewer(getter_AddRefs(viewer));
-    if (viewer) {
-      nsCOMPtr<nsIMarkupDocumentViewer> muDV(do_QueryInterface(viewer));
-      if (muDV) {
-        nsCString charset(aCharset);
-        NS_ENSURE_SUCCESS(muDV->SetDefaultCharacterSet(charset),
-                          NS_ERROR_FAILURE);
-      }
-    }
-
     // set the charset override
-    nsCString charset(aCharset);
-    SetForcedCharset(charset);
+    SetForcedCharset(aCharset);
 
     return NS_OK;
 }
@@ -1977,28 +1960,24 @@ NS_IMETHODIMP nsDocShell::GetForcedCharset(nsACString& aResult)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShell::SetParentCharset(const nsACString& aCharset)
+void
+nsDocShell::SetParentCharset(const nsACString& aCharset,
+                             int32_t aCharsetSource,
+                             nsIPrincipal* aPrincipal)
 {
   mParentCharset = aCharset;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsDocShell::GetParentCharset(nsACString& aResult)
-{
-  aResult = mParentCharset;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsDocShell::SetParentCharsetSource(int32_t aCharsetSource)
-{
   mParentCharsetSource = aCharsetSource;
-  return NS_OK;
+  mParentCharsetPrincipal = aPrincipal;
 }
 
-NS_IMETHODIMP nsDocShell::GetParentCharsetSource(int32_t * aParentCharsetSource)
+void
+nsDocShell::GetParentCharset(nsACString& aCharset,
+                             int32_t* aCharsetSource,
+                             nsIPrincipal** aPrincipal)
 {
-  *aParentCharsetSource = mParentCharsetSource;
-  return NS_OK;
+  aCharset = mParentCharset;
+  *aCharsetSource = mParentCharsetSource;
+  NS_IF_ADDREF(*aPrincipal = mParentCharsetPrincipal);
 }
 
 NS_IMETHODIMP
@@ -3190,62 +3169,11 @@ nsDocShell::FindItemWithName(const PRUnichar * aName,
         // DoFindItemWithName only returns active items and we don't check if
         // the item is active for the special cases.
         if (foundItem) {
-
-            // If our document is sandboxed, we need to do some extra checks.
-            uint32_t sandboxFlags = 0;
-
-            nsCOMPtr<nsIDocument> doc = do_GetInterface(aOriginalRequestor);
-
-            if (doc) {
-                sandboxFlags = doc->GetSandboxFlags();
+            if (IsSandboxedFrom(foundItem, aOriginalRequestor)) {
+                return NS_ERROR_DOM_INVALID_ACCESS_ERR;
+            } else {
+                foundItem.swap(*_retval);
             }
-
-            if (sandboxFlags) {
-                nsCOMPtr<nsIDocShellTreeItem> root;
-                GetSameTypeRootTreeItem(getter_AddRefs(root));
-
-                // Is the found item not a top level browsing context and not ourself ?
-                nsCOMPtr<nsIDocShellTreeItem> selfAsItem = static_cast<nsIDocShellTreeItem *>(this);
-                if (foundItem != root && foundItem != selfAsItem) {
-                    // Are we an ancestor of the foundItem ?
-                    bool isAncestor = false;
-
-                    nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
-                    foundItem->GetSameTypeParent(getter_AddRefs(parentAsItem));
-                    while (parentAsItem) {
-                        if (parentAsItem == selfAsItem) {
-                            isAncestor = true;
-                            break;
-                        }
-                        nsCOMPtr<nsIDocShellTreeItem> tmp = parentAsItem;
-                        tmp->GetSameTypeParent(getter_AddRefs(parentAsItem));
-                    }
-
-                    if (!isAncestor) {
-                        // No, we are not an ancestor and our document is
-                        // sandboxed, we can't allow this.
-                        foundItem = nullptr;
-                    }
-                } else {
-                    // Top level browsing context - is it an ancestor of ours ?
-                    nsCOMPtr<nsIDocShellTreeItem> tmp;
-                    GetSameTypeParent(getter_AddRefs(tmp));
-
-                    while (tmp) {
-                        if (tmp && tmp == foundItem) {
-                            // This is an ancestor, and we are sandboxed.
-                            // Unless allow-top-navigation is set, we can't allow this.
-                            if (sandboxFlags & SANDBOXED_TOPLEVEL_NAVIGATION) {
-                                foundItem = nullptr;
-                            }
-                            break;
-                        }
-                        tmp->GetParent(getter_AddRefs(tmp));
-                    }
-                }
-            }
-
-            foundItem.swap(*_retval);
         }
         return NS_OK;
     }
@@ -3316,6 +3244,70 @@ nsDocShell::DoFindItemWithName(const PRUnichar* aName,
     }
 
     return NS_OK;
+}
+
+/* static */
+bool
+nsDocShell::IsSandboxedFrom(nsIDocShellTreeItem* aTargetItem,
+                            nsIDocShellTreeItem* aAccessingItem)
+{
+    // aAccessingItem cannot be sandboxed from itself.
+    if (SameCOMIdentity(aTargetItem, aAccessingItem)) {
+        return false;
+    }
+
+    uint32_t sandboxFlags = 0;
+
+    nsCOMPtr<nsIDocument> doc = do_GetInterface(aAccessingItem);
+    if (doc) {
+        sandboxFlags = doc->GetSandboxFlags();
+    }
+
+    // If no flags, aAccessingItem is not sandboxed at all.
+    if (!sandboxFlags) {
+        return false;
+    }
+
+    // If aTargetItem has an ancestor, it is not top level.
+    nsCOMPtr<nsIDocShellTreeItem> ancestorOfTarget;
+    aTargetItem->GetSameTypeParent(getter_AddRefs(ancestorOfTarget));
+    if (ancestorOfTarget) {
+        do {
+            // aAccessingItem is not sandboxed if it is an ancestor of target.
+            if (SameCOMIdentity(aAccessingItem, ancestorOfTarget)) {
+                return false;
+            }
+            nsCOMPtr<nsIDocShellTreeItem> tempTreeItem;
+            ancestorOfTarget->GetSameTypeParent(getter_AddRefs(tempTreeItem));
+            tempTreeItem.swap(ancestorOfTarget);
+        } while (ancestorOfTarget);
+
+        // Otherwise, aAccessingItem is sandboxed from aTargetItem.
+        return true;
+    }
+
+    // aTargetItem is top level, is aAccessingItem the "one permitted sandboxed
+    // navigator", i.e. did aAccessingItem open aTargetItem?
+    nsCOMPtr<nsIDocShell> targetDocShell = do_QueryInterface(aTargetItem);
+    nsCOMPtr<nsIDocShell> permittedNavigator;
+    targetDocShell->
+        GetOnePermittedSandboxedNavigator(getter_AddRefs(permittedNavigator));
+    if (SameCOMIdentity(aAccessingItem, permittedNavigator)) {
+        return false;
+    }
+
+    // If SANDBOXED_TOPLEVEL_NAVIGATION flag is not on, aAccessingItem is
+    // not sandboxed from its top.
+    if (!(sandboxFlags & SANDBOXED_TOPLEVEL_NAVIGATION)) {
+        nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
+        aAccessingItem->GetSameTypeRootTreeItem(getter_AddRefs(rootTreeItem));
+        if (SameCOMIdentity(aTargetItem, rootTreeItem)) {
+            return false;
+        }
+    }
+
+    // Otherwise, aAccessingItem is sandboxed from aTargetItem.
+    return true;
 }
 
 NS_IMETHODIMP
@@ -3558,7 +3550,6 @@ nsDocShell::AddChild(nsIDocShellTreeItem * aChild)
     nsIDocument* doc = mContentViewer->GetDocument();
     if (!doc)
         return NS_OK;
-    const nsACString &parentCS = doc->GetDocumentCharacterSet();
 
     bool isWyciwyg = false;
 
@@ -3573,17 +3564,12 @@ nsDocShell::AddChild(nsIDocShellTreeItem * aChild)
         // the actual source charset, which is what we're trying to
         // expose here.
 
-        // set the child's parentCharset
-        res = childAsDocShell->SetParentCharset(parentCS);
-        if (NS_FAILED(res))
-            return NS_OK;
-
+        const nsACString &parentCS = doc->GetDocumentCharacterSet();
         int32_t charsetSource = doc->GetDocumentCharacterSetSource();
-
         // set the child's parentCharset
-        res = childAsDocShell->SetParentCharsetSource(charsetSource);
-        if (NS_FAILED(res))
-            return NS_OK;
+        childAsDocShell->SetParentCharset(parentCS,
+                                          charsetSource,
+                                          doc->NodePrincipal());
     }
 
     // printf("### 1 >>> Adding child. Parent CS = %s. ItemType = %d.\n", NS_LossyConvertUTF16toASCII(parentCS).get(), mItemType);
@@ -4602,15 +4588,9 @@ nsDocShell::LoadErrorPage(nsIURI *aURI, const PRUnichar *aURL,
     errorPageUrl.AppendASCII(escapedDescription.get());
 
     // Append the manifest URL if the error comes from an app.
-    uint32_t appId;
-    nsresult rv = GetAppId(&appId);
-    if (appId != nsIScriptSecurityManager::NO_APP_ID &&
-        appId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
-      nsCOMPtr<nsIAppsService> appsService =
-        do_GetService(APPS_SERVICE_CONTRACTID);
-      NS_ASSERTION(appsService, "No AppsService available");
-      nsAutoString manifestURL;
-      appsService->GetManifestURLByLocalId(appId, manifestURL);
+    nsString manifestURL;
+    nsresult rv = GetAppManifestURL(manifestURL);
+    if (manifestURL.Length() > 0) {
       nsCString manifestParam;
       SAFE_ESCAPE(manifestParam,
                   NS_ConvertUTF16toUTF8(manifestURL).get(),
@@ -5055,6 +5035,8 @@ nsDocShell::Destroy()
 
     SetTreeOwner(nullptr);
 
+    mOnePermittedSandboxedNavigator = nullptr;
+
     // required to break ref cycle
     mSecurityUI = nullptr;
 
@@ -5400,6 +5382,31 @@ NS_IMETHODIMP
 nsDocShell::GetSandboxFlags(uint32_t  *aSandboxFlags)
 {
     *aSandboxFlags = mSandboxFlags;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::SetOnePermittedSandboxedNavigator(nsIDocShell* aSandboxedNavigator)
+{
+    if (mOnePermittedSandboxedNavigator) {
+        NS_ERROR("One Permitted Sandboxed Navigator should only be set once.");
+        return NS_OK;
+    }
+
+    mOnePermittedSandboxedNavigator = do_GetWeakReference(aSandboxedNavigator);
+    NS_ASSERTION(mOnePermittedSandboxedNavigator,
+             "One Permitted Sandboxed Navigator must support weak references.");
+
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetOnePermittedSandboxedNavigator(nsIDocShell** aSandboxedNavigator)
+{
+    NS_ENSURE_ARG_POINTER(aSandboxedNavigator);
+    nsCOMPtr<nsIDocShell> permittedNavigator =
+        do_QueryReferent(mOnePermittedSandboxedNavigator);
+    NS_IF_ADDREF(*aSandboxedNavigator = permittedNavigator);
     return NS_OK;
 }
 
@@ -7007,9 +7014,12 @@ nsDocShell::EndPageLoad(nsIWebProgress * aProgress,
                 aStatus = NS_ERROR_OFFLINE;
             DisplayLoadError(aStatus, url, nullptr, aChannel);
         }
-  } // if we have a host
+    } // if we have a host
+    else if (url && NS_SUCCEEDED(aStatus)) {
+        mozilla::net::SeerLearnRedirect(url, aChannel, this);
+    }
 
-  return NS_OK;
+    return NS_OK;
 }
 
 
@@ -8257,11 +8267,9 @@ nsDocShell::SetupNewViewer(nsIContentViewer * aNewViewer)
                       NS_ERROR_FAILURE);
     nsCOMPtr<nsIDocShell> parent(do_QueryInterface(parentAsItem));
 
-    nsAutoCString defaultCharset;
     nsAutoCString forceCharset;
     nsAutoCString hintCharset;
     int32_t hintCharsetSource;
-    nsAutoCString prevDocCharset;
     int32_t minFontSize;
     float textZoom;
     float pageZoom;
@@ -8300,9 +8308,6 @@ nsDocShell::SetupNewViewer(nsIContentViewer * aNewViewer)
             newMUDV = do_QueryInterface(aNewViewer,&rv);
             if (newMUDV) {
                 NS_ENSURE_SUCCESS(oldMUDV->
-                                  GetDefaultCharacterSet(defaultCharset),
-                                  NS_ERROR_FAILURE);
-                NS_ENSURE_SUCCESS(oldMUDV->
                                   GetForceCharacterSet(forceCharset),
                                   NS_ERROR_FAILURE);
                 NS_ENSURE_SUCCESS(oldMUDV->
@@ -8322,9 +8327,6 @@ nsDocShell::SetupNewViewer(nsIContentViewer * aNewViewer)
                                   NS_ERROR_FAILURE);
                 NS_ENSURE_SUCCESS(oldMUDV->
                                   GetAuthorStyleDisabled(&styleDisabled),
-                                  NS_ERROR_FAILURE);
-                NS_ENSURE_SUCCESS(oldMUDV->
-                                  GetPrevDocCharacterSet(prevDocCharset),
                                   NS_ERROR_FAILURE);
             }
         }
@@ -8380,16 +8382,12 @@ nsDocShell::SetupNewViewer(nsIContentViewer * aNewViewer)
     // If we have old state to copy, set the old state onto the new content
     // viewer
     if (newMUDV) {
-        NS_ENSURE_SUCCESS(newMUDV->SetDefaultCharacterSet(defaultCharset),
-                          NS_ERROR_FAILURE);
         NS_ENSURE_SUCCESS(newMUDV->SetForceCharacterSet(forceCharset),
                           NS_ERROR_FAILURE);
         NS_ENSURE_SUCCESS(newMUDV->SetHintCharacterSet(hintCharset),
                           NS_ERROR_FAILURE);
         NS_ENSURE_SUCCESS(newMUDV->
                           SetHintCharacterSetSource(hintCharsetSource),
-                          NS_ERROR_FAILURE);
-        NS_ENSURE_SUCCESS(newMUDV->SetPrevDocCharacterSet(prevDocCharset),
                           NS_ERROR_FAILURE);
         NS_ENSURE_SUCCESS(newMUDV->SetMinFontSize(minFontSize),
                           NS_ERROR_FAILURE);
@@ -8719,8 +8717,10 @@ nsDocShell::InternalLoad(nsIURI * aURI,
     if (aWindowTarget && *aWindowTarget) {
         // Locate the target DocShell.
         nsCOMPtr<nsIDocShellTreeItem> targetItem;
-        FindItemWithName(aWindowTarget, nullptr, this,
-                         getter_AddRefs(targetItem));
+        if (FindItemWithName(aWindowTarget, nullptr, this,
+               getter_AddRefs(targetItem)) == NS_ERROR_DOM_INVALID_ACCESS_ERR) {
+            return NS_ERROR_DOM_INVALID_ACCESS_ERR;
+        }
 
         targetDocShell = do_QueryInterface(targetItem);
         // If the targetDocShell doesn't exist, then this is a new docShell
@@ -8751,7 +8751,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
 
     nsISupports* context = requestingElement;
     if (!context) {
-        context = nsGlobalWindow::ToSupports(mScriptGlobal);
+        context = ToSupports(mScriptGlobal);
     }
 
     // XXXbz would be nice to know the loading principal here... but we don't
@@ -8847,19 +8847,17 @@ nsDocShell::InternalLoad(nsIURI * aURI,
         
         bool isNewWindow = false;
         if (!targetDocShell) {
-            // If the docshell's document is sandboxed and was trying to
-            // navigate/load a frame it wasn't allowed to access, the
-            // FindItemWithName above will have returned null for the target
-            // item - we don't want to actually open a new window in this case
-            // though. Check if we are sandboxed and bail out here if so.
+            // If the docshell's document is sandboxed, only open a new window
+            // if the document's SANDBOXED_AUXILLARY_NAVIGATION flag is not set.
+            // (i.e. if allow-popups is specified)
             NS_ENSURE_TRUE(mContentViewer, NS_ERROR_FAILURE);
             nsIDocument* doc = mContentViewer->GetDocument();
             uint32_t sandboxFlags = 0;
 
             if (doc) {
                 sandboxFlags = doc->GetSandboxFlags();
-                if (sandboxFlags & SANDBOXED_NAVIGATION) {
-                    return NS_ERROR_FAILURE;
+                if (sandboxFlags & SANDBOXED_AUXILIARY_NAVIGATION) {
+                    return NS_ERROR_DOM_INVALID_ACCESS_ERR;
                 }
             }
 
@@ -9407,6 +9405,9 @@ nsDocShell::InternalLoad(nsIURI * aURI,
       srcdoc = aSrcdoc;
     else
       srcdoc = NullString();
+
+    mozilla::net::SeerPredict(aURI, nullptr, nsINetworkSeer::PREDICT_LOAD,
+                              this, nullptr);
 
     nsCOMPtr<nsIRequest> req;
     rv = DoURILoad(aURI, aReferrer,
@@ -12464,6 +12465,9 @@ nsDocShell::OnOverLink(nsIContent* aContent,
   rv = textToSubURI->UnEscapeURIForUI(charset, spec, uStr);    
   NS_ENSURE_SUCCESS(rv, rv);
 
+  mozilla::net::SeerPredict(aURI, mCurrentURI, nsINetworkSeer::PREDICT_LINK,
+                            this, nullptr);
+
   if (browserChrome2) {
     nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aContent);
     rv = browserChrome2->SetStatusWithContext(nsIWebBrowserChrome::STATUS_LINK,
@@ -12732,6 +12736,25 @@ nsDocShell::GetAppId(uint32_t* aAppId)
 }
 
 NS_IMETHODIMP
+nsDocShell::GetAppManifestURL(nsAString& aAppManifestURL)
+{
+  uint32_t appId;
+  GetAppId(&appId);
+
+  if (appId != nsIScriptSecurityManager::NO_APP_ID &&
+      appId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
+    nsCOMPtr<nsIAppsService> appsService =
+      do_GetService(APPS_SERVICE_CONTRACTID);
+    NS_ASSERTION(appsService, "No AppsService available");
+    appsService->GetManifestURLByLocalId(appId, aAppManifestURL);
+  } else {
+    aAppManifestURL.SetLength(0);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDocShell::GetAsyncPanZoomEnabled(bool* aOut)
 {
     if (TabChild* tabChild = TabChild::GetFrom(this)) {
@@ -12760,4 +12783,16 @@ nsDocShell::HasUnloadedParent()
         currentTreeItem.swap(parentTreeItem);
     }
     return false;
+}
+
+bool
+nsDocShell::IsInvisible()
+{
+    return mInvisible;
+}
+
+void
+nsDocShell::SetInvisible(bool aInvisible)
+{
+    mInvisible = aInvisible;
 }

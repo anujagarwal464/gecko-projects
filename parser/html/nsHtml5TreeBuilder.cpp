@@ -1766,15 +1766,16 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
             attributes = nullptr;
             NS_HTML5_BREAK(starttagloop);
           }
-          case NS_HTML5TREE_BUILDER_BASE: {
+          case NS_HTML5TREE_BUILDER_TEMPLATE: {
             errFooBetweenHeadAndBody(name);
             pushHeadPointerOntoStack();
-            appendVoidElementToCurrentMayFoster(elementName, attributes);
-            selfClosing = false;
-            pop();
+            nsHtml5StackNode* headOnStack = stack[currentPtr];
+            startTagTemplateInHead(elementName, attributes);
+            removeFromStack(headOnStack);
             attributes = nullptr;
             NS_HTML5_BREAK(starttagloop);
           }
+          case NS_HTML5TREE_BUILDER_BASE:
           case NS_HTML5TREE_BUILDER_LINK_OR_BASEFONT_OR_BGSOUND: {
             errFooBetweenHeadAndBody(name);
             pushHeadPointerOntoStack();
@@ -2925,6 +2926,10 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
       }
       case NS_HTML5TREE_BUILDER_AFTER_HEAD: {
         switch(group) {
+          case NS_HTML5TREE_BUILDER_TEMPLATE: {
+            endTagTemplateInHead();
+            NS_HTML5_BREAK(endtagloop);
+          }
           case NS_HTML5TREE_BUILDER_HTML:
           case NS_HTML5TREE_BUILDER_BODY:
           case NS_HTML5TREE_BUILDER_BR: {
@@ -3254,14 +3259,29 @@ nsHtml5TreeBuilder::resetTheInsertionMode()
     ns = node->ns;
     if (!i) {
       if (!(contextNamespace == kNameSpaceID_XHTML && (contextName == nsHtml5Atoms::td || contextName == nsHtml5Atoms::th))) {
-        name = contextName;
-        ns = contextNamespace;
+        if (fragment) {
+          name = contextName;
+          ns = contextNamespace;
+        }
       } else {
         mode = framesetOk ? NS_HTML5TREE_BUILDER_FRAMESET_OK : NS_HTML5TREE_BUILDER_IN_BODY;
         return;
       }
     }
     if (nsHtml5Atoms::select == name) {
+      int32_t ancestorIndex = i;
+      while (ancestorIndex > 0) {
+        nsHtml5StackNode* ancestor = stack[ancestorIndex--];
+        if (kNameSpaceID_XHTML == ancestor->ns) {
+          if (nsHtml5Atoms::template_ == ancestor->name) {
+            break;
+          }
+          if (nsHtml5Atoms::table == ancestor->name) {
+            mode = NS_HTML5TREE_BUILDER_IN_SELECT_IN_TABLE;
+            return;
+          }
+        }
+      }
       mode = NS_HTML5TREE_BUILDER_IN_SELECT;
       return;
     } else if (nsHtml5Atoms::td == name || nsHtml5Atoms::th == name) {

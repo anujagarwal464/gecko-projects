@@ -7,9 +7,12 @@
 #ifndef AudioDestinationNode_h_
 #define AudioDestinationNode_h_
 
+#include "mozilla/dom/AudioChannelBinding.h"
 #include "AudioNode.h"
 #include "nsIDOMEventListener.h"
 #include "nsIAudioChannelAgent.h"
+#include "AudioChannelCommon.h"
+#include "nsWeakReference.h"
 
 namespace mozilla {
 namespace dom {
@@ -19,6 +22,7 @@ class AudioContext;
 class AudioDestinationNode : public AudioNode
                            , public nsIDOMEventListener
                            , public nsIAudioChannelAgentCallback
+                           , public nsSupportsWeakReference
 {
 public:
   // This node type knows what MediaStreamGraph to use based on
@@ -59,13 +63,22 @@ public:
   // nsIAudioChannelAgentCallback
   NS_IMETHOD CanPlayChanged(int32_t aCanPlay);
 
+  AudioChannel MozAudioChannelType() const;
+  void SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv);
+
 private:
+  bool CheckAudioChannelPermissions(AudioChannel aValue);
+  void CreateAudioChannelAgent();
+
   void SetCanPlay(bool aCanPlay);
 
   SelfReference<AudioDestinationNode> mOfflineRenderingRef;
   uint32_t mFramesToProduce;
 
   nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
+
+  // Audio Channel Type.
+  AudioChannel mAudioChannel;
 };
 
 }

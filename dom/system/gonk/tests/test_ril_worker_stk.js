@@ -61,6 +61,31 @@ function newUint8SupportOutgoingIndexWorker() {
 }
 
 // Test RIL requests related to STK.
+/**
+ * Verify if RIL.sendStkTerminalProfile be called.
+ */
+add_test(function test_if_send_stk_terminal_profile() {
+  let worker = newUint8Worker();
+  let profileSend = false;
+  worker.RIL.sendStkTerminalProfile = function (data) {
+    profileSend = true;
+  };
+
+  let iccStatus = {
+    gsmUmtsSubscriptionAppIndex: 0,
+    apps: [{
+      app_state: CARD_APPSTATE_READY,
+      app_type: CARD_APPTYPE_USIM
+    }],
+  };
+  worker.RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD = false;
+
+  worker.RIL._processICCStatus(iccStatus);
+
+  do_check_eq(profileSend, false);
+
+  run_next_test();
+});
 
 /**
  * Verify RIL.sendStkTerminalProfile
@@ -739,6 +764,110 @@ add_test(function test_stk_proactive_command_provide_local_information() {
 });
 
 /**
+ * Verify Proactive command : BIP Messages
+ */
+add_test(function test_stk_proactive_command_open_channel() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
+
+  // Open Channel
+  let open_channel = [
+    0xD0,
+    0x0F,
+    0x81, 0x03, 0x01, 0x16, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x04, 0x4F, 0x70, 0x65, 0x6E //alpha id: "Open"
+  ];
+
+  for (let i = 0; i < open_channel.length; i++) {
+    pduHelper.writeHexOctet(open_channel[i]);
+  }
+
+  let berTlv = berHelper.decode(open_channel.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_OPEN_CHANNEL);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Open");
+
+  // Close Channel
+  let close_channel = [
+    0xD0,
+    0x10,
+    0x81, 0x03, 0x01, 0x17, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x43, 0x6C, 0x6F, 0x73, 0x65 //alpha id: "Close"
+  ];
+
+  for (let i = 0; i < close_channel.length; i++) {
+    pduHelper.writeHexOctet(close_channel[i]);
+  }
+
+  berTlv = berHelper.decode(close_channel.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_CLOSE_CHANNEL);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Close");
+
+  // Receive Data
+  let receive_data = [
+    0XD0,
+    0X12,
+    0x81, 0x03, 0x01, 0x18, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x07, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65 //alpha id: "Receive"
+  ];
+
+  for (let i = 0; i < receive_data.length; i++) {
+    pduHelper.writeHexOctet(receive_data[i]);
+  }
+
+  berTlv = berHelper.decode(receive_data.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_RECEIVE_DATA);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Receive");
+
+  // Send Data
+  let send_data = [
+    0xD0,
+    0x0F,
+    0x81, 0x03, 0x01, 0x19, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x04, 0x53, 0x65, 0x6E, 0x64 //alpha id: "Send"
+  ];
+
+  for (let i = 0; i < send_data.length; i++) {
+    pduHelper.writeHexOctet(send_data[i]);
+  }
+
+  berTlv = berHelper.decode(send_data.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SEND_DATA);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Send");
+
+  run_next_test();
+});
+
+/**
  * Verify Event Download Command : Location Status
  */
 add_test(function test_stk_event_download_location_status() {
@@ -968,6 +1097,63 @@ add_test(function test_stk_event_download_idle_screen_available() {
 
   let event = {
     eventType: STK_EVENT_TYPE_IDLE_SCREEN_AVAILABLE
+  };
+  worker.RIL.sendStkEventDownload({
+    event: event
+  });
+});
+
+/**
+ * Verify Event Downloaded Command :Browser Termination
+ */
+add_test(function test_stk_event_download_browser_termination() {
+  let worker = newUint8SupportOutgoingIndexWorker();
+  let buf = worker.Buf;
+  let pduHelper = worker.GsmPDUHelper;
+
+  buf.sendParcel = function () {
+    // Type
+    do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+
+    // Token : we don't care
+    this.readInt32();
+
+    // Data Size, 24 = 2 * ( 2+TLV_DEVICE_ID(4)+TLV_EVENT_LIST_SIZE(3)
+    //                        +TLV_BROWSER_TERMINATION_CAUSE(3) )
+    do_check_eq(this.readInt32(), 24);
+
+    // BER tag
+    do_check_eq(pduHelper.readHexOctet(), BER_EVENT_DOWNLOAD_TAG);
+
+    // BER length, 10 = TLV_DEVICE_ID(4)+TLV_EVENT_LIST_SIZE(3)
+    //                  ++TLV_BROWSER_TERMINATION_CAUSE(3)
+    do_check_eq(pduHelper.readHexOctet(), 10);
+
+    // Device Identities, Type-Length-Value(Source ID-Destination ID)
+    do_check_eq(pduHelper.readHexOctet(), COMPREHENSIONTLV_TAG_DEVICE_ID |
+                                          COMPREHENSIONTLV_FLAG_CR);
+    do_check_eq(pduHelper.readHexOctet(), 2);
+    do_check_eq(pduHelper.readHexOctet(), STK_DEVICE_ID_ME);
+    do_check_eq(pduHelper.readHexOctet(), STK_DEVICE_ID_SIM);
+
+    // Event List, Type-Length-Value
+    do_check_eq(pduHelper.readHexOctet(), COMPREHENSIONTLV_TAG_EVENT_LIST |
+                                          COMPREHENSIONTLV_FLAG_CR);
+    do_check_eq(pduHelper.readHexOctet(), 1);
+    do_check_eq(pduHelper.readHexOctet(), STK_EVENT_TYPE_BROWSER_TERMINATION);
+
+    // Browser Termination Case, Type-Length-Value
+    do_check_eq(pduHelper.readHexOctet(), COMPREHENSIONTLV_TAG_BROWSER_TERMINATION_CAUSE |
+                                          COMPREHENSIONTLV_FLAG_CR);
+    do_check_eq(pduHelper.readHexOctet(), 1);
+    do_check_eq(pduHelper.readHexOctet(), STK_BROWSER_TERMINATION_CAUSE_USER);
+
+    run_next_test();
+  };
+
+  let event = {
+    eventType: STK_EVENT_TYPE_BROWSER_TERMINATION,
+    terminationCause: STK_BROWSER_TERMINATION_CAUSE_USER
   };
   worker.RIL.sendStkEventDownload({
     event: event

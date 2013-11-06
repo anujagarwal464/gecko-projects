@@ -418,7 +418,7 @@ nsComputedDOMStyle::GetStyleContextForElement(Element* aElement,
   // set.  Using the pres shell from the content also means that any
   // content that's actually *in* a document will get the style from the
   // correct document.
-  nsIPresShell *presShell = GetPresShellForContent(aElement);
+  nsCOMPtr<nsIPresShell> presShell = GetPresShellForContent(aElement);
   if (!presShell) {
     presShell = aPresShell;
     if (!presShell)
@@ -2760,23 +2760,38 @@ nsComputedDOMStyle::DoGetVerticalAlign()
 }
 
 CSSValue*
-nsComputedDOMStyle::DoGetTextAlign()
+nsComputedDOMStyle::CreateTextAlignValue(uint8_t aAlign, bool aAlignTrue,
+                                         const int32_t aTable[])
 {
   nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
-  val->SetIdent(
-    nsCSSProps::ValueToKeywordEnum(StyleText()->mTextAlign,
-                                   nsCSSProps::kTextAlignKTable));
-  return val;
+  val->SetIdent(nsCSSProps::ValueToKeywordEnum(aAlign, aTable));
+  if (!aAlignTrue) {
+    return val;
+  }
+
+  nsROCSSPrimitiveValue* first = new nsROCSSPrimitiveValue;
+  first->SetIdent(eCSSKeyword_true);
+
+  nsDOMCSSValueList* valueList = GetROCSSValueList(false);
+  valueList->AppendCSSValue(first);
+  valueList->AppendCSSValue(val);
+  return valueList;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetTextAlign()
+{
+  const nsStyleText* style = StyleText();
+  return CreateTextAlignValue(style->mTextAlign, style->mTextAlignTrue,
+                              nsCSSProps::kTextAlignKTable);
 }
 
 CSSValue*
 nsComputedDOMStyle::DoGetTextAlignLast()
 {
-  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
-  val->SetIdent(
-    nsCSSProps::ValueToKeywordEnum(StyleText()->mTextAlignLast,
-                                   nsCSSProps::kTextAlignLastKTable));
-  return val;
+  const nsStyleText* style = StyleText();
+  return CreateTextAlignValue(style->mTextAlignLast, style->mTextAlignLastTrue,
+                              nsCSSProps::kTextAlignLastKTable);
 }
 
 CSSValue*

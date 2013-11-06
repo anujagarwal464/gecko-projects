@@ -8,7 +8,7 @@
 /*****************************************************************************/
 
 #include <stdint.h>
-const PRTime gPreloadListExpirationTime = INT64_C(1391854333088000);
+const PRTime gPreloadListExpirationTime = INT64_C(1394273230288000);
 
 class nsSTSPreload
 {
@@ -30,6 +30,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "blog.cyveillance.com", true },
   { "blog.linode.com", false },
   { "blog.torproject.org", false },
+  { "blueseed.co", false },
   { "bugzilla.mozilla.org", true },
   { "business.medbank.com.mt", true },
   { "carezone.com", false },
@@ -43,6 +44,9 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "crate.io", true },
   { "crm.onlime.ch", false },
   { "crypto.cat", false },
+  { "cupcake.io", true },
+  { "cupcake.is", true },
+  { "cybozu.com", true },
   { "cyphertite.com", true },
   { "davidlyness.com", true },
   { "developer.mydigipass.com", false },
@@ -78,7 +82,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "lookout.com", false },
   { "lumi.do", false },
   { "luneta.nearbuysystems.com", false },
-  { "makeyourlaws.org", true },
+  { "makeyourlaws.org", false },
   { "manager.linode.com", false },
   { "mattmccutchen.net", true },
   { "mediacru.sh", true },
@@ -99,13 +103,12 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "paymill.de", true },
   { "piratenlogin.de", true },
   { "pixi.me", true },
-  { "rapidresearch.me", true },
   { "riseup.net", true },
   { "roundcube.mayfirst.org", false },
   { "sandbox.mydigipass.com", false },
   { "securityheaders.com", true },
   { "shodan.io", true },
-  { "silentcircle.com", true },
+  { "silentcircle.com", false },
   { "simple.com", false },
   { "squareup.com", false },
   { "stocktrade.de", false },
@@ -113,6 +116,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "strongest-privacy.com", true },
   { "support.mayfirst.org", false },
   { "surkatty.org", true },
+  { "tent.io", true },
   { "therapynotes.com", false },
   { "twitter.com", false },
   { "ubertt.org", true },
@@ -132,7 +136,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "www.irccloud.com", false },
   { "www.linode.com", false },
   { "www.lookout.com", false },
-  { "www.makeyourlaws.org", true },
+  { "www.makeyourlaws.org", false },
   { "www.mydigipass.com", false },
   { "www.mylookout.com", false },
   { "www.noisebridge.net", false },

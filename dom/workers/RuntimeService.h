@@ -145,8 +145,9 @@ public:
   ResumeWorkersForWindow(nsPIDOMWindow* aWindow);
 
   nsresult
-  CreateSharedWorker(JSContext* aCx, nsPIDOMWindow* aWindow,
-                     const nsAString& aScriptURL, const nsAString& aName,
+  CreateSharedWorker(const GlobalObject& aGlobal,
+                     const nsAString& aScriptURL,
+                     const nsAString& aName,
                      SharedWorker** aSharedWorker);
 
   void
@@ -181,7 +182,8 @@ public:
   }
 
   static void
-  SetDefaultJSContextOptions(uint32_t aContentOptions, uint32_t aChromeOptions)
+  SetDefaultJSContextOptions(const JS::ContextOptions& aContentOptions,
+                             const JS::ContextOptions& aChromeOptions)
   {
     AssertIsOnMainThread();
     sDefaultJSSettings.content.options = aContentOptions;
@@ -238,6 +240,9 @@ public:
 
   void
   GarbageCollectAllWorkers(bool aShrinking);
+
+  bool
+  WorkersDumpEnabled();
 
 private:
   RuntimeService();

@@ -18,8 +18,8 @@ Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
 XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
   "resource:///modules/sessionstore/SessionStore.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "_SessionFile",
-  "resource:///modules/sessionstore/_SessionFile.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "SessionFile",
+  "resource:///modules/sessionstore/SessionFile.jsm");
 
 // Minimal interval between two save operations (in milliseconds).
 XPCOMUtils.defineLazyGetter(this, "gInterval", function () {
@@ -202,20 +202,18 @@ let SessionSaverInternal = {
       }
     }
 
-#ifndef XP_MACOSX
-    // Don't save invalid states.
-    // Looks like we currently have private windows, only.
-    if (state.windows.length == 0) {
-      stopWatchCancel("COLLECT_DATA_MS", "COLLECT_DATA_LONGEST_OP_MS");
-      return;
-    }
-#endif
-
     // Remove private windows from the list of closed windows.
     for (let i = state._closedWindows.length - 1; i >= 0; i--) {
       if (state._closedWindows[i].isPrivate) {
         state._closedWindows.splice(i, 1);
       }
+    }
+
+    // Make sure that we keep the previous session if we started with a single
+    // private window and no non-private windows have been opened, yet.
+    if (state.deferredInitialState) {
+      state.windows = state.deferredInitialState.windows || [];
+      delete state.deferredInitialState;
     }
 
 #ifndef XP_MACOSX
@@ -292,7 +290,7 @@ let SessionSaverInternal = {
     // Write (atomically) to a session file, using a tmp file. Once the session
     // file is successfully updated, save the time stamp of the last save and
     // notify the observers.
-    _SessionFile.write(data).then(() => {
+    SessionFile.write(data).then(() => {
       this.updateLastSaveTime();
       notify(null, "sessionstore-state-write-complete");
     }, Cu.reportError);

@@ -13,11 +13,17 @@
 #include "gfxPath.h"
 #include "mozilla/dom/SVGPathElementBinding.h"
 #include "nsCOMPtr.h"
+#include "nsComputedDOMStyle.h"
 #include "nsGkAtoms.h"
+#include "nsStyleConsts.h"
+#include "nsStyleStruct.h"
+#include "SVGContentUtils.h"
 
 class gfxContext;
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(Path)
+
+using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace dom {
@@ -53,7 +59,7 @@ SVGPathElement::PathLength()
 float
 SVGPathElement::GetTotalLength(ErrorResult& rv)
 {
-  nsRefPtr<gfxFlattenedPath> flat = GetFlattenedPath(gfxMatrix());
+  nsRefPtr<gfxPath> flat = GetPath(gfxMatrix());
 
   if (!flat) {
     rv.Throw(NS_ERROR_FAILURE);
@@ -66,7 +72,7 @@ SVGPathElement::GetTotalLength(ErrorResult& rv)
 already_AddRefed<nsISVGPoint>
 SVGPathElement::GetPointAtLength(float distance, ErrorResult& rv)
 {
-  nsRefPtr<gfxFlattenedPath> flat = GetFlattenedPath(gfxMatrix());
+  nsRefPtr<gfxPath> flat = GetPath(gfxMatrix());
   if (!flat) {
     rv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -292,10 +298,10 @@ SVGPathElement::IsAttributeMapped(const nsIAtom* name) const
     SVGPathElementBase::IsAttributeMapped(name);
 }
 
-already_AddRefed<gfxFlattenedPath>
-SVGPathElement::GetFlattenedPath(const gfxMatrix &aMatrix)
+already_AddRefed<gfxPath>
+SVGPathElement::GetPath(const gfxMatrix &aMatrix)
 {
-  return mD.GetAnimValue().ToFlattenedPath(aMatrix);
+  return mD.GetAnimValue().ToPath(aMatrix);
 }
 
 //----------------------------------------------------------------------
@@ -341,13 +347,51 @@ SVGPathElement::GetPathLengthScale(PathLengthScaleForType aFor)
         // we need to take that into account.
         matrix = PrependLocalTransformsTo(matrix);
       }
-      nsRefPtr<gfxFlattenedPath> path = GetFlattenedPath(matrix);
+      nsRefPtr<gfxPath> path = GetPath(matrix);
       if (path) {
         return path->GetLength() / authorsPathLengthEstimate;
       }
     }
   }
   return 1.0;
+}
+
+TemporaryRef<Path>
+SVGPathElement::BuildPath()
+{
+  // The Moz2D PathBuilder that our SVGPathData will be using only cares about
+  // the fill rule. However, in order to fulfill the requirements of the SVG
+  // spec regarding zero length sub-paths when square line caps are in use,
+  // SVGPathData needs to know our stroke-linecap style and, if "square", then
+  // also our stroke width. See the comment for
+  // ApproximateZeroLengthSubpathSquareCaps for more info.
+
+  uint8_t strokeLineCap = NS_STYLE_STROKE_LINECAP_BUTT;
+  Float strokeWidth = 0;
+
+  nsRefPtr<nsStyleContext> styleContext =
+    nsComputedDOMStyle::GetStyleContextForElementNoFlush(this, nullptr, nullptr);
+  if (styleContext) {
+    const nsStyleSVG* style = styleContext->StyleSVG();
+    // Note: the path that we return may be used for hit-testing, and SVG
+    // exposes hit-testing of strokes that are not actually painted. For that
+    // reason we do not check for eStyleSVGPaintType_None or check the stroke
+    // opacity here.
+    if (style->mStrokeLinecap == NS_STYLE_STROKE_LINECAP_SQUARE) {
+      strokeLineCap = style->mStrokeLinecap;
+      strokeWidth = GetStrokeWidth();
+    }
+  }
+
+  // The fill rule that we pass must be the current
+  // computed value of our CSS 'fill-rule' property if the path that we return
+  // will be used for painting or hit-testing. For all other uses (bounds
+  // calculatons, length measurement, position-at-offset calculations) the fill
+  // rule that we pass doesn't matter. As a result we can just pass the current
+  // computed value regardless of who's calling us, or what they're going to do
+  // with the path that we return.
+
+  return mD.GetAnimValue().BuildPath(GetFillRule(), strokeLineCap, strokeWidth);
 }
 
 } // namespace dom

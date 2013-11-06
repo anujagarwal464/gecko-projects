@@ -994,6 +994,8 @@ public:
 
   NS_DECLARE_FRAME_PROPERTY(InvalidationRect, DestroyRect)
 
+  NS_DECLARE_FRAME_PROPERTY(RefusedAsyncAnimation, nullptr)
+
   /**
    * Return the distance between the border edge of the frame and the
    * margin edge of the frame.  Like GetRect(), returns the dimensions
@@ -2173,30 +2175,6 @@ public:
    */
   bool IsFlexItem() const
   { return mParent && mParent->GetType() == nsGkAtoms::flexContainerFrame; }
-
-  /**
-   * Mark this frame as using active layers. This marking will time out
-   * after a short period. This call does no immediate invalidation,
-   * but when the mark times out, we'll invalidate the frame's overflow
-   * area.
-   * @param aChangeHint nsChangeHint_UpdateTransformLayer or
-   * nsChangeHint_UpdateOpacityLayer or 0, depending on whether the change
-   * triggering the activity is a changing transform, changing opacity, or
-   * something else.
-   */
-  void MarkLayersActive(nsChangeHint aHint);
-  /**
-   * Return true if this frame is marked as needing active layers.
-   */
-  bool AreLayersMarkedActive();
-  /**
-   * Return true if this frame is marked as needing active layers.
-   * @param aChangeHint nsChangeHint_UpdateTransformLayer or
-   * nsChangeHint_UpdateOpacityLayer. We return true only if
-   * a change in the transform or opacity has been recorded while layers have
-   * been marked active for this frame.
-   */
-  bool AreLayersMarkedActive(nsChangeHint aChangeHint);
 
   /**
    * Marks all display items created by this frame as needing a repaint,

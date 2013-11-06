@@ -328,7 +328,8 @@ bool
 MouseScrollHandler::DispatchEvent(nsWindowBase* aWidget,
                                   WidgetGUIEvent& aEvent)
 {
-  return aWidget->DispatchWindowEvent(&aEvent);
+  // note, in metrofx, this will always return false for now
+  return aWidget->DispatchScrollEvent(&aEvent);
 }
 
 /* static */
@@ -644,7 +645,7 @@ MouseScrollHandler::HandleMouseWheelMessage(nsWindowBase* aWidget,
   // Grab the widget, it might be destroyed by a DOM event handler.
   nsRefPtr<nsWindowBase> kungFuDethGrip(aWidget);
 
-  WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, aWidget);
+  WidgetWheelEvent wheelEvent(true, NS_WHEEL_WHEEL, aWidget);
   if (mLastEventInfo.InitWheelEvent(aWidget, wheelEvent, modKeyState)) {
     PR_LOG(gMouseScrollLog, PR_LOG_ALWAYS,
       ("MouseScroll::HandleMouseWheelMessage: dispatching "
@@ -682,7 +683,7 @@ MouseScrollHandler::HandleScrollMessageAsMouseWheelMessage(nsWindowBase* aWidget
 
   ModifierKeyState modKeyState = GetModifierKeyState(aMessage);
 
-  WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, aWidget);
+  WidgetWheelEvent wheelEvent(true, NS_WHEEL_WHEEL, aWidget);
   double& delta =
    (aMessage == MOZ_WM_VSCROLL) ? wheelEvent.deltaY : wheelEvent.deltaX;
   int32_t& lineOrPageDelta =
@@ -836,7 +837,7 @@ MouseScrollHandler::LastEventInfo::RoundDelta(double aDelta)
 bool
 MouseScrollHandler::LastEventInfo::InitWheelEvent(
                                      nsWindowBase* aWidget,
-                                     WheelEvent& aWheelEvent,
+                                     WidgetWheelEvent& aWheelEvent,
                                      const ModifierKeyState& aModKeyState)
 {
   MOZ_ASSERT(aWheelEvent.message == NS_WHEEL_WHEEL);

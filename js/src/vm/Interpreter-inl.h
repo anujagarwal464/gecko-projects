@@ -391,7 +391,7 @@ GetObjectElementOperation(JSContext *cx, JSOp op, JSObject *objArg, bool wasObje
     } while (0);
 
 #if JS_HAS_NO_SUCH_METHOD
-    if (op == JSOP_CALLELEM && JS_UNLIKELY(res.isPrimitive()) && wasObject) {
+    if (op == JSOP_CALLELEM && JS_UNLIKELY(res.isUndefined()) && wasObject) {
         RootedObject obj(cx, objArg);
         if (!OnUnknownMethod(cx, obj, rref, res))
             return false;
@@ -606,7 +606,7 @@ BitLsh(JSContext *cx, HandleValue lhs, HandleValue rhs, int *out)
     int32_t left, right;
     if (!ToInt32(cx, lhs, &left) || !ToInt32(cx, rhs, &right))
         return false;
-    *out = left << (right & 31);
+    *out = uint32_t(left) << (right & 31);
     return true;
 }
 

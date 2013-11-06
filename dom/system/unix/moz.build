@@ -7,8 +7,10 @@
 MODULE = 'dom'
 
 if CONFIG['MOZ_ENABLE_QTMOBILITY']:
-    CPP_SOURCES += [
+    GENERATED_SOURCES += [
         'moc_QTMLocationProvider.cpp',
+    ]
+    SOURCES += [
         'QTMLocationProvider.cpp',
     ]
 
@@ -19,4 +21,6 @@ LIBXUL_LIBRARY = True
 LIBRARY_NAME = 'domsystemunix_s'
 
 EXPORT_LIBRARY = True
+
+include('/ipc/chromium/chromium-config.mozbuild')
 

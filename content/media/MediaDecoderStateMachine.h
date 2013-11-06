@@ -320,7 +320,13 @@ public:
   void SetFragmentEndTime(int64_t aEndTime);
 
   // Drop reference to decoder.  Only called during shutdown dance.
-  void ReleaseDecoder() { mDecoder = nullptr; }
+  void ReleaseDecoder() {
+    MOZ_ASSERT(mReader);
+    if (mReader) {
+      mReader->ReleaseDecoder();
+    }
+    mDecoder = nullptr;
+  }
 
    // Called when a "MozAudioAvailable" event listener is added to the media
    // element. Called on the main thread.
@@ -497,13 +503,11 @@ private:
   void AudioLoop();
 
   // Sets internal state which causes playback of media to pause.
-  // The decoder monitor must be held. Called on the state machine,
-  // and decode threads.
+  // The decoder monitor must be held.
   void StopPlayback();
 
   // Sets internal state which causes playback of media to begin or resume.
-  // Must be called with the decode monitor held. Called on the state machine
-  // and decode threads.
+  // Must be called with the decode monitor held.
   void StartPlayback();
 
   // Moves the decoder into decoding state. Called on the state machine

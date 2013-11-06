@@ -117,6 +117,10 @@ var Appbar = {
 
       if (!BrowserUI.isStartTabVisible)
         typesArray.push("find-in-page");
+      if (ContextCommands.getPageSource())
+        typesArray.push("view-page-source");
+      if (ContextCommands.getStoreLink())
+        typesArray.push("ms-meta-data");
       if (ConsolePanelView.enabled)
         typesArray.push("open-error-console");
       if (!Services.metro.immersive)

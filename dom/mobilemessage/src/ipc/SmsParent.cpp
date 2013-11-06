@@ -62,7 +62,7 @@ MmsAttachmentDataToJSObject(JSContext* aContext,
                                            global,
                                            blob,
                                            &NS_GET_IID(nsIDOMBlob),
-                                           content.address());
+                                           &content);
   NS_ENSURE_SUCCESS(rv, nullptr);
   if (!JS_DefineProperty(aContext, obj, "content", content,
                          nullptr, nullptr, 0)) {
@@ -367,6 +367,8 @@ SmsParent::RecvPSmsRequestConstructor(PSmsRequestParent* aActor,
       return actor->DoRequest(aRequest.get_MarkMessageReadRequest());
     case IPCSmsRequest::TGetSegmentInfoForTextRequest:
       return actor->DoRequest(aRequest.get_GetSegmentInfoForTextRequest());
+    case IPCSmsRequest::TGetSmscAddressRequest:
+      return actor->DoRequest(aRequest.get_GetSmscAddressRequest());
     default:
       MOZ_CRASH("Unknown type!");
   }
@@ -451,8 +453,9 @@ SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
       nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
       NS_ENSURE_TRUE(smsService, true);
 
-      const SendSmsMessageRequest &data = aRequest.get_SendSmsMessageRequest();
-      smsService->Send(data.number(), data.message(), data.silent(), this);
+      const SendSmsMessageRequest &req = aRequest.get_SendSmsMessageRequest();
+      smsService->Send(req.serviceId(), req.number(), req.message(),
+                       req.silent(), this);
     }
     break;
   case SendMessageRequest::TSendMmsMessageRequest: {
@@ -461,14 +464,14 @@ SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
 
       AutoJSContext cx;
       JS::Rooted<JS::Value> params(cx);
-      if (!GetParamsFromSendMmsMessageRequest(
-              cx,
-              aRequest.get_SendMmsMessageRequest(),
-              params.address())) {
+      const SendMmsMessageRequest &req = aRequest.get_SendMmsMessageRequest();
+      if (!GetParamsFromSendMmsMessageRequest(cx,
+                                              req,
+                                              params.address())) {
         NS_WARNING("SmsRequestParent: Fail to build MMS params.");
         return true;
       }
-      mmsService->Send(params, this);
+      mmsService->Send(req.serviceId(), params, this);
     }
     break;
   default:
@@ -513,6 +516,23 @@ SmsRequestParent::DoRequest(const GetMessageRequest& aRequest)
 }
 
 bool
+SmsRequestParent::DoRequest(const GetSmscAddressRequest& aRequest)
+{
+  nsresult rv = NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
+  if (smsService) {
+    rv = smsService->GetSmscAddress(aRequest.serviceId(), this);
+  }
+
+  if (NS_FAILED(rv)) {
+    return NS_SUCCEEDED(NotifyGetSmscAddressFailed(nsIMobileMessageCallback::INTERNAL_ERROR));
+  }
+
+  return true;
+}
+
+bool
 SmsRequestParent::DoRequest(const DeleteMessageRequest& aRequest)
 {
   nsresult rv = NS_ERROR_FAILURE;
@@ -541,7 +561,7 @@ SmsRequestParent::DoRequest(const MarkMessageReadRequest& aRequest)
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
   if (dbService) {
     rv = dbService->MarkMessageRead(aRequest.messageId(), aRequest.value(),
-                                    this);
+                                    aRequest.sendReadReport(), this);
   }
 
   if (NS_FAILED(rv)) {
@@ -681,6 +701,18 @@ NS_IMETHODIMP
 SmsRequestParent::NotifyGetSegmentInfoForTextFailed(int32_t aError)
 {
   return SendReply(ReplyGetSegmentInfoForTextFail(aError));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyGetSmscAddress(const nsAString& aSmscAddress)
+{
+  return SendReply(ReplyGetSmscAddress(nsString(aSmscAddress)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyGetSmscAddressFailed(int32_t aError)
+{
+  return SendReply(ReplyGetSmscAddressFail(aError));
 }
 
 /*******************************************************************************

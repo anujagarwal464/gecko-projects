@@ -501,6 +501,7 @@ CompositorParent::ScheduleComposition()
 void
 CompositorParent::Composite()
 {
+  profiler_tracing("Paint", "Composite", TRACING_INTERVAL_START);
   PROFILER_LABEL("CompositorParent", "Composite");
   NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "Composite can only be called on the compositor thread");
@@ -547,6 +548,7 @@ CompositorParent::Composite()
                   15 + (int)(TimeStamp::Now() - mExpectedComposeTime).ToMilliseconds());
   }
 #endif
+  profiler_tracing("Paint", "Composite", TRACING_INTERVAL_END);
 }
 
 void

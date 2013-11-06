@@ -4,8 +4,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ifndef MOZ_JEMALLOC3
-FORCE_STATIC_LIB= 1
-
 ifeq ($(OS_ARCH),SunOS)
 ifndef GNU_CC
 MODULE_OPTIMIZE_FLAGS = -xO5
@@ -22,10 +20,9 @@ endif
 LOCAL_INCLUDES += -I$(topsrcdir)/memory/build
 
 # For non release/esr builds, enable (some) fatal jemalloc assertions.  This
-# helps us catch memory errors.  See bug 764192 for details on what
-# MOZ_TEMP_INVESTIGATION is for.
+# helps us catch memory errors.
 ifeq (,$(filter release esr,$(MOZ_UPDATE_CHANNEL)))
-DEFINES	+= -DMOZ_JEMALLOC_HARD_ASSERTS -DMOZ_TEMP_INVESTIGATION
+DEFINES	+= -DMOZ_JEMALLOC_HARD_ASSERTS
 endif
 
 DEFINES += -Dabort=moz_abort

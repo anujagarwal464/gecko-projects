@@ -164,6 +164,9 @@ pref("layout.spellcheckDefault", 0);
 /* new html5 forms */
 pref("dom.experimental_forms", true);
 pref("dom.forms.number", true);
+// Don't enable <input type=color> yet as we don't have a color picker
+// implemented for Android (bug 875750)
+pref("dom.forms.color", false);
 
 /* extension manager and xpinstall */
 pref("xpinstall.whitelist.add", "addons.mozilla.org");
@@ -728,6 +731,9 @@ pref("browser.chrome.dynamictoolbar", true);
 // 1: Show a current page url.
 pref("browser.chrome.titlebarMode", 0);
 
+// Hide common parts of URLs like "www." or "http://"
+pref("browser.urlbar.trimURLs", true);
+
 #ifdef MOZ_PKG_SPECIAL
 // Disable webgl on ARMv6 because running the reftests takes
 // too long for some reason (bug 843738)
@@ -759,13 +765,6 @@ pref("dom.payment.provider.0.type", "mozilla/payments/pay/v1");
 pref("dom.payment.provider.0.requestMethod", "GET");
 #endif
 
-#ifdef NIGHTLY_BUILD
-// Contacts API
-pref("dom.mozContacts.enabled", true);
-pref("dom.navigator-property.disable.mozContacts", false);
-pref("dom.global-constructor.disable.mozContact", false);
-#endif
-
 // Shortnumber matching needed for e.g. Brazil:
 // 01187654321 can be found with 87654321
 pref("dom.phonenumber.substringmatching.BR", 8);
@@ -787,3 +786,5 @@ pref("general.useragent.override.youtube.com", "Android; Tablet;#Android; Mobile
 // When true, phone number linkification is enabled.
 pref("browser.ui.linkify.phone", false);
 
+// Enables/disables Spatial Navigation
+pref("snav.enabled", true);

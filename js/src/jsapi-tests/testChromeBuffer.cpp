@@ -50,8 +50,6 @@ BEGIN_TEST(testChromeBuffer)
 
     if (!JS_AddNamedObjectRoot(cx, &trusted_glob, "trusted-global"))
         return false;
-    if (!JS_AddNamedObjectRoot(cx, &trusted_fun, "trusted-function"))
-        return false;
 
     JSFunction *fun;
 
@@ -70,10 +68,12 @@ BEGIN_TEST(testChromeBuffer)
                                                         "trusted", 1, &paramName, bytes, strlen(bytes),
                                                         "", 0));
             trusted_fun = JS_GetFunctionObject(fun);
+            if (!JS_AddNamedObjectRoot(cx, &trusted_fun, "trusted-function"))
+                return false;
         }
 
         JS::RootedValue v(cx, JS::ObjectValue(*trusted_fun));
-        CHECK(JS_WrapValue(cx, v.address()));
+        CHECK(JS_WrapValue(cx, &v));
 
         const char *paramName = "trusted";
         const char *bytes = "try {                                      "
@@ -114,7 +114,7 @@ BEGIN_TEST(testChromeBuffer)
         }
 
         JS::RootedValue v(cx, JS::ObjectValue(*trusted_fun));
-        CHECK(JS_WrapValue(cx, v.address()));
+        CHECK(JS_WrapValue(cx, &v));
 
         const char *paramName = "trusted";
         const char *bytes = "try {                                      "

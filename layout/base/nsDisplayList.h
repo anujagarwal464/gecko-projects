@@ -2611,6 +2611,25 @@ private:
 };
 
 /**
+ * A display item for subdocuments to capture the resolution from the presShell
+ * and ensure that it gets applied to all the right elements. This item creates
+ * a container layer.
+ */
+class nsDisplayResolution : public nsDisplayOwnLayer {
+public:
+  nsDisplayResolution(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                     nsDisplayList* aList, uint32_t aFlags);
+#ifdef NS_BUILD_REFCNT_LOGGING
+  virtual ~nsDisplayResolution();
+#endif
+
+  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                             LayerManager* aManager,
+                                             const ContainerParameters& aContainerParameters) MOZ_OVERRIDE;
+  NS_DISPLAY_DECL_NAME("Resolution", TYPE_RESOLUTION)
+};
+
+/**
  * A display item used to represent fixed position elements. This will ensure
  * the contents gets its own layer, and that the built layer will have
  * position-related metadata set on it.
@@ -2728,11 +2747,10 @@ public:
   // number does not include nsDisplayScrollInfoLayers. If this number is not 1
   // after merging, all the nsDisplayScrollLayers should flatten away.
   intptr_t GetScrollLayerCount();
-  intptr_t RemoveScrollLayerCount();
 
   virtual nsIFrame* GetScrolledFrame() { return mScrolledFrame; }
 
-private:
+protected:
   nsIFrame* mScrollFrame;
   nsIFrame* mScrolledFrame;
 };
@@ -2755,9 +2773,7 @@ public:
                            nsIFrame* aScrolledFrame, nsIFrame* aScrollFrame);
   NS_DISPLAY_DECL_NAME("ScrollInfoLayer", TYPE_SCROLL_INFO_LAYER)
 
-#ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayScrollInfoLayer();
-#endif
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                    LayerManager* aManager,
@@ -3010,12 +3026,12 @@ public:
                                     float aAppUnitsPerPixel,
                                     nsRect* aOutRect);
 
-  static gfxPoint3D GetDeltaToMozTransformOrigin(const nsIFrame* aFrame,
-                                                 float aAppUnitsPerPixel,
-                                                 const nsRect* aBoundsOverride);
+  static gfxPoint3D GetDeltaToTransformOrigin(const nsIFrame* aFrame,
+                                              float aAppUnitsPerPixel,
+                                              const nsRect* aBoundsOverride);
 
-  static gfxPoint3D GetDeltaToMozPerspectiveOrigin(const nsIFrame* aFrame,
-                                                   float aAppUnitsPerPixel);
+  static gfxPoint3D GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
+                                                float aAppUnitsPerPixel);
 
   /**
    * Returns the bounds of a frame as defined for resolving percentage
@@ -3039,19 +3055,19 @@ public:
                              float aAppUnitsPerPixel,
                              const nsRect* aBoundsOverride);
     FrameTransformProperties(const nsCSSValueList* aTransformList,
-                             const gfxPoint3D& aToMozOrigin,
+                             const gfxPoint3D& aToTransformOrigin,
                              const gfxPoint3D& aToPerspectiveOrigin,
                              nscoord aChildPerspective)
       : mFrame(nullptr)
       , mTransformList(aTransformList)
-      , mToMozOrigin(aToMozOrigin)
+      , mToTransformOrigin(aToTransformOrigin)
       , mToPerspectiveOrigin(aToPerspectiveOrigin)
       , mChildPerspective(aChildPerspective)
     {}
 
     const nsIFrame* mFrame;
     const nsCSSValueList* mTransformList;
-    const gfxPoint3D mToMozOrigin;
+    const gfxPoint3D mToTransformOrigin;
     const gfxPoint3D mToPerspectiveOrigin;
     nscoord mChildPerspective;
   };

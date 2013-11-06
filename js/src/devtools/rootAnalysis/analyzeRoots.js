@@ -236,7 +236,9 @@ function edgeCanGC(edge)
         var field = callee.Exp[0].Field;
         var csuName = field.FieldCSU.Type.Name;
         var fullFieldName = csuName + "." + field.Name[0];
-        return fieldCallCannotGC(csuName, fullFieldName) ? null : fullFieldName;
+        if (fieldCallCannotGC(csuName, fullFieldName))
+            return null;
+        return (fullFieldName in suppressedFunctions) ? null : fullFieldName;
     }
     assert(callee.Exp[0].Kind == "Var");
     var calleeName = callee.Exp[0].Variable.Name[0];
@@ -556,7 +558,10 @@ for (var nameIndex = start; nameIndex <= end; nameIndex++) {
     var name = xdb.read_key(nameIndex);
     var functionName = name.readString();
     var data = xdb.read_entry(name);
-    functionBodies = JSON.parse(data.readString());
+    xdb.free_string(name);
+    var json = data.readString();
+    xdb.free_string(data);
+    functionBodies = JSON.parse(json);
 
     for (var body of functionBodies)
         body.suppressed = [];
@@ -565,7 +570,4 @@ for (var nameIndex = start; nameIndex <= end; nameIndex++) {
             pbody.suppressed[id] = true;
     }
     processBodies(functionName);
-
-    xdb.free_string(name);
-    xdb.free_string(data);
 }

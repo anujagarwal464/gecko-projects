@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.GfxInfoThread;
@@ -255,6 +256,21 @@ public class GeckoAppShell
     public static native SurfaceBits getSurfaceBits(Surface surface);
 
     public static native void onFullScreenPluginHidden(View view);
+
+    public static class CreateShortcutFaviconLoadedListener implements OnFaviconLoadedListener {
+        private final String title;
+        private final String url;
+
+        public CreateShortcutFaviconLoadedListener(final String url, final String title) {
+            this.url = url;
+            this.title = title;
+        }
+
+        @Override
+        public void onFaviconLoaded(String pageUrl, String faviconURL, Bitmap favicon) {
+            GeckoAppShell.createShortcut(title, url, url, favicon, "");
+        }
+    }
 
     private static final class GeckoMediaScannerClient implements MediaScannerConnectionClient {
         private final String mFile;
@@ -1192,7 +1208,7 @@ public class GeckoAppShell
                                         context.getResources().getString(R.string.share_title)); 
         }
 
-        final Uri uri = normalizeUriScheme(Uri.parse(targetURI));
+        final Uri uri = normalizeUriScheme(targetURI.indexOf(':') >= 0 ? Uri.parse(targetURI) : new Uri.Builder().scheme(targetURI).build());
         if (mimeType.length() > 0) {
             Intent intent = getIntentForActionString(action);
             intent.setDataAndType(uri, mimeType);
@@ -1524,6 +1540,12 @@ public class GeckoAppShell
            However, this is not supported as of now.
            Gecko resets the locale to en-US by calling this function with an empty string.
            This affects GeckoPreferences activity in multi-locale builds.
+
+        N.B., if this code ever becomes live again, you need to hook it up to locale
+        recording in BrowserHealthRecorder: we track the current app and OS locales
+        as part of the recorded environment.
+
+        See similar note in GeckoApp.java for the startup path.
 
         //We're not using this, not need to save it (see bug 635342)
         SharedPreferences settings =

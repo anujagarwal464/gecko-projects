@@ -169,21 +169,24 @@ let Content = {
         break;
       }
 
-      case "keydown":
-        if (aEvent.keyCode == aEvent.DOM_VK_ESCAPE)
-          this.formAssistant.close();
-        break;
-
       case "keyup":
         // If after a key is pressed we still have no input, then close
-        // the autocomplete.  Perhaps the user used backspace or delete.
-        if (!aEvent.target.value)
+        // the autocomplete. Perhaps the user used backspace or delete.
+        // Allow down arrow to trigger autofill popup on empty input.
+        if ((!aEvent.target.value && aEvent.keyCode != aEvent.DOM_VK_DOWN)
+          || aEvent.keyCode == aEvent.DOM_VK_ESCAPE)
           this.formAssistant.close();
         else
-          this.formAssistant.open(aEvent.target);
+          this.formAssistant.open(aEvent.target, aEvent);
         break;
 
       case "click":
+        // Workaround for bug 925457: we sometimes don't recognize the
+        // correct tap target or are unable to identify if it's editable.
+        // Instead always save tap co-ordinates for the keyboard to look for
+        // when it is up.
+        SelectionHandler.onClickCoords(aEvent.clientX, aEvent.clientY);
+
         if (aEvent.eventPhase == aEvent.BUBBLING_PHASE)
           this._onClickBubble(aEvent);
         else

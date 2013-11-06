@@ -56,6 +56,10 @@ const kEventConstructors = {
                                                           return new CallEvent(aName, aProps);
                                                        },
                                              },
+  CallGroupErrorEvent:                       { create: function (aName, aProps) {
+                                                          return new CallGroupErrorEvent(aName, aProps);
+                                                       },
+                                             },
   CFStateChangeEvent:                        { create: function (aName, aProps) {
                                                           return new CFStateChangeEvent(aName, aProps);
                                                        },
@@ -165,10 +169,6 @@ const kEventConstructors = {
                                              },
   HashChangeEvent:                           { create: function (aName, aProps) {
                                                          return new HashChangeEvent(aName, aProps);
-                                                       },
-                                             },
-  IccCardLockErrorEvent:                     { create: function (aName, aProps) {
-                                                          return new IccCardLockErrorEvent(aName, aProps);
                                                        },
                                              },
   IDBVersionChangeEvent:                     { create: function (aName, aProps) {
@@ -357,14 +357,17 @@ const kEventConstructors = {
   StyleRuleChangeEvent:                      { create: function (aName, aProps) {
                                                          return new StyleRuleChangeEvent(aName, aProps);
                                                        },
+                                               chromeOnly: true,
                                              },
   StyleSheetApplicableStateChangeEvent:      { create: function (aName, aProps) {
                                                          return new StyleSheetApplicableStateChangeEvent(aName, aProps);
                                                        },
+                                               chromeOnly: true,
                                              },
   StyleSheetChangeEvent:                     { create: function (aName, aProps) {
                                                          return new StyleSheetChangeEvent(aName, aProps);
                                                        },
+                                               chromeOnly: true,
                                              },
   SVGZoomEvent:                              { create: function (aName, aProps) {
                                                          var e = document.createEvent("svgzoomevent");
@@ -413,6 +416,16 @@ const kEventConstructors = {
                                                        },
                                              },
 };
+
+for (var name of Object.keys(kEventConstructors)) {
+  if (!kEventConstructors[name].chromeOnly) {
+    continue;
+  }
+  if (window[name]) {
+    ok(false, name + " should be chrome only.");
+  }
+  window[name] = SpecialPowers.unwrap(SpecialPowers.wrap(window)[name]);
+}
 
 var props = Object.getOwnPropertyNames(window);
 for (var i = 0; i < props.length; i++) {

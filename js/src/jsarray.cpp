@@ -133,7 +133,7 @@ js::StringIsArrayIndex(JSLinearString *str, uint32_t *indexp)
     return false;
 }
 
-bool
+static bool
 DoubleIndexToId(JSContext *cx, double index, MutableHandleId id)
 {
     if (index == uint32_t(index))
@@ -759,17 +759,20 @@ js::WouldDefinePastNonwritableLength(ThreadSafeContext *cx,
 
     *definesPast = true;
 
+    // Error in strict mode code or warn with strict option.
+    unsigned flags = strict ? JSREPORT_ERROR : (JSREPORT_STRICT | JSREPORT_WARNING);
+    if (cx->isForkJoinSlice())
+        return cx->asForkJoinSlice()->reportError(ParallelBailoutUnsupportedVM, flags);
+
     if (!cx->isJSContext())
         return true;
 
     JSContext *ncx = cx->asJSContext();
 
-    if (!strict && !ncx->hasExtraWarningsOption())
+    if (!strict && !ncx->options().extraWarnings())
         return true;
 
-    // Error in strict mode code or warn with strict option.
     // XXX include the index and maybe array length in the error message
-    unsigned flags = strict ? JSREPORT_ERROR : (JSREPORT_STRICT | JSREPORT_WARNING);
     return JS_ReportErrorFlagsAndNumber(ncx, flags, js_GetErrorMessage, nullptr,
                                         JSMSG_CANT_DEFINE_PAST_ARRAY_LENGTH);
 }
@@ -1083,14 +1086,12 @@ ArrayJoin(JSContext *cx, CallArgs &args)
 
     // Steps 4 and 5
     RootedString sepstr(cx, nullptr);
+    const jschar *sepchars;
+    size_t seplen;
     if (!Locale && args.hasDefined(0)) {
         sepstr = ToString<CanGC>(cx, args[0]);
         if (!sepstr)
             return false;
-    }
-    const jschar *sepchars;
-    size_t seplen;
-    if (sepstr) {
         sepchars = sepstr->getChars(cx);
         if (!sepchars)
             return false;
@@ -1124,6 +1125,9 @@ ArrayJoin(JSContext *cx, CallArgs &args)
         if (!ArrayJoinKernel<Locale>(cx, op, obj, length, sb))
             return false;
     }
+
+    // Ensure that sepstr stays alive longer than sepchars.
+    JS_AnchorPtr(sepstr);
 
     // Step 11
     JSString *str = sb.finishString();
@@ -1196,7 +1200,7 @@ InitArrayTypes(JSContext *cx, TypeObject *type, const Value *vector, unsigned co
     if (cx->typeInferenceEnabled() && !type->unknownProperties()) {
         AutoEnterAnalysis enter(cx);
 
-        TypeSet *types = type->getProperty(cx, JSID_VOID);
+        HeapTypeSet *types = type->getProperty(cx, JSID_VOID);
         if (!types)
             return false;
 
@@ -1437,7 +1441,7 @@ NumDigitsBase10(uint32_t n)
     return t - (n < powersOf10[t]) + 1;
 }
 
-inline bool
+static inline bool
 CompareLexicographicInt32(JSContext *cx, const Value &a, const Value &b, bool *lessOrEqualp)
 {
     int32_t aint = a.toInt32();
@@ -1482,7 +1486,7 @@ CompareLexicographicInt32(JSContext *cx, const Value &a, const Value &b, bool *l
     return true;
 }
 
-inline bool
+static inline bool
 CompareSubStringValues(JSContext *cx, const jschar *s1, size_t l1,
                        const jschar *s2, size_t l2, bool *lessOrEqualp)
 {
@@ -1709,7 +1713,7 @@ MatchNumericComparator(JSContext *cx, const Value &v)
 }
 
 template<typename K, typename C>
-inline bool
+static inline bool
 MergeSortByKey(K keys, size_t len, K scratch, C comparator, AutoValueVector *vec)
 {
     MOZ_ASSERT(vec->length() >= len);
@@ -2002,7 +2006,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JS_ALWAYS_INLINE bool
+static JS_ALWAYS_INLINE bool
 NewbornArrayPushImpl(JSContext *cx, HandleObject obj, const Value &v)
 {
     Rooted<ArrayObject*> arr(cx, &obj->as<ArrayObject>());
@@ -2039,32 +2043,41 @@ js::array_push(JSContext *cx, unsigned argc, Value *vp)
     if (!obj)
         return false;
 
-    /* Fast path for the fully-dense case. */
-    if (obj->is<ArrayObject>()) {
-        Rooted<ArrayObject*> arr(cx, &obj->as<ArrayObject>());
-        if (arr->lengthIsWritable() && !ObjectMayHaveExtraIndexedProperties(arr)) {
-            uint32_t length = arr->length();
-            uint32_t argCount = args.length();
-            JSObject::EnsureDenseResult result = arr->ensureDenseElements(cx, length, argCount);
-            if (result == JSObject::ED_FAILED)
-                return false;
-
-            if (result == JSObject::ED_OK) {
-                arr->setLengthInt32(length + argCount);
-                for (uint32_t i = 0, index = length; i < argCount; index++, i++)
-                    JSObject::setDenseElementWithType(cx, arr, index, args[i]);
-                args.rval().setNumber(arr->length());
-                return true;
-            }
-
-            MOZ_ASSERT(result == JSObject::ED_SPARSE);
-        }
-    }
-
     /* Steps 2-3. */
     uint32_t length;
     if (!GetLengthProperty(cx, obj, &length))
         return false;
+
+    /* Fast path for native objects with dense elements. */
+    do {
+        if (!obj->isNative())
+            break;
+
+        if (obj->is<ArrayObject>() && !obj->as<ArrayObject>().lengthIsWritable())
+            break;
+
+        if (ObjectMayHaveExtraIndexedProperties(obj))
+            break;
+
+        uint32_t argCount = args.length();
+        JSObject::EnsureDenseResult result = obj->ensureDenseElements(cx, length, argCount);
+        if (result == JSObject::ED_FAILED)
+            return false;
+
+        if (result == JSObject::ED_OK) {
+            for (uint32_t i = 0, index = length; i < argCount; index++, i++)
+                JSObject::setDenseElementWithType(cx, obj, index, args[i]);
+            uint32_t newlength = length + argCount;
+            args.rval().setNumber(newlength);
+            if (obj->is<ArrayObject>()) {
+                obj->as<ArrayObject>().setLengthInt32(newlength);
+                return true;
+            }
+            return SetLengthProperty(cx, obj, newlength);
+        }
+
+        MOZ_ASSERT(result == JSObject::ED_SPARSE);
+    } while (false);
 
     /* Steps 4-5. */
     if (!InitArrayElements(cx, obj, length, args.length(), args.array(), UpdateTypes))
@@ -2954,8 +2967,9 @@ static const JSFunctionSpec array_methods[] = {
     JS_SELF_HOSTED_FN("find",        "ArrayFind",        1,0),
     JS_SELF_HOSTED_FN("findIndex",   "ArrayFindIndex",   1,0),
 
-    JS_SELF_HOSTED_FN("@@iterator",  "ArrayIterator",    0,0),
-    JS_FN("iterator",           JS_ArrayIterator,   0,0),
+    JS_SELF_HOSTED_FN("@@iterator",  "ArrayValues",      0,0),
+    JS_SELF_HOSTED_FN("entries",     "ArrayEntries",     0,0),
+    JS_SELF_HOSTED_FN("keys",        "ArrayKeys",        0,0),
     JS_FS_END
 };
 
@@ -3123,7 +3137,7 @@ NewArray(ExclusiveContext *cxArg, uint32_t length,
     if (JSContext *cx = cxArg->maybeJSContext()) {
         NewObjectCache &cache = cx->runtime()->newObjectCache;
         if (newKind == GenericObject &&
-            !cx->compartment()->objectMetadataCallback &&
+            !cx->compartment()->hasObjectMetadataCallback() &&
             cache.lookupGlobal(&ArrayObject::class_, cx->global(), allocKind, &entry))
         {
             RootedObject obj(cx, cache.newObjectFromHit(cx, entry,
@@ -3189,7 +3203,7 @@ NewArray(ExclusiveContext *cxArg, uint32_t length,
     if (allocateCapacity && !EnsureNewArrayElements(cxArg, arr, length))
         return nullptr;
 
-    Probes::createObject(cxArg, arr);
+    probes::CreateObject(cxArg, arr);
     return arr;
 }
 

@@ -10,11 +10,11 @@
 # include <valgrind/memcheck.h>
 #endif
 
-#include "jsapi.h"
 #include "jscntxt.h"
 #include "jsgc.h"
 #include "jsonparser.h"
 #include "jsprf.h"
+#include "jstypes.h"
 #include "jswatchpoint.h"
 
 #include "builtin/MapObject.h"
@@ -617,6 +617,44 @@ JSPropertyDescriptor::trace(JSTracer *trc)
     }
 }
 
+// Mark a chain of PersistentRooted pointers that might be null.
+template<typename Referent>
+static void
+MarkPersistentRootedChain(JSTracer *trc,
+                          mozilla::LinkedList<PersistentRooted<Referent *> > &list,
+                          void (*marker)(JSTracer *trc, Referent **ref, const char *name),
+                          const char *name)
+{
+    for (PersistentRooted<Referent *> *r = list.getFirst();
+         r != nullptr;
+         r = r->getNext())
+    {
+        if (r->get())
+            marker(trc, r->address(), name);
+    }
+}
+
+void
+js::gc::MarkPersistentRootedChains(JSTracer *trc)
+{
+    JSRuntime *rt = trc->runtime;
+
+    MarkPersistentRootedChain(trc, rt->functionPersistentRooteds, &MarkObjectRoot,
+                              "PersistentRooted<JSFunction *>");
+    MarkPersistentRootedChain(trc, rt->objectPersistentRooteds, &MarkObjectRoot,
+                              "PersistentRooted<JSObject *>");
+    MarkPersistentRootedChain(trc, rt->scriptPersistentRooteds, &MarkScriptRoot,
+                              "PersistentRooted<JSScript *>");
+    MarkPersistentRootedChain(trc, rt->stringPersistentRooteds, &MarkStringRoot, 
+                              "PersistentRooted<JSString *>");
+
+    // Mark the PersistentRooted chains of types that are never null.
+    for (JS::PersistentRootedId *r = rt->idPersistentRooteds.getFirst(); r != nullptr; r = r->getNext())
+        MarkIdRoot(trc, r->address(), "PersistentRooted<jsid>");
+    for (JS::PersistentRootedValue *r = rt->valuePersistentRooteds.getFirst(); r != nullptr; r = r->getNext())
+        MarkValueRoot(trc, r->address(), "PersistentRooted<Value>");
+}
+
 void
 js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
 {
@@ -647,15 +685,21 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
     for (RootRange r = rt->gcRootsHash.all(); !r.empty(); r.popFront()) {
         const RootEntry &entry = r.front();
         const char *name = entry.value.name ? entry.value.name : "root";
-        if (entry.value.type == JS_GC_ROOT_STRING_PTR)
-            MarkStringRoot(trc, reinterpret_cast<JSString **>(entry.key), name);
-        else if (entry.value.type == JS_GC_ROOT_OBJECT_PTR)
-            MarkObjectRoot(trc, reinterpret_cast<JSObject **>(entry.key), name);
-        else if (entry.value.type == JS_GC_ROOT_SCRIPT_PTR)
-            MarkScriptRoot(trc, reinterpret_cast<JSScript **>(entry.key), name);
-        else
+        if (entry.value.type == JS_GC_ROOT_VALUE_PTR) {
             MarkValueRoot(trc, reinterpret_cast<Value *>(entry.key), name);
+        } else if (*reinterpret_cast<void **>(entry.key)){
+            if (entry.value.type == JS_GC_ROOT_STRING_PTR)
+                MarkStringRoot(trc, reinterpret_cast<JSString **>(entry.key), name);
+            else if (entry.value.type == JS_GC_ROOT_OBJECT_PTR)
+                MarkObjectRoot(trc, reinterpret_cast<JSObject **>(entry.key), name);
+            else if (entry.value.type == JS_GC_ROOT_SCRIPT_PTR)
+                MarkScriptRoot(trc, reinterpret_cast<JSScript **>(entry.key), name);
+            else
+                MOZ_ASSUME_UNREACHABLE("unexpected js::RootInfo::type value");
+        }
     }
+
+    MarkPersistentRootedChains(trc);
 
     if (rt->scriptAndCountsVector) {
         ScriptAndCountsVector &vec = *rt->scriptAndCountsVector;
@@ -670,7 +714,7 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
         MarkAtoms(trc);
         rt->staticStrings.trace(trc);
 #ifdef JS_ION
-        jit::IonRuntime::Mark(trc);
+        jit::JitRuntime::Mark(trc);
 #endif
     }
 

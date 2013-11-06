@@ -33,7 +33,9 @@ protected:
 public:
   inline void TraceSelf(JSTracer* trc)
   {
-    JS_CallObjectTracer(trc, &mObj, "TypedArray.mObj");
+    if (mObj) {
+      JS_CallObjectTracer(trc, &mObj, "TypedArray.mObj");
+    }
   }
 
 private:
@@ -92,7 +94,7 @@ public:
 
   inline bool WrapIntoNewCompartment(JSContext* cx)
   {
-    return JS_WrapObject(cx, &mObj);
+    return JS_WrapObject(cx, JS::MutableHandleObject::fromMarkedLocation(&mObj));
   }
 
 protected:

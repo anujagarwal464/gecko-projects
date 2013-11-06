@@ -10,7 +10,7 @@ EXPORTS += [
     'nsUCvCnCID.h',
 ]
 
-CPP_SOURCES += [
+UNIFIED_SOURCES += [
     'nsGBKConvUtil.cpp',
     'nsGBKToUnicode.cpp',
     'nsHZToUnicode.cpp',
@@ -18,7 +18,6 @@ CPP_SOURCES += [
     'nsUnicodeToGB2312V2.cpp',
     'nsUnicodeToGBK.cpp',
     'nsUnicodeToHZ.cpp',
-    'nsUnicodeToISO2022CN.cpp',
 ]
 
 LIBRARY_NAME = 'ucvcn_s'

@@ -245,27 +245,24 @@ JS_ConvertArgumentsVA(JSContext *cx, unsigned argc, jsval *argv, const char *for
             *va_arg(ap, bool *) = ToBoolean(*sp);
             break;
           case 'c':
-            if (!JS_ValueToUint16(cx, *sp, va_arg(ap, uint16_t *)))
+            if (!ToUint16(cx, arg, va_arg(ap, uint16_t *)))
                 return false;
             break;
           case 'i':
+          case 'j': // "j" was broken, you should not use it.
             if (!ToInt32(cx, arg, va_arg(ap, int32_t *)))
                 return false;
             break;
           case 'u':
-            if (!JS_ValueToECMAUint32(cx, *sp, va_arg(ap, uint32_t *)))
-                return false;
-            break;
-          case 'j':
-            if (!JS_ValueToInt32(cx, *sp, va_arg(ap, int32_t *)))
+            if (!ToUint32(cx, arg, va_arg(ap, uint32_t *)))
                 return false;
             break;
           case 'd':
-            if (!JS_ValueToNumber(cx, *sp, va_arg(ap, double *)))
+            if (!ToNumber(cx, arg, va_arg(ap, double *)))
                 return false;
             break;
           case 'I':
-            if (!JS_ValueToNumber(cx, *sp, &d))
+            if (!ToNumber(cx, arg, &d))
                 return false;
             *va_arg(ap, double *) = ToInteger(d);
             break;
@@ -356,7 +353,7 @@ JS_ConvertValue(JSContext *cx, HandleValue value, JSType type, MutableHandleValu
             vp.setString(str);
         break;
       case JSTYPE_NUMBER:
-        ok = JS_ValueToNumber(cx, value, &d);
+        ok = ToNumber(cx, value, &d);
         if (ok)
             vp.setDouble(d);
         break;
@@ -430,13 +427,6 @@ JS_ValueToSource(JSContext *cx, jsval valueArg)
 }
 
 JS_PUBLIC_API(bool)
-JS_ValueToNumber(JSContext *cx, jsval valueArg, double *dp)
-{
-    RootedValue value(cx, valueArg);
-    return JS::ToNumber(cx, value, dp);
-}
-
-JS_PUBLIC_API(bool)
 JS_DoubleIsInt32(double d, int32_t *ip)
 {
     return mozilla::DoubleIsInt32(d, ip);
@@ -452,66 +442,6 @@ JS_PUBLIC_API(uint32_t)
 JS_DoubleToUint32(double d)
 {
     return ToUint32(d);
-}
-
-
-JS_PUBLIC_API(bool)
-JS_ValueToECMAUint32(JSContext *cx, jsval valueArg, uint32_t *ip)
-{
-    RootedValue value(cx, valueArg);
-    return JS::ToUint32(cx, value, ip);
-}
-
-JS_PUBLIC_API(bool)
-JS_ValueToInt64(JSContext *cx, jsval valueArg, int64_t *ip)
-{
-    RootedValue value(cx, valueArg);
-    return JS::ToInt64(cx, value, ip);
-}
-
-JS_PUBLIC_API(bool)
-JS_ValueToUint64(JSContext *cx, jsval valueArg, uint64_t *ip)
-{
-    RootedValue value(cx, valueArg);
-    return JS::ToUint64(cx, value, ip);
-}
-
-JS_PUBLIC_API(bool)
-JS_ValueToInt32(JSContext *cx, jsval vArg, int32_t *ip)
-{
-    AssertHeapIsIdle(cx);
-    CHECK_REQUEST(cx);
-
-    RootedValue v(cx, vArg);
-    assertSameCompartment(cx, v);
-
-    if (v.isInt32()) {
-        *ip = v.toInt32();
-        return true;
-    }
-
-    double d;
-    if (v.isDouble()) {
-        d = v.toDouble();
-    } else if (!ToNumberSlow(cx, v, &d)) {
-        return false;
-    }
-
-    if (mozilla::IsNaN(d) || d <= -2147483649.0 || 2147483648.0 <= d) {
-        js_ReportValueError(cx, JSMSG_CANT_CONVERT,
-                            JSDVG_SEARCH_STACK, v, NullPtr());
-        return false;
-    }
-
-    *ip = (int32_t) floor(d + 0.5);  /* Round to nearest */
-    return true;
-}
-
-JS_PUBLIC_API(bool)
-JS_ValueToUint16(JSContext *cx, jsval valueArg, uint16_t *ip)
-{
-    RootedValue value(cx, valueArg);
-    return ToUint16(cx, value, ip);
 }
 
 JS_PUBLIC_API(bool)
@@ -616,6 +546,45 @@ JS_IsBuiltinFunctionConstructor(JSFunction *fun)
 enum InitState { Uninitialized, Running, ShutDown };
 static InitState jsInitState = Uninitialized;
 
+#ifdef DEBUG
+static void
+CheckMessageNumbering()
+{
+    // Assert that the numbers associated with the error names in js.msg are
+    // monotonically increasing.  It's not a compile-time check, but it's
+    // better than nothing.
+    int errorNumber = 0;
+# define MSG_DEF(name, number, count, exception, format)                      \
+    JS_ASSERT(name == errorNumber++);
+# include "js.msg"
+# undef MSG_DEF
+}
+
+static unsigned
+MessageParameterCount(const char *format)
+{
+    unsigned numfmtspecs = 0;
+    for (const char *fmt = format; *fmt != '\0'; fmt++) {
+        if (*fmt == '{' && isdigit(fmt[1]))
+            ++numfmtspecs;
+    }
+    return numfmtspecs;
+}
+
+static void
+CheckMessageParameterCounts()
+{
+    // Assert that each message format has the correct number of braced
+    // parameters.
+# define MSG_DEF(name, number, count, exception, format)                      \
+    JS_BEGIN_MACRO                                                            \
+        JS_ASSERT(MessageParameterCount(format) == count);                    \
+    JS_END_MACRO;
+# include "js.msg"
+# undef MSG_DEF
+}
+#endif /* DEBUG */
+
 JS_PUBLIC_API(bool)
 JS_Init(void)
 {
@@ -626,29 +595,9 @@ JS_Init(void)
                "how do we have live runtimes before JS_Init?");
 
 #ifdef DEBUG
-    // Assert that the numbers associated with the error names in js.msg are
-    // monotonically increasing.  It's not a compile-time check, but it's
-    // better than nothing.
-    int errorNumber = 0;
-#define MSG_DEF(name, number, count, exception, format)                       \
-    JS_ASSERT(name == errorNumber++);
-#include "js.msg"
-#undef MSG_DEF
-
-    // Assert that each message format has the correct number of braced
-    // parameters.
-#define MSG_DEF(name, number, count, exception, format)                       \
-    JS_BEGIN_MACRO                                                            \
-        unsigned numfmtspecs = 0;                                             \
-        for (const char *fmt = format; *fmt != '\0'; fmt++) {                 \
-            if (*fmt == '{' && isdigit(fmt[1]))                               \
-                ++numfmtspecs;                                                \
-        }                                                                     \
-        JS_ASSERT(count == numfmtspecs);                                      \
-    JS_END_MACRO;
-#include "js.msg"
-#undef MSG_DEF
-#endif /* DEBUG */
+    CheckMessageNumbering();
+    CheckMessageParameterCounts();
+#endif
 
     using js::TlsPerThreadData;
     if (!TlsPerThreadData.initialized() && !TlsPerThreadData.init())
@@ -945,40 +894,10 @@ JS_StringToVersion(const char *string)
     return JSVERSION_UNKNOWN;
 }
 
-JS_PUBLIC_API(uint32_t)
-JS_GetOptions(JSContext *cx)
+JS_PUBLIC_API(JS::ContextOptions &)
+JS::ContextOptionsRef(JSContext *cx)
 {
-    /*
-     * Can't check option/version synchronization here.
-     * We may have been synchronized with a script version that was formerly on
-     * the stack, but has now been popped.
-     */
     return cx->options();
-}
-
-static unsigned
-SetOptionsCommon(JSContext *cx, unsigned options)
-{
-    JS_ASSERT((options & JSOPTION_MASK) == options);
-    unsigned oldopts = cx->options();
-    unsigned newopts = options & JSOPTION_MASK;
-    cx->setOptions(newopts);
-    cx->updateJITEnabled();
-    return oldopts;
-}
-
-JS_PUBLIC_API(uint32_t)
-JS_SetOptions(JSContext *cx, uint32_t options)
-{
-    return SetOptionsCommon(cx, options);
-}
-
-JS_PUBLIC_API(uint32_t)
-JS_ToggleOptions(JSContext *cx, uint32_t options)
-{
-    unsigned oldopts = cx->options();
-    unsigned newopts = oldopts ^ options;
-    return SetOptionsCommon(cx, newopts);
 }
 
 JS_PUBLIC_API(void)
@@ -1080,30 +999,22 @@ JS_GetCompartmentPrivate(JSCompartment *compartment)
 }
 
 JS_PUBLIC_API(bool)
-JS_WrapObject(JSContext *cx, JSObject **objp)
+JS_WrapObject(JSContext *cx, MutableHandleObject objp)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
-    RootedObject obj(cx, *objp);
-    if (obj)
-        JS::ExposeGCThingToActiveJS(obj, JSTRACE_OBJECT);
-    if (!cx->compartment()->wrap(cx, &obj))
-        return false;
-    *objp = obj;
-    return true;
+    if (objp)
+        JS::ExposeGCThingToActiveJS(objp, JSTRACE_OBJECT);
+    return cx->compartment()->wrap(cx, objp);
 }
 
 JS_PUBLIC_API(bool)
-JS_WrapValue(JSContext *cx, jsval *vp)
+JS_WrapValue(JSContext *cx, MutableHandleValue vp)
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
-    if (vp)
-        JS::ExposeValueToActiveJS(*vp);
-    RootedValue value(cx, *vp);
-    bool ok = cx->compartment()->wrap(cx, &value);
-    *vp = value.get();
-    return ok;
+    JS::ExposeValueToActiveJS(vp);
+    return cx->compartment()->wrap(cx, vp);
 }
 
 JS_PUBLIC_API(bool)
@@ -1202,7 +1113,7 @@ JS_TransplantObject(JSContext *cx, HandleObject origobj, HandleObject target)
     if (origobj->compartment() != destination) {
         RootedObject newIdentityWrapper(cx, newIdentity);
         AutoCompartment ac(cx, origobj);
-        if (!JS_WrapObject(cx, newIdentityWrapper.address()))
+        if (!JS_WrapObject(cx, &newIdentityWrapper))
             MOZ_CRASH();
         JS_ASSERT(Wrapper::wrappedObject(newIdentityWrapper) == newIdentity);
         if (!JSObject::swap(cx, origobj, newIdentityWrapper))
@@ -1213,96 +1124,6 @@ JS_TransplantObject(JSContext *cx, HandleObject origobj, HandleObject target)
     // The new identity object might be one of several things. Return it to avoid
     // ambiguity.
     return newIdentity;
-}
-
-/*
- * Some C++ objects (such as the location object and XBL) require both an XPConnect
- * reflector and a security wrapper for that reflector. We expect that there are
- * no live references to the reflector, so when we perform the transplant we turn
- * the security wrapper into a cross-compartment wrapper. Just in case there
- * happen to be live references to the reflector, we swap it out to limit the harm.
- */
-JS_FRIEND_API(JSObject *)
-js_TransplantObjectWithWrapper(JSContext *cx,
-                               HandleObject origobj,
-                               HandleObject origwrapper,
-                               HandleObject targetobj,
-                               HandleObject targetwrapper)
-{
-    AutoMaybeTouchDeadZones agc(cx);
-    AutoDisableProxyCheck adpc(cx->runtime());
-
-    AssertHeapIsIdle(cx);
-    JS_ASSERT(!origobj->is<CrossCompartmentWrapperObject>());
-    JS_ASSERT(!origwrapper->is<CrossCompartmentWrapperObject>());
-    JS_ASSERT(!targetobj->is<CrossCompartmentWrapperObject>());
-    JS_ASSERT(!targetwrapper->is<CrossCompartmentWrapperObject>());
-
-    RootedObject newWrapper(cx);
-    JSCompartment *destination = targetobj->compartment();
-
-    // |origv| is the map entry we're looking up. The map entries are going to
-    // be for |origobj|, not |origwrapper|.
-    Value origv = ObjectValue(*origobj);
-
-    // There might already be a wrapper for the original object in the new
-    // compartment.
-    if (WrapperMap::Ptr p = destination->lookupWrapper(origv)) {
-        // There is. Make the existing cross-compartment wrapper a same-
-        // compartment wrapper.
-        newWrapper = &p->value.toObject();
-
-        // When we remove origv from the wrapper map, its wrapper, newWrapper,
-        // must immediately cease to be a cross-compartment wrapper. Neuter it.
-        destination->removeWrapper(p);
-        NukeCrossCompartmentWrapper(cx, newWrapper);
-
-        if (!JSObject::swap(cx, newWrapper, targetwrapper))
-            MOZ_CRASH();
-    } else {
-        // Otherwise, use the passed-in wrapper as the same-compartment wrapper.
-        newWrapper = targetwrapper;
-    }
-
-    // Now, iterate through other scopes looking for references to the old
-    // object. Note that the entries in the maps are for |origobj| and not
-    // |origwrapper|. They need to be updated to point at the new object.
-    if (!RemapAllWrappersForObject(cx, origobj, targetobj))
-        MOZ_CRASH();
-
-    // Lastly, update things in the original compartment. Our invariants dictate
-    // that the original compartment can only have one cross-compartment wrapper
-    // to the new object. So we choose to update |origwrapper|, not |origobj|,
-    // since there are probably no live direct intra-compartment references to
-    // |origobj|.
-    {
-        AutoCompartment ac(cx, origobj);
-
-        // We can't be sure that the reflector is completely dead. This is bad,
-        // because it is in a weird state. To minimize potential harm we create
-        // a new unreachable dummy object and swap it with the reflector.
-        // After the swap we have a possibly-live object that isn't dangerous,
-        // and a possibly-dangerous object that isn't live.
-        ProxyOptions options;
-        if (!IsBackgroundFinalized(origobj->tenuredGetAllocKind()))
-            options.setForceForegroundFinalization(true);
-        RootedObject reflectorGuts(cx, NewDeadProxyObject(cx, JS_GetGlobalForObject(cx, origobj),
-                                                          options));
-        if (!reflectorGuts || !JSObject::swap(cx, origobj, reflectorGuts))
-            MOZ_CRASH();
-
-        // Turn origwrapper into a CCW to the new object.
-        RootedObject wrapperGuts(cx, targetobj);
-        if (!JS_WrapObject(cx, wrapperGuts.address()))
-            MOZ_CRASH();
-        JS_ASSERT(Wrapper::wrappedObject(wrapperGuts) == targetobj);
-        if (!JSObject::swap(cx, origwrapper, wrapperGuts))
-            MOZ_CRASH();
-        origwrapper->compartment()->putWrapper(ObjectValue(*targetobj),
-                                               ObjectValue(*origwrapper));
-    }
-
-    return newWrapper;
 }
 
 /*
@@ -1381,7 +1202,7 @@ static const JSStdName standard_class_atoms[] = {
     {js_InitIntlClass,                  EAGER_ATOM_AND_CLASP(Intl)},
 #endif
 #ifdef ENABLE_BINARYDATA
-    {js_InitTypedObjectClasses,         EAGER_ATOM_AND_CLASP(Type)},
+    {js_InitTypedObjectClass,           EAGER_ATOM_AND_CLASP(TypedObject)},
 #endif
     {nullptr,                           0, nullptr}
 };
@@ -1439,17 +1260,6 @@ static const JSStdName standard_class_names[] = {
                                 TYPED_ARRAY_CLASP(TYPE_UINT8_CLAMPED)},
     {js_InitTypedArrayClasses,  EAGER_CLASS_ATOM(DataView),     &DataViewObject::class_},
 
-    /* Binary Data */
-#ifdef ENABLE_BINARYDATA
-    {js_InitTypedObjectClasses,   EAGER_ATOM_AND_CLASP(Type)},
-    {js_InitTypedObjectClasses,   EAGER_ATOM_AND_CLASP(Data)},
-#define BINARYDATA_NUMERIC_NAMES(constant_, type_, name_) \
-    {js_InitTypedObjectClasses,   EAGER_CLASS_ATOM(name_),      &NumericTypeClasses[constant_]},
-    JS_FOR_EACH_SCALAR_TYPE_REPR(BINARYDATA_NUMERIC_NAMES)
-#undef BINARYDATA_NUMERIC_NAMES
-    {js_InitTypedObjectClasses,   EAGER_CLASS_ATOM(ArrayType),  &js::ArrayType::class_},
-    {js_InitTypedObjectClasses,   EAGER_CLASS_ATOM(StructType), &js::StructType::class_},
-#endif
     {nullptr,                     0, nullptr}
 };
 
@@ -1497,6 +1307,7 @@ JS_ResolveStandardClass(JSContext *cx, HandleObject obj, HandleId id, bool *reso
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
+    JS_ASSERT(obj->is<GlobalObject>());
     *resolved = false;
 
     rt = cx->runtime();
@@ -1566,11 +1377,10 @@ JS_ResolveStandardClass(JSContext *cx, HandleObject obj, HandleId id, bool *reso
          * If this standard class is anonymous, then we don't want to resolve
          * by name.
          */
-        JS_ASSERT(obj->is<GlobalObject>());
         if (stdnm->clasp->flags & JSCLASS_IS_ANONYMOUS)
             return true;
 
-        if (IsStandardClassResolved(obj, stdnm->clasp))
+        if (obj->as<GlobalObject>().isStandardClassResolved(stdnm->clasp))
             return true;
 
         if (!stdnm->init(cx, obj))
@@ -1586,6 +1396,7 @@ JS_EnumerateStandardClasses(JSContext *cx, HandleObject obj)
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
+    MOZ_ASSERT(obj->is<GlobalObject>());
 
     /*
      * Check whether we need to bind 'undefined' and define it if so.
@@ -1603,7 +1414,7 @@ JS_EnumerateStandardClasses(JSContext *cx, HandleObject obj)
     /* Initialize any classes that have not been initialized yet. */
     for (unsigned i = 0; standard_class_atoms[i].init; i++) {
         const JSStdName &stdnm = standard_class_atoms[i];
-        if (!js::IsStandardClassResolved(obj, stdnm.clasp)) {
+        if (!obj->as<GlobalObject>().isStandardClassResolved(stdnm.clasp)) {
             if (!stdnm.init(cx, obj))
                 return false;
         }
@@ -1843,52 +1654,52 @@ JS_PUBLIC_API(void)
 JS_RemoveValueRoot(JSContext *cx, jsval *vp)
 {
     CHECK_REQUEST(cx);
-    js_RemoveRoot(cx->runtime(), (void *)vp);
+    RemoveRoot(cx->runtime(), (void *)vp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveStringRoot(JSContext *cx, JSString **rp)
 {
     CHECK_REQUEST(cx);
-    js_RemoveRoot(cx->runtime(), (void *)rp);
+    RemoveRoot(cx->runtime(), (void *)rp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveObjectRoot(JSContext *cx, JSObject **rp)
 {
     CHECK_REQUEST(cx);
-    js_RemoveRoot(cx->runtime(), (void *)rp);
+    RemoveRoot(cx->runtime(), (void *)rp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveScriptRoot(JSContext *cx, JSScript **rp)
 {
     CHECK_REQUEST(cx);
-    js_RemoveRoot(cx->runtime(), (void *)rp);
+    RemoveRoot(cx->runtime(), (void *)rp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveValueRootRT(JSRuntime *rt, jsval *vp)
 {
-    js_RemoveRoot(rt, (void *)vp);
+    RemoveRoot(rt, (void *)vp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveStringRootRT(JSRuntime *rt, JSString **rp)
 {
-    js_RemoveRoot(rt, (void *)rp);
+    RemoveRoot(rt, (void *)rp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveObjectRootRT(JSRuntime *rt, JSObject **rp)
 {
-    js_RemoveRoot(rt, (void *)rp);
+    RemoveRoot(rt, (void *)rp);
 }
 
 JS_PUBLIC_API(void)
 JS_RemoveScriptRootRT(JSRuntime *rt, JSScript **rp)
 {
-    js_RemoveRoot(rt, (void *)rp);
+    RemoveRoot(rt, (void *)rp);
 }
 
 JS_NEVER_INLINE JS_PUBLIC_API(void)
@@ -3767,7 +3578,7 @@ JS_Enumerate(JSContext *cx, JSObject *objArg)
  * + native case here uses a JSShape *, but that iterates in reverse!
  * + so we make non-native match, by reverse-iterating after JS_Enumerating
  */
-const uint32_t JSSLOT_ITER_INDEX = 0;
+static const uint32_t JSSLOT_ITER_INDEX = 0;
 
 static void
 prop_iter_finalize(FreeOp *fop, JSObject *obj)
@@ -3892,22 +3703,6 @@ JS_NextProperty(JSContext *cx, JSObject *iterobjArg, jsid *idp)
             iterobj->setSlot(JSSLOT_ITER_INDEX, Int32Value(i));
         }
     }
-    return true;
-}
-
-JS_PUBLIC_API(bool)
-JS_ArrayIterator(JSContext *cx, unsigned argc, jsval *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    Rooted<Value> target(cx, args.thisv());
-    AssertHeapIsIdle(cx);
-    assertSameCompartment(cx, target);
-    CHECK_REQUEST(cx);
-
-    JSObject *iterobj = ElementIteratorObject::create(cx, target);
-    if (!iterobj)
-        return false;
-    vp->setObject(*iterobj);
     return true;
 }
 
@@ -4364,7 +4159,7 @@ struct AutoLastFrameCheck
     ~AutoLastFrameCheck() {
         if (cx->isExceptionPending() &&
             !JS_IsRunning(cx) &&
-            !cx->hasOption(JSOPTION_DONT_REPORT_UNCAUGHT)) {
+            !cx->options().dontReportUncaught()) {
             js_ReportUncaughtException(cx);
         }
     }
@@ -4470,15 +4265,15 @@ JS::CompileOptions::CompileOptions(JSContext *cx, JSVersion version)
       lineno(1),
       column(0),
       element(NullPtr()),
-      compileAndGo(cx->hasOption(JSOPTION_COMPILE_N_GO)),
+      compileAndGo(cx->options().compileAndGo()),
       forEval(false),
-      noScriptRval(cx->hasOption(JSOPTION_NO_SCRIPT_RVAL)),
+      noScriptRval(cx->options().noScriptRval()),
       selfHostingMode(false),
       canLazilyParse(true),
-      strictOption(cx->hasOption(JSOPTION_STRICT_MODE)),
-      extraWarningsOption(cx->hasExtraWarningsOption()),
-      werrorOption(cx->hasWErrorOption()),
-      asmJSOption(cx->hasOption(JSOPTION_ASMJS)),
+      strictOption(cx->options().strictMode()),
+      extraWarningsOption(cx->options().extraWarnings()),
+      werrorOption(cx->options().werror()),
+      asmJSOption(cx->options().asmJS()),
       sourcePolicy(SAVE_SOURCE)
 {
 }
@@ -4537,7 +4332,7 @@ JS::Compile(JSContext *cx, HandleObject obj, CompileOptions options, const char 
     AutoFile file;
     if (!file.open(cx, filename))
         return nullptr;
-    options = options.setFileAndLine(filename, 1);
+    options.setFileAndLine(filename, 1);
     JSScript *script = Compile(cx, obj, options, file.fp());
     return script;
 }
@@ -4558,25 +4353,6 @@ JS::CanCompileOffThread(JSContext *cx, const CompileOptions &options)
     // barriers itself.
     if (cx->runtime()->activeGCInAtomsZone())
         return false;
-
-    // Blacklist filenames which cause mysterious assertion failures in
-    // graphics code on OS X. These seem to tickle some preexisting race
-    // condition unrelated to off thread compilation. See bug 897655.
-    static const char *blacklist[] = {
-#ifdef XP_MACOSX
-        "chrome://browser/content/places/editBookmarkOverlay.js",
-        "chrome://browser/content/nsContextMenu.js",
-        "chrome://browser/content/newtab/newTab.js",
-        "chrome://browser/content/places/browserPlacesViews.js",
-#endif
-        nullptr
-    };
-
-    const char *filename = options.filename;
-    for (const char **ptest = blacklist; *ptest; ptest++) {
-        if (!strcmp(*ptest, filename))
-            return false;
-    }
 
     return true;
 #else
@@ -4602,6 +4378,11 @@ JS::FinishOffThreadScript(JSContext *maybecx, JSRuntime *rt, void *token)
 {
 #ifdef JS_WORKER_THREADS
     JS_ASSERT(CurrentThreadCanAccessRuntime(rt));
+
+    Maybe<AutoLastFrameCheck> lfc;
+    if (maybecx)
+        lfc.construct(maybecx);
+
     return rt->workerThreadState->finishParseTask(maybecx, rt, token);
 #else
     MOZ_ASSUME_UNREACHABLE("Off thread compilation is not available.");
@@ -6149,7 +5930,24 @@ JS_SetGlobalJitCompilerOption(JSContext *cx, JSJitCompilerOption opt, uint32_t v
         if (value == 0)
             jit::js_IonOptions.setEagerCompilation();
         break;
-
+      case JSJITCOMPILER_ION_ENABLE:
+        if (value == 1) {
+            JS::ContextOptionsRef(cx).setIon(true);
+            IonSpew(js::jit::IonSpew_Scripts, "Enable ion");
+        } else if (value == 0) {
+            JS::ContextOptionsRef(cx).setIon(false);
+            IonSpew(js::jit::IonSpew_Scripts, "Disable ion");
+        }
+        break;
+      case JSJITCOMPILER_BASELINE_ENABLE:
+        if (value == 1) {
+            JS::ContextOptionsRef(cx).setBaseline(true);
+            IonSpew(js::jit::IonSpew_BaselineScripts, "Enable baseline");
+        } else if (value == 0) {
+            JS::ContextOptionsRef(cx).setBaseline(false);
+            IonSpew(js::jit::IonSpew_BaselineScripts, "Disable baseline");
+        }
+        break;
       default:
         break;
     }
@@ -6334,6 +6132,12 @@ JS_PreventExtensions(JSContext *cx, JS::HandleObject obj)
     if (!extensible)
         return true;
     return JSObject::preventExtensions(cx, obj);
+}
+
+JS_PUBLIC_API(void)
+JS::SetAsmJSCacheOps(JSRuntime *rt, const JS::AsmJSCacheOps *ops)
+{
+    rt->asmJSCacheOps = *ops;
 }
 
 char *

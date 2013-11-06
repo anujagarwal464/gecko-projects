@@ -37,7 +37,6 @@
 #include "jsapi.h"
 #include "prenv.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "mozilla/mozPoisonWrite.h"
 
 #if defined(XP_WIN)
 // Prevent collisions with nsAppStartup::GetStartupInfo()
@@ -137,6 +136,7 @@ nsAppStartup::nsAppStartup() :
   mConsiderQuitStopper(0),
   mRunning(false),
   mShuttingDown(false),
+  mStartingUp(true),
   mAttemptingQuit(false),
   mRestart(false),
   mInterrupted(false),
@@ -517,6 +517,23 @@ nsAppStartup::GetShuttingDown(bool *aResult)
 }
 
 NS_IMETHODIMP
+nsAppStartup::GetStartingUp(bool *aResult)
+{
+  *aResult = mStartingUp;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAppStartup::DoneStartingUp()
+{
+  // This must be called once at most
+  MOZ_ASSERT(mStartingUp);
+
+  mStartingUp = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsAppStartup::GetRestarting(bool *aResult)
 {
   *aResult = mRestart;
@@ -671,7 +688,7 @@ nsAppStartup::Observe(nsISupports *aSubject,
 NS_IMETHODIMP
 nsAppStartup::GetStartupInfo(JSContext* aCx, JS::Value* aRetval)
 {
-  JS::Rooted<JSObject*> obj(aCx, JS_NewObject(aCx, NULL, NULL, NULL));
+  JS::Rooted<JSObject*> obj(aCx, JS_NewObject(aCx, nullptr, nullptr, nullptr));
   *aRetval = OBJECT_TO_JSVAL(obj);
 
   TimeStamp procTime = StartupTimeline::Get(StartupTimeline::PROCESS_CREATION);
@@ -712,7 +729,7 @@ nsAppStartup::GetStartupInfo(JSContext* aCx, JS::Value* aRetval)
           / PR_USEC_PER_MSEC;
         JS::Rooted<JSObject*> date(aCx, JS_NewDateObjectMsec(aCx, prStamp));
         JS_DefineProperty(aCx, obj, StartupTimeline::Describe(ev),
-          OBJECT_TO_JSVAL(date), NULL, NULL, JSPROP_ENUMERATE);
+          OBJECT_TO_JSVAL(date), nullptr, nullptr, JSPROP_ENUMERATE);
       } else {
         Telemetry::Accumulate(Telemetry::STARTUP_MEASUREMENT_ERRORS, ev);
       }

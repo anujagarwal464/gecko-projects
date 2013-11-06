@@ -179,7 +179,7 @@ function test5() {
   ok(notification.dismissed, "Test 5: The plugin notification should be dismissed by default");
 
   notification.reshow();
-  is(notification.options.centerActions.length, 1, "Test 5: Only the blocked plugin should be present in the notification");
+  is(notification.options.centerActions.size, 1, "Test 5: Only the blocked plugin should be present in the notification");
   ok(PopupNotifications.panel.firstChild._buttonContainer.hidden, "Part 5: The blocked plugins notification should not have any buttons visible.");
 
   ok(!gTestBrowser.missingPlugins, "Test 5, Should not be a missing plugin list");
@@ -441,10 +441,11 @@ function test18f() {
   var objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
   ok(!objLoadingContent.activated, "Test 18f, Plugin should not be activated");
 
-  // XXXBAD: this code doesn't do what you think it does! it is actually
-  // observing the "removed" event of the old notification, since we create
-  // a *new* one when the plugin is clicked.
-  notification.options.eventCallback = function() { executeSoon(test18g); };
+  var oldEventCallback = notification.options.eventCallback;
+  notification.options.eventCallback = function() {
+    oldEventCallback();
+    executeSoon(test18g);
+  };
   EventUtils.synthesizeMouseAtCenter(plugin, {}, gTestBrowser.contentWindow);
 }
 
@@ -603,10 +604,10 @@ function test21a() {
 
   // we have to actually show the panel to get the bindings to instantiate
   notification.reshow();
-  is(notification.options.centerActions.length, 2, "Test 21a, Should have two types of plugin in the notification");
+  is(notification.options.centerActions.size, 2, "Test 21a, Should have two types of plugin in the notification");
 
   var centerAction = null;
-  for (var action of notification.options.centerActions) {
+  for (var action of notification.options.centerActions.values()) {
     if (action.pluginName == "Test") {
       centerAction = action;
       break;
@@ -640,7 +641,7 @@ function test21c() {
   ok(notification, "Test 21c, Should have a click-to-play notification");
 
   notification.reshow();
-  ok(notification.options.centerActions.length == 2, "Test 21c, Should have one type of plugin in the notification");
+  ok(notification.options.centerActions.size == 2, "Test 21c, Should have one type of plugin in the notification");
 
   var doc = gTestBrowser.contentDocument;
   var plugin = doc.getElementById("test");
@@ -661,7 +662,7 @@ function test21c() {
   }
 
   var centerAction = null;
-  for (var action of notification.options.centerActions) {
+  for (var action of notification.options.centerActions.values()) {
     if (action.pluginName == "Second Test") {
       centerAction = action;
       break;
@@ -834,6 +835,41 @@ function test24d() {
   function() {
     clearAllPluginPermissions();
     resetBlocklist();
-    finishTest();
+    prepareTest(test25, gTestRoot + "plugin_syncRemoved.html");
   });
+}
+
+function test25() {
+  let notification = PopupNotifications.getNotification("click-to-play-plugins");
+  ok(notification, "Test 25: There should be a plugin notification even if the plugin was immediately removed");
+  ok(notification.dismissed, "Test 25: The notification should be dismissed by default");
+
+  prepareTest(() => executeSoon(test26), gTestRoot + "plugin_small.html");
+}
+
+function test26() {
+  let notification = PopupNotifications.getNotification("click-to-play-plugins");
+  ok(notification, "Test 26: There should be a plugin notification");
+
+  waitForCondition(() => gBrowser.ownerDocument.
+      getElementById("plugins-notification-icon").classList.
+      contains("plugin-hidden"),
+    () => {
+      // Don't use setTestPluginEnabledState here because we already saved the
+      // prior value
+      getTestPlugin().enabledState = Ci.nsIPluginTag.STATE_ENABLED;
+      prepareTest(test27, gTestRoot + "plugin_small.html");
+    },
+    "Test 26, expected the plugin notification icon to be highlighted");
+}
+
+function test27() {
+  let notification = PopupNotifications.getNotification("click-to-play-plugins");
+  ok(notification, "Test 27: There should be a plugin notification");
+
+  waitForCondition(() => !gBrowser.ownerDocument.
+      getElementById("plugins-notification-icon").classList.
+      contains("plugin-hidden"),
+    finishTest,
+    "Test 27, expected the plugin notification icon to not be highlighted");
 }

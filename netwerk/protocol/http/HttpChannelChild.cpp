@@ -21,6 +21,7 @@
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/DNS.h"
+#include "SerializedLoadContext.h"
 
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
@@ -917,6 +918,8 @@ HttpChannelChild::OnRedirectVerifyCallback(nsresult result)
 NS_IMETHODIMP
 HttpChannelChild::Cancel(nsresult status)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   if (!mCanceled) {
     // If this cancel occurs before nsHttpChannel has been set up, AsyncOpen
     // is responsible for cleaning up.

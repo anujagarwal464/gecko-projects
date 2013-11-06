@@ -300,7 +300,7 @@ skip-if(B2G) == 273681-1.html 273681-1-ref.html
 == 283686-2.html 283686-2-ref.html
 == 283686-3.html about:blank
 == 289384-1.xhtml 289384-ref.xhtml
-random-if(d2d) fuzzy-if(Android&&AndroidVersion>=15,8,200) HTTP == 289480.html#top 289480-ref.html # basically-verbatim acid2 test, HTTP for a 404 page -- bug 578114 for the d2d failures
+random-if(d2d) fuzzy-if(Android&&AndroidVersion>=15,8,1439) HTTP == 289480.html#top 289480-ref.html # basically-verbatim acid2 test, HTTP for a 404 page -- bug 578114 for the d2d failures
 == 290129-1.html 290129-1-ref.html
 skip-if(B2G) == 291078-1.html 291078-1-ref.html
 == 291078-2.html 291078-2-ref.html
@@ -1485,9 +1485,13 @@ random-if(!haveTestPlugin) == 546071-1.html 546071-1-ref.html
 skip-if(B2G) fuzzy-if(Android&&AndroidVersion>=15,12,300) == 551463-1.html 551463-1-ref.html
 == 551699-1.html 551699-1-ref.html
 == 552334-1.html 552334-1-ref.html
-# 553571 depends on MS Indic shaping behavior and Win7 font support;
-# not expected to be reliable on XP or non-Windows platforms
-random-if(!winWidget) random-if(/^Windows\x20NT\x205/.test(http.oscpu)) != 553571-1.html 553571-1-notref.html # expect dotted circle in test, not in ref
+# Bug 553571 was specific to MS Indic shaping behavior and Win7 font support;
+# the test is not currently relevant under harfbuzz shaping.
+# Keeping it here for the record, and because we may evolve HB's dotted-circle
+# behavior further in the future, which could make this become relevant again.
+# Marked "random" rather than "fails" because it may (spuriously) appear to pass
+# on B2G or Android devices that completely lack any Sinhala font support.
+random != 553571-1.html 553571-1-notref.html # expect dotted circle in test, not in ref: "fails" under harfbuzz, which doesn't consider the sequence invalid
 fuzzy-if(!contentSameGfxBackendAsCanvas,128,91) random-if(d2d) skip-if(azureSkiaGL) == 555388-1.html 555388-1-ref.html
 == 556661-1.html 556661-1-ref.html
 skip-if(B2G) fails-if(Android) == 557087-1.html 557087-ref.html
@@ -1560,7 +1564,7 @@ fails-if(Android) == 579323-1.html 579323-1-ref.html
 == 579655-1.html 579655-1-ref.html
 skip-if(B2G) fails-if(Android) == 579808-1.html 579808-1-ref.html
 skip-if(B2G) fails-if(Android) random-if(layersGPUAccelerated) == 579985-1.html 579985-1-ref.html # bug 623452 for WinXP; this bug was only for a regression in BasicLayers anyway
-skip-if(B2G) fails-if(Android) == 580160-1.html 580160-1-ref.html
+skip-if(B2G) skip-if(Android) == 580160-1.html 580160-1-ref.html # bug 920927 for Android; issues without the test-plugin
 HTTP(..) == 580863-1.html 580863-1-ref.html
 skip-if(B2G) fails-if(Android) random-if(layersGPUAccelerated) fails-if(/^Windows\x20NT\x205\.1/.test(http.oscpu))  == 581317-1.html 581317-1-ref.html # bug 623456 for WinXP
 == 581579-1.html 581579-1-ref.html
@@ -1625,7 +1629,7 @@ HTTP(..) == 615121-1.html 615121-1-ref.html
 HTTP(..) != 615121-2.html 615121-2-notref.html
 fails-if(Android) == 617242-1.html 617242-1-ref.html
 != 618071.html 618071-notref.html
-fails-if(Android) == 619117-1.html 619117-1-ref.html
+== 619117-1.html 619117-1-ref.html
 HTTP(..) == 619511-1.html 619511-1-ref.html
 skip-if(Android) HTTP(..) == 621253-1-externalFilter.html 621253-1-ref.html
 skip-if(Android) == 621253-1-internalFilter.html 621253-1-ref.html
@@ -1734,7 +1738,7 @@ fuzzy(40,850) fuzzy-if(azureQuartz,68,586) == 797797-2.html 797797-2-ref.html # 
 == 801681-2.html 801681-2-ref.html
 == 801994-1.html 801994-1-ref.html
 == 804323-1.html 804323-1-ref.html
-fuzzy-if(Android,8,400) == 811301-1.html 811301-1-ref.html
+fuzzy-if(Android,8,608) == 811301-1.html 811301-1-ref.html
 == 812824-1.html 812824-1-ref.html
 == 814677.html 814677-ref.html
 skip-if(B2G) == 814952-1.html 814952-1-ref.html
@@ -1775,3 +1779,4 @@ test-pref(layout.css.flexbox.enabled,true) == 849407-1.html 849407-1-ref.html
 fuzzy(1,10000) fuzzy-if(Android&&AndroidVersion>=15,5,10000) == 902330-1.html 902330-1-ref.html
 fuzzy-if(Android,8,400) == 906199-1.html 906199-1-ref.html
 == 921716-1.html 921716-1-ref.html
+fuzzy-if(cocoaWidget,1,40) == 928607-1.html 928607-1-ref.html

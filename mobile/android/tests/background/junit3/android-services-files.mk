@@ -35,6 +35,7 @@ BACKGROUND_TESTS_JAVA_FILES := \
   src/healthreport/TestHealthReportProvider.java \
   src/healthreport/TestHealthReportSQLiteOpenHelper.java \
   src/healthreport/TestProfileInformationCache.java \
+  src/healthreport/upload/TestAndroidSubmissionClient.java \
   src/healthreport/upload/TestHealthReportUploadService.java \
   src/helpers/AndroidSyncTestCase.java \
   src/helpers/BackgroundServiceTestCase.java \
@@ -96,15 +97,8 @@ BACKGROUND_TESTS_JAVA_FILES := \
   src/testhelpers/MockRecord.java \
   src/testhelpers/MockServerSyncStage.java \
   src/testhelpers/MockSharedPreferences.java \
+  src/testhelpers/StubDelegate.java \
   src/testhelpers/WaitHelper.java \
   src/testhelpers/WBORepository.java \
-  $(NULL)
-
-BACKGROUND_TESTS_RES_FILES := \
-  res/drawable-hdpi/icon.png \
-  res/drawable-ldpi/icon.png \
-  res/drawable-mdpi/icon.png \
-  res/layout/main.xml \
-  res/values/strings.xml \
   $(NULL)
 

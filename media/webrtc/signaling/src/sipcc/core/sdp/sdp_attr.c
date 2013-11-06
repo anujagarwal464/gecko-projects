@@ -12,6 +12,7 @@
 #include "sdp_base64.h"
 #include "mozilla/Assertions.h"
 #include "CSFLog.h"
+#include "DataChannelProtocol.h"
 
 static const char* logTag = "sdp_attr";
 
@@ -1222,7 +1223,7 @@ sdp_result_e sdp_parse_attr_fmtp (sdp_t *sdp_p, sdp_attr_t *attr_p,
 	    if (result1 != SDP_SUCCESS) {
 	        fmtp_ptr = sdp_getnextstrtok(fmtp_ptr, tmp, sizeof(tmp), " \t", &result1);
 	        if (result1 != SDP_SUCCESS) {
-                    sdp_attr_fmtp_no_value(sdp_p, "max_fs");
+                    sdp_attr_fmtp_no_value(sdp_p, "max-fs");
 		    SDP_FREE(temp_ptr);
                     return SDP_INVALID_PARAMETER;
 		}
@@ -1234,7 +1235,7 @@ sdp_result_e sdp_parse_attr_fmtp (sdp_t *sdp_p, sdp_attr_t *attr_p,
             strtoul_result = strtoul(tok, &strtoul_end, 10);
 
             if (errno || tok == strtoul_end || strtoul_result == 0 || strtoul_result > UINT_MAX) {
-                sdp_attr_fmtp_invalid_value(sdp_p, "max_fs", tok);
+                sdp_attr_fmtp_invalid_value(sdp_p, "max-fs", tok);
                 SDP_FREE(temp_ptr);
                 return SDP_INVALID_PARAMETER;
 	    }
@@ -1692,7 +1693,32 @@ sdp_result_e sdp_parse_attr_fmtp (sdp_t *sdp_p, sdp_attr_t *attr_p,
     	    fmtp_p->fmtp_format = SDP_FMTP_CODEC_INFO;
     	    fmtp_p->cbr = (u16) strtoul_result;
     	    codec_info_found = TRUE;
-
+        } else if (cpr_strncasecmp(tmp,sdp_fmtp_codec_param[49].name,
+                                   sdp_fmtp_codec_param[49].strlen) == 0) {
+            fmtp_ptr = sdp_getnextstrtok(fmtp_ptr, tmp, sizeof(tmp), "; \t",
+                                         &result1);
+            if (result1 != SDP_SUCCESS) {
+                fmtp_ptr = sdp_getnextstrtok(fmtp_ptr, tmp, sizeof(tmp),
+                                             " \t", &result1);
+                if (result1 != SDP_SUCCESS) {
+                    sdp_attr_fmtp_no_value(sdp_p, "max-fr");
+                    SDP_FREE(temp_ptr);
+                    return SDP_INVALID_PARAMETER;
+                }
+            }
+            tok = tmp;
+            tok++;
+            errno = 0;
+            strtoul_result = strtoul(tok, &strtoul_end, 10);
+            if (errno || tok == strtoul_end || strtoul_result == 0 ||
+                strtoul_result > UINT_MAX) {
+                sdp_attr_fmtp_invalid_value(sdp_p, "max-fr", tok);
+                SDP_FREE(temp_ptr);
+                return SDP_INVALID_PARAMETER;
+            }
+            fmtp_p->fmtp_format = SDP_FMTP_CODEC_INFO;
+            fmtp_p->max_fr = (u32) strtoul_result;
+            codec_info_found = TRUE;
         } else if (fmtp_ptr != NULL && *fmtp_ptr == '\n') {
             temp=PL_strtok_r(tmp, ";", &strtok_state);
             if (temp) {
@@ -1999,6 +2025,8 @@ sdp_result_e sdp_build_attr_fmtp (sdp_t *sdp_p, sdp_attr_t *attr_p, flex_string 
 
       FMTP_BUILD_UNSIGNED(fmtp_p->max_fs > 0, "max-fs", fmtp_p->max_fs)
 
+      FMTP_BUILD_UNSIGNED(fmtp_p->max_fr > 0, "max-fr", fmtp_p->max_fr)
+
       FMTP_BUILD_UNSIGNED(fmtp_p->max_cpb > 0, "max-cpb", fmtp_p->max_cpb)
 
       FMTP_BUILD_UNSIGNED(fmtp_p->max_dpb > 0, "max-dpb", fmtp_p->max_dpb)
@@ -2096,6 +2124,7 @@ sdp_result_e sdp_parse_attr_sctpmap(sdp_t *sdp_p, sdp_attr_t *attr_p,
 {
     sdp_result_e result = SDP_SUCCESS;
     char tmp[SDP_MAX_STRING_LEN];
+    u32 streams;
 
     /* Find the payload type number. */
     attr_p->attr.sctpmap.port = (u16)sdp_getnextnumtok(ptr, &ptr,
@@ -2118,8 +2147,7 @@ sdp_result_e sdp_parse_attr_sctpmap(sdp_t *sdp_p, sdp_attr_t *attr_p,
     sstrncpy(attr_p->attr.sctpmap.protocol, tmp,
         sizeof (attr_p->attr.sctpmap.protocol));
 
-    attr_p->attr.sctpmap.streams = (u16) sdp_getnextnumtok(ptr, &ptr, " \t",
-        &result);
+    streams = sdp_getnextnumtok(ptr, &ptr, " \t", &result);
     if (result != SDP_SUCCESS) {
         sdp_parse_error(sdp_p->peerconnection,
             "%s Warning: No sctpmap streams specified.",
@@ -2127,6 +2155,14 @@ sdp_result_e sdp_parse_attr_sctpmap(sdp_t *sdp_p, sdp_attr_t *attr_p,
         sdp_p->conf_p->num_invalid_param++;
         return SDP_INVALID_PARAMETER;
     }
+
+    /* streams value should be kept in the range 1..MAX_NUM_STREAMS */
+    if (streams < 1) {
+        streams = 1;
+    } else if (streams > MAX_NUM_STREAMS) {
+        streams = MAX_NUM_STREAMS;
+    }
+    attr_p->attr.sctpmap.streams = streams;
 
     return SDP_SUCCESS;
 }

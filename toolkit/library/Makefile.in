@@ -40,6 +40,13 @@ SHARED_LIBRARY_LIBS += \
   $(NULL)
 endif
 
+ifdef MOZ_CONTENT_SANDBOX
+ifeq ($(OS_ARCH),WINNT)
+  LOCAL_INCLUDES += -I$(srcdir)/../sandboxbroker
+  SHARED_LIBRARY_LIBS += ../../security/sandbox/win/src/sandboxbroker/$(LIB_PREFIX)sandboxbroker.$(LIB_SUFFIX)
+endif
+endif
+
 ifdef MOZ_XUL
 SHARED_LIBRARY_LIBS += $(DEPTH)/accessible/src/xul/$(LIB_PREFIX)accessibility_xul_s.$(LIB_SUFFIX)
 endif
@@ -82,26 +89,28 @@ STATIC_LIBS += \
   $(NULL)
 
 ifdef MOZ_CONTENT_SANDBOX #{
+ifeq ($(OS_ARCH),Linux)
 STATIC_LIBS += sandbox_s
+endif
 endif #}
 
 ifdef MOZ_B2G_RIL #{
 STATIC_LIBS += mozril_s
 endif #}
 
-ifdef MOZ_B2G_BT #{
+ifdef MOZ_B2G_BT_BLUEZ #{
 STATIC_LIBS += mozdbus_s
 ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
 OS_LIBS += -ldbus
 endif
 endif #}
 
-ifneq ($(strip $(MOZ_B2G_RIL)$(MOZ_B2G_BT)),) #{
+ifneq ($(strip $(MOZ_B2G_RIL)$(MOZ_B2G_BT)$(filter gonk,$(MOZ_WIDGET_TOOLKIT))),) #{
 STATIC_LIBS += mozipcunixsocket_s
 endif #}
 
 ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
-STATIC_LIBS += moznetd_s
+STATIC_LIBS += moznetd_s mozkeystore_s
 endif
 
 ifdef MOZ_B2G_CAMERA #{
@@ -119,7 +128,7 @@ EXTRA_DSO_LDOPTS += -Wl,-version-script,symverscript
 
 symverscript: symverscript.in
 	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
-		-DVERSION="$(LIBRARY_NAME)$(MOZILLA_VERSION)" $< > $@
+		-DVERSION="$(LIBRARY_NAME)$(MOZILLA_SYMBOLVERSION)" $< > $@
 
 EXTRA_DEPS += symverscript
 endif
@@ -411,15 +420,15 @@ ifdef MOZ_PEERCONNECTION
 COMPONENT_LIBS += peerconnection
 endif
 ifdef MOZ_WEBRTC_SIGNALING
-EXTRA_DSO_LDOPTS += \
+SHARED_LIBRARY_LIBS += \
   $(DEPTH)/media/mtransport/build/$(LIB_PREFIX)mtransport.$(LIB_SUFFIX) \
   $(DEPTH)/media/webrtc/signaling/signaling_ecc/$(LIB_PREFIX)ecc.$(LIB_SUFFIX) \
   $(DEPTH)/media/webrtc/signaling/signaling_sipcc/$(LIB_PREFIX)sipcc.$(LIB_SUFFIX) \
   $(NULL)
 endif
-ifdef MOZ_WEBRTC_IN_LIBXUL
-include $(topsrcdir)/media/webrtc/shared_libs.mk
-EXTRA_DSO_LDOPTS += $(WEBRTC_LIBS)
+
+SHARED_LIBRARY_LIBS += $(call EXPAND_LIBNAME_PATH,webrtc,$(DEPTH)/layout/media/webrtc)
+
 ifeq (WINNT,$(OS_TARGET))
 EXTRA_DSO_LDOPTS += \
   -LIBPATH:"$(MOZ_DIRECTX_SDK_PATH)/lib/$(MOZ_DIRECTX_SDK_CPU_SUFFIX)" \
@@ -427,15 +436,11 @@ EXTRA_DSO_LDOPTS += \
 OS_LIBS += $(call EXPAND_LIBNAME,secur32 crypt32 iphlpapi strmiids dmoguids wmcodecdspuuid amstrmid msdmo wininet)
 endif
 endif
-endif
 
 
 ifdef MOZ_CUBEB
 ifdef MOZ_ALSA
 EXTRA_DSO_LDOPTS += $(MOZ_ALSA_LIBS)
-endif
-ifdef MOZ_PULSEAUDIO
-EXTRA_DSO_LDOPTS += $(MOZ_PULSEAUDIO_LIBS)
 endif
 endif
 
@@ -467,6 +472,10 @@ OS_LIBS += \
   $(NULL)
 endif
 
+ifdef MOZ_RTSP
+OS_LIBS += -lstagefright_foundation
+endif
+
 ifdef MOZ_WMF
 OS_LIBS += $(call EXPAND_LIBNAME,mfuuid wmcodecdspuuid strmiids)
 endif
@@ -494,7 +503,7 @@ OS_LIBS += \
   -framework SystemConfiguration \
   -framework QTKit \
   -framework IOKit \
-  -F/System/Library/PrivateFrameworks -framework CoreUI \
+  -F$(MACOS_PRIVATE_FRAMEWORKS_DIR) -framework CoreUI \
   $(TK_LIBS) \
   $(NULL)
 endif
@@ -550,7 +559,7 @@ EXTRA_DSO_LDOPTS += -Wl,--warn-unresolved-symbols
 endif
 
 ifeq ($(OS_ARCH),WINNT)
-OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 version winspool comdlg32 imm32 msimg32 shlwapi psapi ws2_32 dbghelp rasapi32 rasdlg iphlpapi uxtheme setupapi secur32 sensorsapi portabledeviceguids windowscodecs wininet)
+OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 version winspool comdlg32 imm32 msimg32 shlwapi psapi ws2_32 dbghelp rasapi32 rasdlg iphlpapi uxtheme setupapi secur32 sensorsapi portabledeviceguids windowscodecs wininet wbemuuid)
 ifdef ACCESSIBILITY
 OS_LIBS += $(call EXPAND_LIBNAME,oleacc)
 endif
@@ -585,7 +594,7 @@ endif
 ifdef ACCESSIBILITY
 EXTRA_DSO_LDOPTS += -DELAYLOAD:oleacc.dll
 endif
-ifdef MOZ_WEBRTC_IN_LIBXUL
+ifdef MOZ_WEBRTC
 EXTRA_DSO_LDOPTS += -DELAYLOAD:msdmo.dll
 endif
 endif
@@ -694,6 +703,7 @@ ifdef LINK_GTEST
 COMPONENT_LIBS += \
   gtest \
   gfxtest \
+  ssltest \
   $(NULL)
 endif
 

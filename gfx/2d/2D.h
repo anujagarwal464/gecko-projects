@@ -74,23 +74,19 @@ struct NativeFont {
  * mCompositionOp - The operator that indicates how the source and destination
  *                  patterns are blended.
  * mAntiAliasMode - The AntiAlias mode used for this drawing operation.
- * mSnapping      - Whether this operation is snapped to pixel boundaries.
  */
 struct DrawOptions {
   DrawOptions(Float aAlpha = 1.0f,
               CompositionOp aCompositionOp = OP_OVER,
-              AntialiasMode aAntialiasMode = AA_DEFAULT,
-              Snapping aSnapping = SNAP_NONE)
+              AntialiasMode aAntialiasMode = AA_DEFAULT)
     : mAlpha(aAlpha)
     , mCompositionOp(aCompositionOp)
     , mAntialiasMode(aAntialiasMode)
-    , mSnapping(aSnapping)
   {}
 
   Float mAlpha;
   CompositionOp mCompositionOp : 8;
   AntialiasMode mAntialiasMode : 3;
-  Snapping mSnapping : 1;
 };
 
 /*
@@ -448,6 +444,11 @@ public:
    * mutable.
    */
   virtual FillRule GetFillRule() const = 0;
+
+  virtual Float ComputeLength() { return 0; }
+
+  virtual Point ComputePointAtLength(Float aLength,
+                                     Point* aTangent) { return Point(); }
 };
 
 /* The PathBuilder class allows path creation. Once finish is called on the
@@ -573,6 +574,15 @@ public:
   virtual TemporaryRef<SourceSurface> Snapshot() = 0;
   virtual IntSize GetSize() = 0;
 
+  /**
+   * If possible returns the bits to this DrawTarget for direct manipulation. While
+   * the bits is locked any modifications to this DrawTarget is forbidden.
+   * Release takes the original data pointer for safety.
+   */
+  virtual bool LockBits(uint8_t** aData, IntSize* aSize,
+                        int32_t* aStride, SurfaceFormat* aFormat) { return false; }
+  virtual void ReleaseBits(uint8_t* aData) {}
+
   /* Ensure that the DrawTarget backend has flushed all drawing operations to
    * this draw target. This must be called before using the backing surface of
    * this draw target outside of GFX 2D code.
@@ -637,6 +647,19 @@ public:
   virtual void CopySurface(SourceSurface *aSurface,
                            const IntRect &aSourceRect,
                            const IntPoint &aDestination) = 0;
+
+  /*
+   * Same as CopySurface, except uses itself as the source.
+   *
+   * Some backends may be able to optimize this better
+   * than just taking a snapshot and using CopySurface.
+   */
+  virtual void CopyRect(const IntRect &aSourceRect,
+                        const IntPoint &aDestination)
+  {
+    RefPtr<SourceSurface> source = Snapshot();
+    CopySurface(source, aSourceRect, aDestination);
+  }
 
   /*
    * Fill a rectangle on the DrawTarget with a certain source pattern.
@@ -768,9 +791,9 @@ public:
                                                                   SurfaceFormat aFormat) const = 0;
 
   /*
-   * Create a SourceSurface optimized for use with this DrawTarget from
-   * an arbitrary other SourceSurface. This may return aSourceSurface or some
-   * other existing surface.
+   * Create a SourceSurface optimized for use with this DrawTarget from an
+   * arbitrary SourceSurface type supported by this backend. This may return
+   * aSourceSurface or some other existing surface.
    */
   virtual TemporaryRef<SourceSurface> OptimizeSourceSurface(SourceSurface *aSurface) const = 0;
 
@@ -910,6 +933,10 @@ public:
 
   static TemporaryRef<DrawTarget> CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize);
 
+  static TemporaryRef<SourceSurface>
+    CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
+                                       SurfaceFormat aFormat);
+
   static TemporaryRef<DrawTarget>
     CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFormat aFormat);
 
@@ -971,7 +998,12 @@ public:
                                                       GrGLInterface* aGrGLInterface,
                                                       const IntSize &aSize,
                                                       SurfaceFormat aFormat);
+
+  static void
+    SetGlobalSkiaCacheLimits(int aCount, int aSizeInBytes);
 #endif
+
+  static void PurgeTextureCaches();
 
 #if defined(USE_SKIA) && defined(MOZ_ENABLE_FREETYPE)
   static TemporaryRef<GlyphRenderingOptions>

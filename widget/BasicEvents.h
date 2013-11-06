@@ -622,7 +622,7 @@ public:
     mFlags.mBubbles = true;
   }
 
-  ~WidgetEvent()
+  virtual ~WidgetEvent()
   {
     MOZ_COUNT_DTOR(WidgetEvent);
   }
@@ -677,13 +677,19 @@ public:
    */
 
   /**
-   * Returns true if the event is WidgetInputEvent or inherits it.
+   * As*Event() returns the pointer of the instance only when the instance is
+   * the class or one of its derived class.
    */
-  bool IsInputDerivedEvent() const;
-  /**
-   * Returns true if the event is WidgetMouseEvent or inherits it.
-   */
-  bool IsMouseDerivedEvent() const;
+#define NS_ROOT_EVENT_CLASS(aPrefix, aName)
+#define NS_EVENT_CLASS(aPrefix, aName) \
+  virtual aPrefix##aName* As##aName(); \
+  const aPrefix##aName* As##aName() const;
+
+#include "mozilla/EventClassList.h"
+
+#undef NS_EVENT_CLASS
+#undef NS_ROOT_EVENT_CLASS
+
   /**
    * Returns true if the event is a query content event.
    */
@@ -723,14 +729,6 @@ public:
    */
   bool HasPluginActivationEventMessage() const;
 
-  /**
-   * Returns true if left click event.
-   */
-  bool IsLeftClickEvent() const;
-  /**
-   * Returns true if the event is a context menu event caused by key.
-   */
-  bool IsContextMenuKeyEvent() const;
   /**
    * Returns true if the event is native event deliverer event for plugin and
    * it should be retarted to focused document.
@@ -805,6 +803,8 @@ protected:
   }
 
 public:
+  virtual WidgetGUIEvent* AsGUIEvent() MOZ_OVERRIDE { return this; }
+
   WidgetGUIEvent(bool aIsTrusted, uint32_t aMessage, nsIWidget* aWidget) :
     WidgetEvent(aIsTrusted, aMessage, NS_GUI_EVENT),
     widget(aWidget), pluginEvent(nullptr)
@@ -892,6 +892,8 @@ protected:
   }
 
 public:
+  virtual WidgetInputEvent* AsInputEvent() MOZ_OVERRIDE { return this; }
+
   WidgetInputEvent(bool aIsTrusted, uint32_t aMessage, nsIWidget* aWidget) :
     WidgetGUIEvent(aIsTrusted, aMessage, aWidget, NS_INPUT_EVENT),
     modifiers(0)
@@ -1006,6 +1008,8 @@ protected:
   }
 
 public:
+  virtual InternalUIEvent* AsUIEvent() MOZ_OVERRIDE { return this; }
+
   InternalUIEvent(bool aIsTrusted, uint32_t aMessage, int32_t aDetail) :
     WidgetGUIEvent(aIsTrusted, aMessage, nullptr, NS_UI_EVENT),
     detail(aDetail)

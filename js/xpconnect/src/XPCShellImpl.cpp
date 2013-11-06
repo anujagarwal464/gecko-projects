@@ -101,18 +101,18 @@ static const char kXPConnectServiceContractID[] = "@mozilla.org/js/xpc/XPConnect
 #define EXITCODE_RUNTIME_ERROR 3
 #define EXITCODE_FILE_NOT_FOUND 4
 
-FILE *gOutFile = NULL;
-FILE *gErrFile = NULL;
-FILE *gInFile = NULL;
+static FILE *gOutFile = nullptr;
+static FILE *gErrFile = nullptr;
+static FILE *gInFile = nullptr;
 
-int gExitCode = 0;
-bool gIgnoreReportedErrors = false;
-bool gQuitting = false;
+static int gExitCode = 0;
+static bool gIgnoreReportedErrors = false;
+static bool gQuitting = false;
 static bool reportWarnings = true;
 static bool compileOnly = false;
 
-JSPrincipals *gJSPrincipals = nullptr;
-nsAutoString *gWorkingDirectory = nullptr;
+static JSPrincipals *gJSPrincipals = nullptr;
+static nsAutoString *gWorkingDirectory = nullptr;
 
 static bool
 GetLocationProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue vp)
@@ -122,7 +122,7 @@ GetLocationProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
     return false;
 #else
     JS::RootedScript script(cx);
-    JS_DescribeScriptedCaller(cx, &script, NULL);
+    JS_DescribeScriptedCaller(cx, &script, nullptr);
     const char *filename = JS_GetScriptFilename(cx, script);
 
     if (filename) {
@@ -133,7 +133,7 @@ GetLocationProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
 #if defined(XP_WIN)
         // convert from the system codepage to UTF-16
         int bufferSize = MultiByteToWideChar(CP_ACP, 0, filename,
-                                             -1, NULL, 0);
+                                             -1, nullptr, 0);
         nsAutoString filenameString;
         filenameString.SetLength(bufferSize);
         MultiByteToWideChar(CP_ACP, 0, filename,
@@ -387,17 +387,18 @@ IgnoreReportedErrors(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 DumpXPC(JSContext *cx, unsigned argc, jsval *vp)
 {
-    int32_t depth = 2;
+    JS::CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (argc > 0) {
-        if (!JS_ValueToInt32(cx, JS_ARGV(cx, vp)[0], &depth))
+    uint16_t depth = 2;
+    if (args.length() > 0) {
+        if (!JS::ToUint16(cx, args[0], &depth))
             return false;
     }
 
     nsCOMPtr<nsIXPConnect> xpc = do_GetService(nsIXPConnect::GetCID());
     if (xpc)
         xpc->DebugDump(int16_t(depth));
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
+    args.rval().setUndefined();
     return true;
 }
 
@@ -417,103 +418,16 @@ GC(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 GCZeal(JSContext *cx, unsigned argc, jsval *vp)
 {
+    CallArgs args = CallArgsFromVp(argc, vp);
     uint32_t zeal;
-    if (!JS_ValueToECMAUint32(cx, argc ? JS_ARGV(cx, vp)[0] : JSVAL_VOID, &zeal))
+    if (!ToUint32(cx, args.get(0), &zeal))
         return false;
 
     JS_SetGCZeal(cx, uint8_t(zeal), JS_DEFAULT_ZEAL_FREQ);
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
+    args.rval().setUndefined();
     return true;
 }
 #endif
-
-#ifdef DEBUG
-
-static bool
-DumpHeap(JSContext *cx, unsigned argc, jsval *vp)
-{
-    void* startThing = NULL;
-    JSGCTraceKind startTraceKind = JSTRACE_OBJECT;
-    void *thingToFind = NULL;
-    size_t maxDepth = (size_t)-1;
-    void *thingToIgnore = NULL;
-    FILE *dumpFile;
-    bool ok;
-
-    jsval *argv = JS_ARGV(cx, vp);
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
-
-    vp = argv + 0;
-    JSAutoByteString fileName;
-    if (argc > 0 && *vp != JSVAL_NULL && *vp != JSVAL_VOID) {
-        JSString *str;
-
-        str = JS_ValueToString(cx, *vp);
-        if (!str)
-            return false;
-        *vp = STRING_TO_JSVAL(str);
-        if (!fileName.encodeLatin1(cx, str))
-            return false;
-    }
-
-    vp = argv + 1;
-    if (argc > 1 && *vp != JSVAL_NULL && *vp != JSVAL_VOID) {
-        if (!JSVAL_IS_TRACEABLE(*vp))
-            goto not_traceable_arg;
-        startThing = JSVAL_TO_TRACEABLE(*vp);
-        startTraceKind = JSVAL_TRACE_KIND(*vp);
-    }
-
-    vp = argv + 2;
-    if (argc > 2 && *vp != JSVAL_NULL && *vp != JSVAL_VOID) {
-        if (!JSVAL_IS_TRACEABLE(*vp))
-            goto not_traceable_arg;
-        thingToFind = JSVAL_TO_TRACEABLE(*vp);
-    }
-
-    vp = argv + 3;
-    if (argc > 3 && *vp != JSVAL_NULL && *vp != JSVAL_VOID) {
-        uint32_t depth;
-
-        if (!JS_ValueToECMAUint32(cx, *vp, &depth))
-            return false;
-        maxDepth = depth;
-    }
-
-    vp = argv + 4;
-    if (argc > 4 && *vp != JSVAL_NULL && *vp != JSVAL_VOID) {
-        if (!JSVAL_IS_TRACEABLE(*vp))
-            goto not_traceable_arg;
-        thingToIgnore = JSVAL_TO_TRACEABLE(*vp);
-    }
-
-    if (!fileName) {
-        dumpFile = gOutFile;
-    } else {
-        dumpFile = fopen(fileName.ptr(), "w");
-        if (!dumpFile) {
-            fprintf(gErrFile, "dumpHeap: can't open %s: %s\n",
-                    fileName.ptr(), strerror(errno));
-            return false;
-        }
-    }
-
-    ok = JS_DumpHeap(JS_GetRuntime(cx), dumpFile, startThing, startTraceKind, thingToFind,
-                     maxDepth, thingToIgnore);
-    if (dumpFile != gOutFile)
-        fclose(dumpFile);
-    if (!ok)
-        JS_ReportOutOfMemory(cx);
-    return ok;
-
-  not_traceable_arg:
-    fprintf(gErrFile,
-            "dumpHeap: argument %u is not null or a heap-allocated thing\n",
-            (unsigned)(vp - argv));
-    return false;
-}
-
-#endif /* DEBUG */
 
 static bool
 SendCommand(JSContext* cx,
@@ -546,96 +460,63 @@ SendCommand(JSContext* cx,
     return true;
 }
 
-/*
- * JSContext option name to flag map. The option names are in alphabetical
- * order for better reporting.
- */
-static const struct JSOption {
-    const char  *name;
-    uint32_t    flag;
-} js_options[] = {
-    {"strict",          JSOPTION_EXTRA_WARNINGS},
-    {"werror",          JSOPTION_WERROR},
-    {"strict_mode",     JSOPTION_STRICT_MODE},
-};
-
-static uint32_t
-MapContextOptionNameToFlag(JSContext* cx, const char* name)
-{
-    for (size_t i = 0; i < ArrayLength(js_options); ++i) {
-        if (strcmp(name, js_options[i].name) == 0)
-            return js_options[i].flag;
-    }
-
-    char* msg = JS_sprintf_append(NULL,
-                                  "unknown option name '%s'."
-                                  " The valid names are ", name);
-    for (size_t i = 0; i < ArrayLength(js_options); ++i) {
-        if (!msg)
-            break;
-        msg = JS_sprintf_append(msg, "%s%s", js_options[i].name,
-                                (i + 2 < ArrayLength(js_options)
-                                 ? ", "
-                                 : i + 2 == ArrayLength(js_options)
-                                 ? " and "
-                                 : "."));
-    }
-    if (!msg) {
-        JS_ReportOutOfMemory(cx);
-    } else {
-        JS_ReportError(cx, msg);
-        free(msg);
-    }
-    return 0;
-}
-
 static bool
 Options(JSContext *cx, unsigned argc, jsval *vp)
 {
-    uint32_t optset, flag;
-    JSString *str;
-    char *names;
-    bool found;
+    JS::CallArgs args = CallArgsFromVp(argc, vp);
+    ContextOptions oldOptions = ContextOptionsRef(cx);
 
-    optset = 0;
-    jsval *argv = JS_ARGV(cx, vp);
-    for (unsigned i = 0; i < argc; i++) {
-        str = JS_ValueToString(cx, argv[i]);
+    for (unsigned i = 0; i < argc; ++i) {
+        JSString *str = JS_ValueToString(cx, args[i]);
         if (!str)
             return false;
-        argv[i] = STRING_TO_JSVAL(str);
+
         JSAutoByteString opt(cx, str);
         if (!opt)
             return false;
-        flag = MapContextOptionNameToFlag(cx,  opt.ptr());
-        if (!flag)
-            return false;
-        optset |= flag;
-    }
-    optset = JS_ToggleOptions(cx, optset);
 
-    names = NULL;
-    found = false;
-    for (size_t i = 0; i < ArrayLength(js_options); i++) {
-        if (js_options[i].flag & optset) {
-            found = true;
-            names = JS_sprintf_append(names, "%s%s",
-                                      names ? "," : "", js_options[i].name);
-            if (!names)
-                break;
+        if (strcmp(opt.ptr(), "strict") == 0)
+            ContextOptionsRef(cx).toggleExtraWarnings();
+        else if (strcmp(opt.ptr(), "werror") == 0)
+            ContextOptionsRef(cx).toggleWerror();
+        else if (strcmp(opt.ptr(), "strict_mode") == 0)
+            ContextOptionsRef(cx).toggleStrictMode();
+        else {
+            JS_ReportError(cx, "unknown option name '%s'. The valid names are "
+                           "strict, werror, and strict_mode.", opt.ptr());
+            return false;
         }
     }
-    if (!found)
-        names = strdup("");
-    if (!names) {
-        JS_ReportOutOfMemory(cx);
-        return false;
+
+    char *names = NULL;
+    if (oldOptions.extraWarnings()) {
+        names = JS_sprintf_append(names, "%s", "strict");
+        if (!names) {
+            JS_ReportOutOfMemory(cx);
+            return false;
+        }
     }
-    str = JS_NewStringCopyZ(cx, names);
+    if (oldOptions.werror()) {
+        names = JS_sprintf_append(names, "%s%s", names ? "," : "", "werror");
+        if (!names) {
+            JS_ReportOutOfMemory(cx);
+            return false;
+        }
+    }
+    if (names && oldOptions.strictMode()) {
+        names = JS_sprintf_append(names, "%s%s", names ? "," : "", "strict_mode");
+        if (!names) {
+            JS_ReportOutOfMemory(cx);
+            return false;
+        }
+    }
+
+    JSString *str = JS_NewStringCopyZ(cx, names);
     free(names);
     if (!str)
         return false;
-    JS_SET_RVAL(cx, vp, STRING_TO_JSVAL(str));
+
+    args.rval().setString(str);
     return true;
 }
 
@@ -753,7 +634,7 @@ File(JSContext *cx, unsigned argc, jsval *vp)
   return true;
 }
 
-Value sScriptedOperationCallback = UndefinedValue();
+static Value sScriptedOperationCallback = UndefinedValue();
 
 static bool
 XPCShellOperationCallback(JSContext *cx)
@@ -831,9 +712,6 @@ static const JSFunctionSpec glob_functions[] = {
 #endif
     JS_FS("options",         Options,        0,0),
     JS_FN("parent",          Parent,         1,0),
-#ifdef DEBUG
-    JS_FS("dumpHeap",        DumpHeap,       5,0),
-#endif
     JS_FS("sendCommand",     SendCommand,    1,0),
     JS_FS("atob",            Atob,           1,0),
     JS_FS("btoa",            Btoa,           1,0),
@@ -909,7 +787,7 @@ env_enumerate(JSContext *cx, HandleObject obj)
     if (reflected)
         return true;
 
-    for (evp = (char **)JS_GetPrivate(obj); (name = *evp) != NULL; evp++) {
+    for (evp = (char **)JS_GetPrivate(obj); (name = *evp) != nullptr; evp++) {
         value = strchr(name, '=');
         if (!value)
             continue;
@@ -919,7 +797,7 @@ env_enumerate(JSContext *cx, HandleObject obj)
             ok = false;
         } else {
             ok = JS_DefineProperty(cx, obj, name, STRING_TO_JSVAL(valstr),
-                                   NULL, NULL, JSPROP_ENUMERATE);
+                                   nullptr, nullptr, JSPROP_ENUMERATE);
         }
         value[-1] = '=';
         if (!ok)
@@ -952,7 +830,7 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
         if (!valstr)
             return false;
         if (!JS_DefinePropertyById(cx, obj, id, STRING_TO_JSVAL(valstr),
-                                   NULL, NULL, JSPROP_ENUMERATE)) {
+                                   nullptr, nullptr, JSPROP_ENUMERATE)) {
             return false;
         }
         objp.set(obj);
@@ -978,7 +856,7 @@ typedef enum JSShellErrNum {
     JSShellErr_Limit
 } JSShellErrNum;
 
-const JSErrorFormatString jsShell_ErrorFormatString[JSShellErr_Limit] = {
+static const JSErrorFormatString jsShell_ErrorFormatString[JSShellErr_Limit] = {
 #define MSG_DEF(name, number, count, exception, format) \
     { format, count } ,
 #include "jsshell.msg"
@@ -989,7 +867,7 @@ static const JSErrorFormatString *
 my_GetErrorMessage(void *userRef, const char *locale, const unsigned errorNumber)
 {
     if (errorNumber == 0 || errorNumber >= JSShellErr_Limit)
-        return NULL;
+        return nullptr;
 
     return &jsShell_ErrorFormatString[errorNumber];
 }
@@ -1077,7 +955,7 @@ ProcessFile(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, FILE
                 ok = JS_ExecuteScript(cx, obj, script, result.address());
                 if (ok && result != JSVAL_VOID) {
                     /* Suppress error reports from JS_ValueToString(). */
-                    older = JS_SetErrorReporter(cx, NULL);
+                    older = JS_SetErrorReporter(cx, nullptr);
                     str = JS_ValueToString(cx, result);
                     JS_SetErrorReporter(cx, older);
                     JSAutoByteString bytes;
@@ -1104,7 +982,7 @@ Process(JSContext *cx, JS::Handle<JSObject*> obj, const char *filename, bool for
     } else {
         file = fopen(filename, "r");
         if (!file) {
-            JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
+            JS_ReportErrorNumber(cx, my_GetErrorMessage, nullptr,
                                  JSSMSG_CANT_OPEN,
                                  filename, strerror(errno));
             gExitCode = EXITCODE_FILE_NOT_FOUND;
@@ -1140,17 +1018,17 @@ ProcessArgsForCompartment(JSContext *cx, char **argv, int argc)
                 return;
             break;
         case 'S':
-            JS_ToggleOptions(cx, JSOPTION_WERROR);
+            ContextOptionsRef(cx).toggleWerror();
         case 's':
-            JS_ToggleOptions(cx, JSOPTION_EXTRA_WARNINGS);
+            ContextOptionsRef(cx).toggleExtraWarnings();
             break;
         case 'I':
-            JS_ToggleOptions(cx, JSOPTION_COMPILE_N_GO);
-            JS_ToggleOptions(cx, JSOPTION_ION);
-            JS_ToggleOptions(cx, JSOPTION_ASMJS);
+            ContextOptionsRef(cx).toggleCompileAndGo()
+                                 .toggleIon()
+                                 .toggleAsmJS();
             break;
         case 'n':
-            JS_ToggleOptions(cx, JSOPTION_TYPE_INFERENCE);
+            ContextOptionsRef(cx).toggleTypeInference();
             break;
         }
     }
@@ -1163,7 +1041,7 @@ ProcessArgs(JSContext *cx, JS::Handle<JSObject*> obj, char **argv, int argc, XPC
     FILE *rcfile;
     int i;
     JS::Rooted<JSObject*> argsObj(cx);
-    char *filename = NULL;
+    char *filename = nullptr;
     bool isInteractive = true;
     bool forceTTY = false;
 
@@ -1199,11 +1077,11 @@ ProcessArgs(JSContext *cx, JS::Handle<JSObject*> obj, char **argv, int argc, XPC
      * Create arguments early and define it to root it, so it's safe from any
      * GC calls nested below, and so it is available to -f <file> arguments.
      */
-    argsObj = JS_NewArrayObject(cx, 0, NULL);
+    argsObj = JS_NewArrayObject(cx, 0, nullptr);
     if (!argsObj)
         return 1;
     if (!JS_DefineProperty(cx, obj, "arguments", OBJECT_TO_JSVAL(argsObj),
-                           NULL, NULL, 0)) {
+                           nullptr, nullptr, 0)) {
         return 1;
     }
 
@@ -1212,7 +1090,7 @@ ProcessArgs(JSContext *cx, JS::Handle<JSObject*> obj, char **argv, int argc, XPC
         if (!str)
             return 1;
         if (!JS_DefineElement(cx, argsObj, j, STRING_TO_JSVAL(str),
-                              NULL, NULL, JSPROP_ENUMERATE)) {
+                              nullptr, nullptr, JSPROP_ENUMERATE)) {
             return 1;
         }
     }
@@ -1383,7 +1261,7 @@ nsXPCFunctionThisTranslator::TranslateThis(nsISupports *aInitialThis,
 
 #endif
 
-void
+static void
 XPCShellErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
 {
     if (gIgnoreReportedErrors)
@@ -1411,7 +1289,7 @@ GetCurrentWorkingDirectory(nsAString& workingDirectory)
     //XXX: your platform should really implement this
     return false;
 #elif XP_WIN
-    DWORD requiredLength = GetCurrentDirectoryW(0, NULL);
+    DWORD requiredLength = GetCurrentDirectoryW(0, nullptr);
     workingDirectory.SetLength(requiredLength);
     GetCurrentDirectoryW(workingDirectory.Length(),
                          (LPWSTR)workingDirectory.BeginWriting());
@@ -1674,7 +1552,7 @@ XRE_XPCShellMain(int argc, char **argv, char **envp)
             }
 
             JS::Rooted<JSObject*> envobj(cx);
-            envobj = JS_DefineObject(cx, glob, "environment", &env_class, NULL, 0);
+            envobj = JS_DefineObject(cx, glob, "environment", &env_class, nullptr, 0);
             if (!envobj) {
                 JS_EndRequest(cx);
                 return 1;
@@ -1687,7 +1565,7 @@ XRE_XPCShellMain(int argc, char **argv, char **envp)
                 gWorkingDirectory = &workingDirectory;
 
             JS_DefineProperty(cx, glob, "__LOCATION__", JSVAL_VOID,
-                              GetLocationProperty, NULL, 0);
+                              GetLocationProperty, nullptr, 0);
 
             JS_AddValueRoot(cx, &sScriptedOperationCallback);
             result = ProcessArgs(cx, glob, argv, argc, &dirprovider);
@@ -1706,7 +1584,7 @@ XRE_XPCShellMain(int argc, char **argv, char **envp)
         NS_ERROR("problem shutting down testshell");
 
     // no nsCOMPtrs are allowed to be alive when you call NS_ShutdownXPCOM
-    rv = NS_ShutdownXPCOM( NULL );
+    rv = NS_ShutdownXPCOM( nullptr );
     MOZ_ASSERT(NS_SUCCEEDED(rv), "NS_ShutdownXPCOM failed");
 
 #ifdef TEST_CALL_ON_WRAPPED_JS_AFTER_SHUTDOWN
@@ -1805,7 +1683,7 @@ XPCShellDirProvider::GetFile(const char *prop, bool *persistent,
         char appData[MAX_PATH] = {'\0'};
         char path[MAX_PATH] = {'\0'};
         LPITEMIDLIST pItemIDList;
-        if (FAILED(SHGetSpecialFolderLocation(NULL, CSIDL_LOCAL_APPDATA, &pItemIDList)) ||
+        if (FAILED(SHGetSpecialFolderLocation(nullptr, CSIDL_LOCAL_APPDATA, &pItemIDList)) ||
             FAILED(SHGetPathFromIDListA(pItemIDList, appData))) {
             return NS_ERROR_FAILURE;
         }

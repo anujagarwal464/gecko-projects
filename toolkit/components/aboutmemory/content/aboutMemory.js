@@ -48,11 +48,6 @@ XPCOMUtils.defineLazyGetter(this, "nsGzipConverter",
 let gMgr = Cc["@mozilla.org/memory-reporter-manager;1"]
              .getService(Ci.nsIMemoryReporterManager);
 
-// We need to know about "child-memory-reporter-update" events from child
-// processes.
-Services.obs.addObserver(updateAboutMemoryFromReporters,
-                         "child-memory-reporter-update", false);
-
 let gUnnamedProcessStr = "Main Process";
 
 let gIsDiff = false;
@@ -120,50 +115,6 @@ function debug(x)
 
 function onUnload()
 {
-  Services.obs.removeObserver(updateAboutMemoryFromReporters,
-                              "child-memory-reporter-update");
-}
-
-//---------------------------------------------------------------------------
-
-/**
- * Iterates over each reporter.
- *
- * @param aHandleReport
- *        The function that's called for each non-skipped report.
- */
-function processMemoryReporters(aHandleReport)
-{
-  let handleReport = function(aProcess, aUnsafePath, aKind, aUnits,
-                              aAmount, aDescription) {
-    aHandleReport(aProcess, aUnsafePath, aKind, aUnits, aAmount,
-                  aDescription, /* presence = */ undefined);
-  }
-
-  let e = gMgr.enumerateReporters();
-  while (e.hasMoreElements()) {
-    let mr = e.getNext().QueryInterface(Ci.nsIMemoryReporter);
-    mr.collectReports(handleReport, null);
-  }
-}
-
-/**
- * Iterates over each report.
- *
- * @param aReports
- *        Array of reports, read from a file or the clipboard.
- * @param aHandleReport
- *        The function that's called for each report.
- */
-function processMemoryReportsFromFile(aReports, aHandleReport)
-{
-  // Process each memory reporter with aHandleReport.
-
-  for (let i = 0; i < aReports.length; i++) {
-    let r = aReports[i];
-    aHandleReport(r.process, r.path, r.kind, r.units, r.amount,
-                  r.description, r._presence);
-  }
 }
 
 //---------------------------------------------------------------------------
@@ -430,11 +381,6 @@ function doMMU()
 
 function doMeasure()
 {
-  // Notify any children that they should measure memory consumption, then
-  // update the page.  If any reports come back from children,
-  // updateAboutMemoryFromReporters() will be called again and the page will
-  // regenerate.
-  Services.obs.notifyObservers(null, "child-memory-reporter-request", null);
   updateAboutMemoryFromReporters();
 }
 
@@ -444,14 +390,29 @@ function doMeasure()
  */
 function updateAboutMemoryFromReporters()
 {
-  // First, clear the contents of main.  Necessary because
-  // updateAboutMemoryFromReporters() might be called more than once due to the
-  // "child-memory-reporter-update" observer.
-  updateMainAndFooter("", SHOW_FOOTER);
+  updateMainAndFooter("Measuring...", HIDE_FOOTER);
 
   try {
-    // Process the reports from the memory reporters.
-    appendAboutMemoryMain(processMemoryReporters, gMgr.hasMozMallocUsableSize);
+    let processLiveMemoryReports =
+        function(aHandleReport, aDisplayReports) {
+      let handleReport = function(aProcess, aUnsafePath, aKind, aUnits,
+                                  aAmount, aDescription) {
+        aHandleReport(aProcess, aUnsafePath, aKind, aUnits, aAmount,
+                      aDescription, /* presence = */ undefined);
+      }
+
+      let displayReportsAndFooter = function() {
+        updateMainAndFooter("", SHOW_FOOTER);
+        aDisplayReports();
+      }
+
+      gMgr.getReports(handleReport, null,
+                      displayReportsAndFooter, null);
+    }
+
+    // Process the reports from the live memory reporters.
+    appendAboutMemoryMain(processLiveMemoryReports,
+                          gMgr.hasMozMallocUsableSize);
 
   } catch (ex) {
     handleException(ex);
@@ -480,10 +441,18 @@ function updateAboutMemoryFromJSONObject(aObj)
                 "missing 'hasMozMallocUsableSize' property");
     assertInput(aObj.reports && aObj.reports instanceof Array,
                 "missing or non-array 'reports' property");
-    let process = function(aHandleReport) {
-      processMemoryReportsFromFile(aObj.reports, aHandleReport);
+
+    let processMemoryReportsFromFile =
+        function(aHandleReport, aDisplayReports) {
+      for (let i = 0; i < aObj.reports.length; i++) {
+        let r = aObj.reports[i];
+        aHandleReport(r.process, r.path, r.kind, r.units, r.amount,
+                      r.description, r._presence);
+      }
+      aDisplayReports();
     }
-    appendAboutMemoryMain(process, aObj.hasMozMallocUsableSize);
+    appendAboutMemoryMain(processMemoryReportsFromFile,
+                          aObj.hasMozMallocUsableSize);
   } catch (ex) {
     handleException(ex);
   }
@@ -839,71 +808,6 @@ function PColl()
  */
 function appendAboutMemoryMain(aProcessReports, aHasMozMallocUsableSize)
 {
-  let pcollsByProcess = getPCollsByProcess(aProcessReports);
-
-  // Sort the processes.
-  let processes = Object.keys(pcollsByProcess);
-  processes.sort(function(aProcessA, aProcessB) {
-    assert(aProcessA != aProcessB,
-           "Elements of Object.keys() should be unique, but " +
-           "saw duplicate '" + aProcessA + "' elem.");
-
-    // Always put the main process first.
-    if (aProcessA == gUnnamedProcessStr) {
-      return -1;
-    }
-    if (aProcessB == gUnnamedProcessStr) {
-      return 1;
-    }
-
-    // Then sort by resident size.
-    let nodeA = pcollsByProcess[aProcessA]._degenerates['resident'];
-    let nodeB = pcollsByProcess[aProcessB]._degenerates['resident'];
-    let residentA = nodeA ? nodeA._amount : -1;
-    let residentB = nodeB ? nodeB._amount : -1;
-
-    if (residentA > residentB) {
-      return -1;
-    }
-    if (residentA < residentB) {
-      return 1;
-    }
-
-    // Then sort by process name.
-    if (aProcessA < aProcessB) {
-      return -1;
-    }
-    if (aProcessA > aProcessB) {
-      return 1;
-    }
-
-    return 0;
-  });
-
-  // Generate output for each process.
-  for (let i = 0; i < processes.length; i++) {
-    let process = processes[i];
-    let section = appendElement(gMain, 'div', 'section');
-
-    appendProcessAboutMemoryElements(section, process,
-                                     pcollsByProcess[process]._trees,
-                                     pcollsByProcess[process]._degenerates,
-                                     pcollsByProcess[process]._heapTotal,
-                                     aHasMozMallocUsableSize);
-  }
-}
-
-/**
- * This function reads all the memory reports, and puts that data in structures
- * that will be used to generate the page.
- *
- * @param aProcessReports
- *        Function that extracts the memory reports from the reporters or from
- *        file.
- * @return The table of PColls by process.
- */
-function getPCollsByProcess(aProcessReports)
-{
   let pcollsByProcess = {};
 
   // This regexp matches sentences and sentence fragments, i.e. strings that
@@ -1008,9 +912,61 @@ function getPCollsByProcess(aProcessReports)
     }
   }
 
-  aProcessReports(handleReport);
+  function displayReports()
+  {
+    // Sort the processes.
+    let processes = Object.keys(pcollsByProcess);
+    processes.sort(function(aProcessA, aProcessB) {
+      assert(aProcessA != aProcessB,
+             "Elements of Object.keys() should be unique, but " +
+             "saw duplicate '" + aProcessA + "' elem.");
 
-  return pcollsByProcess;
+      // Always put the main process first.
+      if (aProcessA == gUnnamedProcessStr) {
+        return -1;
+      }
+      if (aProcessB == gUnnamedProcessStr) {
+        return 1;
+      }
+
+      // Then sort by resident size.
+      let nodeA = pcollsByProcess[aProcessA]._degenerates['resident'];
+      let nodeB = pcollsByProcess[aProcessB]._degenerates['resident'];
+      let residentA = nodeA ? nodeA._amount : -1;
+      let residentB = nodeB ? nodeB._amount : -1;
+
+      if (residentA > residentB) {
+        return -1;
+      }
+      if (residentA < residentB) {
+        return 1;
+      }
+
+      // Then sort by process name.
+      if (aProcessA < aProcessB) {
+        return -1;
+      }
+      if (aProcessA > aProcessB) {
+        return 1;
+      }
+
+      return 0;
+    });
+
+    // Generate output for each process.
+    for (let i = 0; i < processes.length; i++) {
+      let process = processes[i];
+      let section = appendElement(gMain, 'div', 'section');
+
+      appendProcessAboutMemoryElements(section, i, process,
+                                       pcollsByProcess[process]._trees,
+                                       pcollsByProcess[process]._degenerates,
+                                       pcollsByProcess[process]._heapTotal,
+                                       aHasMozMallocUsableSize);
+    }
+  }
+
+  aProcessReports(handleReport, displayReports);
 }
 
 //---------------------------------------------------------------------------
@@ -1308,6 +1264,8 @@ function appendWarningElements(aP, aHasKnownHeapAllocated,
  *
  * @param aP
  *        The parent DOM node.
+ * @param aN
+ *        The number of the process, starting at 0.
  * @param aProcess
  *        The name of the process.
  * @param aTrees
@@ -1318,10 +1276,34 @@ function appendWarningElements(aP, aHasKnownHeapAllocated,
  *        Boolean indicating if moz_malloc_usable_size works.
  * @return The generated text.
  */
-function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
-                                          aHeapTotal, aHasMozMallocUsableSize)
+function appendProcessAboutMemoryElements(aP, aN, aProcess, aTrees,
+                                          aDegenerates, aHeapTotal,
+                                          aHasMozMallocUsableSize)
 {
-  appendElementWithText(aP, "h1", "", aProcess + "\n\n");
+  const kUpwardsArrow   = "\u2191",
+        kDownwardsArrow = "\u2193";
+
+  let appendLink = function(aHere, aThere, aArrow) {
+    let link = appendElementWithText(aP, "a", "upDownArrow", aArrow);
+    link.href = "#" + aThere + aN;
+    link.id = aHere + aN;
+    link.title = "Go to the " + aThere + " of " + aProcess;
+    link.style = "text-decoration: none";
+
+    // This jumps to the anchor without the page location getting the anchor
+    // name tacked onto its end, which is what happens with a vanilla link.
+    link.addEventListener("click", function(event) {
+      document.documentElement.scrollTop =
+        document.querySelector(event.target.href).offsetTop;
+      event.preventDefault();
+    }, false);
+
+    // This gives nice spacing when we copy and paste.
+    appendElementWithText(aP, "span", "", "\n");
+  }
+
+  appendElementWithText(aP, "h1", "", aProcess);
+  appendLink("start", "end", kDownwardsArrow);
 
   // We'll fill this in later.
   let warningsDiv = appendElement(aP, "div", "accuracyWarning");
@@ -1347,7 +1329,7 @@ function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
       appendTreeElements(pre, t, aProcess, "");
       delete aTrees[treeName];
     }
-    appendTextNode(aP, "\n");  // gives nice spacing when we cut and paste
+    appendTextNode(aP, "\n");  // gives nice spacing when we copy and paste
   }
 
   // Fill in and sort all the non-degenerate other trees.
@@ -1388,13 +1370,16 @@ function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
     let padText = pad("", maxStringLength - t.toString().length, ' ');
     appendTreeElements(pre, t, aProcess, padText);
   }
-  appendTextNode(aP, "\n");  // gives nice spacing when we cut and paste
+  appendTextNode(aP, "\n");  // gives nice spacing when we copy and paste
 
   // Add any warnings about inaccuracies due to platform limitations.
   // These must be computed after generating all the text.  The newlines give
-  // nice spacing if we cut+paste into a text buffer.
+  // nice spacing if we copy+paste into a text buffer.
   appendWarningElements(warningsDiv, hasKnownHeapAllocated,
                         aHasMozMallocUsableSize);
+
+  appendElementWithText(aP, "h3", "", "End of " + aProcess);
+  appendLink("end", "start", kUpwardsArrow);
 }
 
 /**
@@ -1517,7 +1502,7 @@ function pad(aS, aN, aC)
 
 // There's a subset of the Unicode "light" box-drawing chars that is widely
 // implemented in terminals, and this code sticks to that subset to maximize
-// the chance that cutting and pasting about:memory output to a terminal will
+// the chance that copying and pasting about:memory output to a terminal will
 // work correctly.
 const kHorizontal                   = "\u2500",
       kVertical                     = "\u2502",
@@ -1842,9 +1827,11 @@ function saveReportsToFile()
       let dumper = Cc["@mozilla.org/memory-info-dumper;1"]
                      .getService(Ci.nsIMemoryInfoDumper);
 
-      dumper.dumpMemoryReportsToNamedFile(fp.file.path);
+      let finishDumping = () => {
+        updateMainAndFooter("Saved reports to " + fp.file.path, HIDE_FOOTER);
+      }
 
-      updateMainAndFooter("Saved reports to " + fp.file.path, HIDE_FOOTER);
+      dumper.dumpMemoryReportsToNamedFile(fp.file.path, finishDumping, null);
     }
   };
   fp.open(fpCallback);

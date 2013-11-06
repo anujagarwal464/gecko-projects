@@ -25,6 +25,7 @@
 #include "Logging.h"
 #include "HelpersSkia.h"
 #include "Tools.h"
+#include "DataSurfaceHelpers.h"
 #include <algorithm>
 
 namespace mozilla {
@@ -76,6 +77,8 @@ public:
 };
 
 #ifdef USE_SKIA_GPU
+int DrawTargetSkia::sTextureCacheCount = 256;
+int DrawTargetSkia::sTextureCacheSizeInBytes = 96*1024*1024;
 
 static std::vector<DrawTargetSkia*>&
 GLDrawTargets()
@@ -84,35 +87,27 @@ GLDrawTargets()
   return targets;
 }
 
-#define SKIA_MAX_CACHE_ITEMS 256
-
-// 64MB was chosen because it seems we can pass all of our tests
-// on the current hardware (Tegra2) without running out of memory
-#define SKIA_TOTAL_CACHE_SIZE 64*1024*1024
-
-static void
-SetCacheLimits()
+void
+DrawTargetSkia::RebalanceCacheLimits()
 {
+  // Divide the global cache limits equally between all currently active GL-backed
+  // Skia DrawTargets.
   std::vector<DrawTargetSkia*>& targets = GLDrawTargets();
-  uint32_t size = targets.size();
-  if (size == 0)
+  uint32_t targetCount = targets.size();
+  if (targetCount == 0)
     return;
 
-  int individualCacheSize = SKIA_TOTAL_CACHE_SIZE / size;
-  for (uint32_t i = 0; i < size; i++) {
-    targets[i]->SetCacheLimits(SKIA_MAX_CACHE_ITEMS, individualCacheSize);
+  int individualCacheSize = sTextureCacheSizeInBytes / targetCount;
+  for (uint32_t i = 0; i < targetCount; i++) {
+    targets[i]->SetCacheLimits(sTextureCacheCount, individualCacheSize);
   }
-
 }
-
-#undef SKIA_MAX_CACHE_ITEMS
-#undef SKIA_TOTAL_CACHE_SIZE
 
 static void
 AddGLDrawTarget(DrawTargetSkia* target)
 {
   GLDrawTargets().push_back(target);
-  SetCacheLimits();
+  DrawTargetSkia::RebalanceCacheLimits();
 }
 
 static void
@@ -122,7 +117,37 @@ RemoveGLDrawTarget(DrawTargetSkia* target)
   std::vector<DrawTargetSkia*>::iterator it = std::find(targets.begin(), targets.end(), target);
   if (it != targets.end()) {
     targets.erase(it);
-    SetCacheLimits();
+    DrawTargetSkia::RebalanceCacheLimits();
+  }
+}
+
+void
+DrawTargetSkia::SetGlobalCacheLimits(int aCount, int aSizeInBytes)
+{
+  sTextureCacheCount = aCount;
+  sTextureCacheSizeInBytes = aSizeInBytes;
+
+  DrawTargetSkia::RebalanceCacheLimits();
+}
+
+void
+DrawTargetSkia::PurgeCache()
+{
+  if (mGrContext) {
+    mGrContext->purgeCache();
+  }
+}
+
+/* static */ void
+DrawTargetSkia::PurgeTextureCaches()
+{
+  std::vector<DrawTargetSkia*>& targets = GLDrawTargets();
+  uint32_t targetCount = targets.size();
+  if (targetCount == 0)
+    return;
+
+  for (uint32_t i = 0; i < targetCount; i++) {
+    targets[i]->PurgeCache();
   }
 }
 
@@ -271,8 +296,6 @@ struct AutoPaintSetup {
       mPaint.setAntiAlias(false);
     }
 
-    MOZ_ASSERT(aOptions.mSnapping == SNAP_NONE, "Pixel snapping not supported yet!");
-    
     // TODO: We could skip the temporary for operator_source and just
     // clear the clip rect. The other operators would be harder
     // but could be worth it to skip pushing a group.
@@ -600,9 +623,9 @@ DrawTargetSkia::Mask(const Pattern &aSource,
 
 TemporaryRef<SourceSurface>
 DrawTargetSkia::CreateSourceSurfaceFromData(unsigned char *aData,
-                                             const IntSize &aSize,
-                                             int32_t aStride,
-                                             SurfaceFormat aFormat) const
+                                            const IntSize &aSize,
+                                            int32_t aStride,
+                                            SurfaceFormat aFormat) const
 {
   RefPtr<SourceSurfaceSkia> newSurf = new SourceSurfaceSkia();
 
@@ -627,7 +650,20 @@ DrawTargetSkia::CreateSimilarDrawTarget(const IntSize &aSize, SurfaceFormat aFor
 TemporaryRef<SourceSurface>
 DrawTargetSkia::OptimizeSourceSurface(SourceSurface *aSurface) const
 {
-  return nullptr;
+  if (aSurface->GetType() == SURFACE_SKIA) {
+    return aSurface;
+  }
+
+  if (aSurface->GetType() != SURFACE_DATA) {
+    return nullptr;
+  }
+
+  RefPtr<DataSourceSurface> data = aSurface->GetDataSurface();
+  RefPtr<SourceSurface> surface = CreateSourceSurfaceFromData(data->GetData(),
+                                                              data->GetSize(),
+                                                              data->Stride(),
+                                                              data->GetFormat());
+  return data.forget();
 }
 
 TemporaryRef<SourceSurface>
@@ -642,13 +678,13 @@ DrawTargetSkia::CopySurface(SourceSurface *aSurface,
                             const IntPoint &aDestination)
 {
   //TODO: We could just use writePixels() here if the sourceRect is the entire source
-  
+
   if (aSurface->GetType() != SURFACE_SKIA) {
     return;
   }
 
   MarkChanged();
-  
+
   const SkBitmap& bitmap = static_cast<SourceSurfaceSkia*>(aSurface)->GetBitmap();
 
   mCanvas->save();
@@ -732,7 +768,6 @@ DrawTargetSkia::SetCacheLimits(int aCount, int aSizeInBytes)
   MOZ_ASSERT(mGrContext, "No GrContext!");
   mGrContext->setTextureCacheLimits(aCount, aSizeInBytes);
 }
-
 #endif
 
 void
@@ -744,19 +779,14 @@ DrawTargetSkia::Init(unsigned char* aData, const IntSize &aSize, int32_t aStride
     ConvertBGRXToBGRA(aData, aSize, aStride);
     isOpaque = true;
   }
-  
-  SkAutoTUnref<SkDevice> device(new SkDevice(GfxFormatToSkiaConfig(aFormat), aSize.width, aSize.height, isOpaque));
 
-  SkBitmap bitmap = (SkBitmap)device->accessBitmap(true);
-  bitmap.lockPixels();
-  bitmap.setPixels(aData);
+  SkBitmap bitmap;
   bitmap.setConfig(GfxFormatToSkiaConfig(aFormat), aSize.width, aSize.height, aStride);
-  bitmap.unlockPixels();
-  bitmap.notifyPixelsChanged();
+  bitmap.setPixels(aData);
+  bitmap.setIsOpaque(isOpaque);
+  SkAutoTUnref<SkCanvas> canvas(new SkCanvas(new SkDevice(bitmap)));
 
-  SkAutoTUnref<SkCanvas> canvas(new SkCanvas(device.get()));
   mSize = aSize;
-
   mCanvas = canvas.get();
   mFormat = aFormat;
 }

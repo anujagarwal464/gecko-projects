@@ -127,6 +127,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
     "iconchange": this._fireEventFromMsg,
     "close": this._fireEventFromMsg,
     "resize": this._fireEventFromMsg,
+    "activitydone": this._fireEventFromMsg,
     "opensearch": this._fireEventFromMsg,
     "securitychange": this._fireEventFromMsg,
     "error": this._fireEventFromMsg,
@@ -195,7 +196,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
 
   let principal = this._frameElement.ownerDocument.nodePrincipal;
   let perm = Services.perms
-             .testExactPermissionFromPrincipal(principal, "inputmethod-manage");
+             .testExactPermissionFromPrincipal(principal, "input-manage");
   if (perm === Ci.nsIPermissionManager.ALLOW_ACTION) {
     defineMethod('setInputMethodActive', this._setInputMethodActive);
   }

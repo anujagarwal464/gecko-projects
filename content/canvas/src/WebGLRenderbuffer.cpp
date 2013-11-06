@@ -48,7 +48,7 @@ WebGLRenderbuffer::WebGLRenderbuffer(WebGLContext *context)
     , mInternalFormat(0)
     , mInternalFormatForGL(0)
     , mHasEverBeenBound(false)
-    , mInitialized(false)
+    , mImageDataStatus(WebGLImageDataStatus::NoImageData)
 {
     SetIsDOMBinding();
     mContext->MakeContextCurrent();
@@ -107,6 +107,7 @@ WebGLRenderbuffer::MemoryUsage() const {
             primarySize = 3*pixels;
             break;
         case LOCAL_GL_RGBA8:
+        case LOCAL_GL_SRGB8_ALPHA8_EXT:
         case LOCAL_GL_DEPTH24_STENCIL8:
         case LOCAL_GL_DEPTH_COMPONENT32:
             primarySize = 4*pixels;

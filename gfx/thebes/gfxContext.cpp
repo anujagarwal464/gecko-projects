@@ -22,6 +22,7 @@
 #include "gfxTeeSurface.h"
 #include "GeckoProfiler.h"
 #include "gfx2DGlue.h"
+#include "mozilla/gfx/PathHelpers.h"
 #include <algorithm>
 
 #if CAIRO_HAS_DWRITE_FONT
@@ -275,25 +276,31 @@ gfxContext::ClosePath()
   }
 }
 
-already_AddRefed<gfxPath> gfxContext::CopyPath() const
+already_AddRefed<gfxPath> gfxContext::CopyPath()
 {
+  nsRefPtr<gfxPath> path;
   if (mCairo) {
-    nsRefPtr<gfxPath> path = new gfxPath(cairo_copy_path(mCairo));
-    return path.forget();
+    path = new gfxPath(cairo_copy_path(mCairo));
   } else {
-    // XXX - This is not yet supported for Azure.
-    return nullptr;
+    EnsurePath();
+    path = new gfxPath(mPath);
   }
+  return path.forget();
 }
 
-void gfxContext::AppendPath(gfxPath* path)
+void gfxContext::SetPath(gfxPath* path)
 {
   if (mCairo) {
+    cairo_new_path(mCairo);
     if (path->mPath->status == CAIRO_STATUS_SUCCESS && path->mPath->num_data != 0)
         cairo_append_path(mCairo, path->mPath);
   } else {
-    // XXX - This is not yet supported for Azure.
-    return;
+    MOZ_ASSERT(path->mMoz2DPath, "Can't mix cairo and azure paths!");
+    MOZ_ASSERT(path->mMoz2DPath->GetBackendType() == mDT->GetType());
+    mPath = path->mMoz2DPath;
+    mPathBuilder = nullptr;
+    mPathIsRect = false;
+    mTransformChanged = false;
   }
 }
 
@@ -569,6 +576,10 @@ gfxContext::DrawSurface(gfxASurface *surface, const gfxSize& size)
     RefPtr<SourceSurface> surf =
       gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(mDT, surface);
 
+    if (!surf) {
+      return;
+    }
+
     Rect rect(0, 0, Float(size.width), Float(size.height));
     rect.Intersect(Rect(0, 0, Float(surf->GetSize().width), Float(surf->GetSize().height)));
 
@@ -645,8 +656,6 @@ gfxContext::SetMatrix(const gfxMatrix& matrix)
     const cairo_matrix_t& mat = reinterpret_cast<const cairo_matrix_t&>(matrix);
     cairo_set_matrix(mCairo, &mat);
   } else {
-    Matrix mat;
-    mat.Translate(-CurrentState().deviceOffset.x, -CurrentState().deviceOffset.y);
     ChangeTransform(ToMatrix(matrix));
   }
 }
@@ -1385,6 +1394,7 @@ gfxContext::SetSource(gfxASurface *surface, const gfxPoint& offset)
     CurrentState().sourceSurfCairo = surface;
     CurrentState().sourceSurface =
       gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(mDT, surface);
+    CurrentState().color = Color(0, 0, 0, 0);
   }
 }
 
@@ -1487,6 +1497,10 @@ gfxContext::Mask(gfxASurface *surface, const gfxPoint& offset)
     // Lifetime needs to be limited here as we may simply wrap surface's data.
     RefPtr<SourceSurface> sourceSurf =
       gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(mDT, surface);
+
+    if (!sourceSurf) {
+      return;
+    }
 
     gfxPoint pt = surface->GetDeviceOffset();
 
@@ -1699,7 +1713,8 @@ gfxContext::PointInFill(const gfxPoint& pt)
   if (mCairo) {
     return cairo_in_fill(mCairo, pt.x, pt.y);
   } else {
-    return mPath->ContainsPoint(ToPoint(pt), mTransform);
+    EnsurePath();
+    return mPath->ContainsPoint(ToPoint(pt), Matrix());
   }
 }
 
@@ -1709,9 +1724,10 @@ gfxContext::PointInStroke(const gfxPoint& pt)
   if (mCairo) {
     return cairo_in_stroke(mCairo, pt.x, pt.y);
   } else {
+    EnsurePath();
     return mPath->StrokeContainsPoint(CurrentState().strokeOptions,
                                       ToPoint(pt),
-                                      mTransform);
+                                      Matrix());
   }
 }
 
@@ -1723,6 +1739,7 @@ gfxContext::GetUserPathExtent()
     cairo_path_extents(mCairo, &xmin, &ymin, &xmax, &ymax);
     return gfxRect(xmin, ymin, xmax - xmin, ymax - ymin);
   } else {
+    EnsurePath();
     return ThebesRect(mPath->GetBounds());
   }
 }
@@ -1735,6 +1752,7 @@ gfxContext::GetUserFillExtent()
     cairo_fill_extents(mCairo, &xmin, &ymin, &xmax, &ymax);
     return gfxRect(xmin, ymin, xmax - xmin, ymax - ymin);
   } else {
+    EnsurePath();
     return ThebesRect(mPath->GetBounds());
   }
 }
@@ -1747,20 +1765,8 @@ gfxContext::GetUserStrokeExtent()
     cairo_stroke_extents(mCairo, &xmin, &ymin, &xmax, &ymax);
     return gfxRect(xmin, ymin, xmax - xmin, ymax - ymin);
   } else {
+    EnsurePath();
     return ThebesRect(mPath->GetStrokedBounds(CurrentState().strokeOptions, mTransform));
-  }
-}
-
-already_AddRefed<gfxFlattenedPath>
-gfxContext::GetFlattenedPath()
-{
-  if (mCairo) {
-    nsRefPtr<gfxFlattenedPath> path =
-        new gfxFlattenedPath(cairo_copy_path_flat(mCairo));
-    return path.forget();
-  } else {
-    // XXX - Used by SVG, needs fixing.
-    return nullptr;
   }
 }
 
@@ -1911,62 +1917,11 @@ gfxContext::RoundedRectangle(const gfxRect& rect,
     cairo_close_path (mCairo);
   } else {
     EnsurePathBuilder();
-
-    const gfxFloat alpha = 0.55191497064665766025;
-
-    typedef struct { gfxFloat a, b; } twoFloats;
-
-    twoFloats cwCornerMults[4] = { { -1,  0 },
-                                   {  0, -1 },
-                                   { +1,  0 },
-                                   {  0, +1 } };
-    twoFloats ccwCornerMults[4] = { { +1,  0 },
-                                    {  0, -1 },
-                                    { -1,  0 },
-                                    {  0, +1 } };
-
-    twoFloats *cornerMults = draw_clockwise ? cwCornerMults : ccwCornerMults;
-
-    gfxPoint pc, p0, p1, p2, p3;
-
-    if (draw_clockwise)
-        mPathBuilder->MoveTo(Point(Float(rect.X() + corners[NS_CORNER_TOP_LEFT].width), Float(rect.Y())));
-    else
-        mPathBuilder->MoveTo(Point(Float(rect.X() + rect.Width() - corners[NS_CORNER_TOP_RIGHT].width), Float(rect.Y())));
-
-    NS_FOR_CSS_CORNERS(i) {
-        // the corner index -- either 1 2 3 0 (cw) or 0 3 2 1 (ccw)
-        mozilla::css::Corner c = mozilla::css::Corner(draw_clockwise ? ((i+1) % 4) : ((4-i) % 4));
-
-        // i+2 and i+3 respectively.  These are used to index into the corner
-        // multiplier table, and were deduced by calculating out the long form
-        // of each corner and finding a pattern in the signs and values.
-        int i2 = (i+2) % 4;
-        int i3 = (i+3) % 4;
-
-        pc = rect.AtCorner(c);
-
-        if (corners[c].width > 0.0 && corners[c].height > 0.0) {
-            p0.x = pc.x + cornerMults[i].a * corners[c].width;
-            p0.y = pc.y + cornerMults[i].b * corners[c].height;
-
-            p3.x = pc.x + cornerMults[i3].a * corners[c].width;
-            p3.y = pc.y + cornerMults[i3].b * corners[c].height;
-
-            p1.x = p0.x + alpha * cornerMults[i2].a * corners[c].width;
-            p1.y = p0.y + alpha * cornerMults[i2].b * corners[c].height;
-
-            p2.x = p3.x - alpha * cornerMults[i3].a * corners[c].width;
-            p2.y = p3.y - alpha * cornerMults[i3].b * corners[c].height;
-
-            mPathBuilder->LineTo(ToPoint(p0));
-            mPathBuilder->BezierTo(ToPoint(p1), ToPoint(p2), ToPoint(p3));
-        } else {
-            mPathBuilder->LineTo(ToPoint(pc));
-        }
-    }
-
-    mPathBuilder->Close();
+    Size radii[] = { ToSize(corners[NS_CORNER_TOP_LEFT]),
+                     ToSize(corners[NS_CORNER_TOP_RIGHT]),
+                     ToSize(corners[NS_CORNER_BOTTOM_RIGHT]),
+                     ToSize(corners[NS_CORNER_BOTTOM_LEFT]) };
+    AppendRoundedRectToPath(mPathBuilder, ToRect(rect), radii, draw_clockwise);
   }
 }
 

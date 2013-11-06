@@ -23,6 +23,7 @@ from mozbuild.base import (
     MozbuildObject,
     MozconfigFindException,
     MozconfigLoadException,
+    ObjdirMismatchException,
 )
 
 
@@ -354,6 +355,16 @@ class Build(MachCommandBase):
                              'instead of {target_pairs}.')
                     target_pairs = new_pairs
 
+                # Ensure build backend is up to date. The alternative is to
+                # have rules in the invoked Makefile to rebuild the build
+                # backend. But that involves make reinvoking itself and there
+                # are undesired side-effects of this. See bug 877308 for a
+                # comprehensive history lesson.
+                self._run_make(directory=self.topobjdir,
+                    target='backend.RecursiveMakeBackend',
+                    force_pymake=pymake, line_handler=output.on_line,
+                    log=False, print_directory=False)
+
                 # Build target pairs.
                 for make_dir, make_target in target_pairs:
                     # We don't display build status messages during partial
@@ -491,6 +502,16 @@ class Build(MachCommandBase):
                     return 1
 
             raise
+
+    @Command('build-backend', category='build',
+        description='Generate a backend used to build the tree.')
+    def build_backend(self):
+        # When we support multiple build backends (Tup, Visual Studio, etc),
+        # this command will be expanded to support choosing what to generate.
+        python = self.virtualenv_manager.python_path
+        config_status = os.path.join(self.topobjdir, 'config.status')
+        return self._run_command_in_objdir(args=[python, config_status],
+            pass_thru=True, ensure_exit_code=False)
 
 
 @CommandProvider
@@ -834,10 +855,7 @@ class Makefiles(MachCommandBase):
                     yield os.path.join(root, f)
 
 @CommandProvider
-class MachDebug(object):
-    def __init__(self, context):
-        self.context = context
-
+class MachDebug(MachCommandBase):
     @Command('environment', category='build-dev',
         description='Show info about the mach and build environment.')
     @CommandArgument('--verbose', '-v', action='store_true',
@@ -847,13 +865,22 @@ class MachDebug(object):
         print('platform:\n\t%s' % platform.platform())
         print('python version:\n\t%s' % sys.version)
         print('python prefix:\n\t%s' % sys.prefix)
-        print('mach cwd:\n\t%s' % self.context.cwd)
+        print('mach cwd:\n\t%s' % self._mach_context.cwd)
         print('os cwd:\n\t%s' % os.getcwd())
-        print('mach directory:\n\t%s' % self.context.topdir)
-        print('state directory:\n\t%s' % self.context.state_dir)
+        print('mach directory:\n\t%s' % self._mach_context.topdir)
+        print('state directory:\n\t%s' % self._mach_context.state_dir)
 
-        mb = MozbuildObject(self.context.topdir, self.context.settings,
-            self.context.log_manager)
+        try:
+            mb = MozbuildObject.from_environment(cwd=self._mach_context.cwd)
+        except ObjdirMismatchException as e:
+            print('Ambiguous object directory detected. We detected that '
+                'both %s and %s could be object directories. This is '
+                'typically caused by having a mozconfig pointing to a '
+                'different object directory from the current working '
+                'directory. To solve this problem, ensure you do not have a '
+                'default mozconfig in searched paths.' % (e.objdir1,
+                    e.objdir2))
+            return 1
 
         mozconfig = None
 

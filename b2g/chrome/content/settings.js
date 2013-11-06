@@ -138,6 +138,11 @@ SettingsListener.observe('language.current', 'en-US', function(value) {
       Services.prefs.setBoolPref('dom.mms.requestStatusReport', value);
   });
 
+  SettingsListener.observe('ril.mms.requestReadReport.enabled', true,
+    function(value) {
+      Services.prefs.setBoolPref('dom.mms.requestReadReport', value);
+  });
+
   SettingsListener.observe('ril.cellbroadcast.disabled', false,
     function(value) {
       Services.prefs.setBoolPref('ril.cellbroadcast.disabled', value);
@@ -156,6 +161,16 @@ SettingsListener.observe('language.current', 'en-US', function(value) {
   SettingsListener.observe('wap.UAProf.tagname', 'x-wap-profile',
     function(value) {
       Services.prefs.setCharPref('wap.UAProf.tagname', value);
+  });
+
+  // DSDS default service IDs
+  ['mms', 'sms', 'telephony', 'voicemail'].forEach(function(key) {
+    SettingsListener.observe('ril.' + key + '.defaultServiceId', 0,
+                             function(value) {
+      if (value != null) {
+        Services.prefs.setIntPref('dom.' + key + '.defaultServiceId', value);
+      }
+    });
   });
 })();
 

@@ -76,6 +76,10 @@ HELPER_SHEET += ":-moz-devtools-highlighted { outline: 2px dashed #F06!important
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm");
 
+loader.lazyGetter(this, "DOMParser", function() {
+ return Cc["@mozilla.org/xmlextras/domparser;1"].createInstance(Ci.nsIDOMParser);
+});
+
 exports.register = function(handle) {
   handle.addTabActor(InspectorActor, "inspectorActor");
 };
@@ -105,6 +109,13 @@ function delayedResolve(value) {
   }), 0);
   return deferred.promise;
 }
+
+types.addDictType("imageData", {
+  // The image data
+  data: "nullable:longstring",
+  // The original image dimensions
+  size: "json"
+});
 
 /**
  * We only send nodeValue up to a certain size by default.  This stuff
@@ -143,6 +154,11 @@ var NodeActor = protocol.ActorClass({
    */
   get conn() this.walker.conn,
 
+  isDocumentElement: function() {
+    return this.rawNode.ownerDocument &&
+        this.rawNode.ownerDocument.documentElement === this.rawNode;
+  },
+
   // Returns the JSON representation of this object over the wire.
   form: function(detail) {
     if (detail === "actorid") {
@@ -177,8 +193,7 @@ var NodeActor = protocol.ActorClass({
       pseudoClassLocks: this.writePseudoClassLocks(),
     };
 
-    if (this.rawNode.ownerDocument &&
-        this.rawNode.ownerDocument.documentElement === this.rawNode) {
+    if (this.isDocumentElement()) {
       form.isDocumentElement = true;
     }
 
@@ -241,6 +256,66 @@ var NodeActor = protocol.ActorClass({
   }),
 
   /**
+   * Get the node's image data if any (for canvas and img nodes).
+   * Returns a LongStringActor with the image or canvas' image data as png
+   * a data:image/png;base64,.... string
+   * A null return value means the node isn't an image
+   * An empty string return value means the node is an image but image data
+   * could not be retrieved (missing/broken image).
+   *
+   * Accepts a maxDim request parameter to resize images that are larger. This
+   * is important as the resizing occurs server-side so that image-data being
+   * transfered in the longstring back to the client will be that much smaller
+   */
+  getImageData: method(function(maxDim) {
+    let isImg = this.rawNode.tagName.toLowerCase() === "img";
+    let isCanvas = this.rawNode.tagName.toLowerCase() === "canvas";
+
+    if (!isImg && !isCanvas) {
+      return null;
+    }
+
+    // Get the image resize ratio if a maxDim was provided
+    let resizeRatio = 1;
+    let imgWidth = isImg ? this.rawNode.naturalWidth : this.rawNode.width;
+    let imgHeight = isImg ? this.rawNode.naturalHeight : this.rawNode.height;
+    let imgMax = Math.max(imgWidth, imgHeight);
+    if (maxDim && imgMax > maxDim) {
+      resizeRatio = maxDim / imgMax;
+    }
+
+    // Create a canvas to copy the rawNode into and get the imageData from
+    let canvas = this.rawNode.ownerDocument.createElement("canvas");
+    canvas.width = imgWidth * resizeRatio;
+    canvas.height = imgHeight * resizeRatio;
+    let ctx = canvas.getContext("2d");
+
+    // Copy the rawNode image or canvas in the new canvas and extract data
+    let imageData;
+    // This may fail if the image is missing
+    try {
+      ctx.drawImage(this.rawNode, 0, 0, canvas.width, canvas.height);
+      imageData = canvas.toDataURL("image/png");
+    } catch (e) {
+      imageData = "";
+    }
+
+    return {
+      data: LongStringActor(this.conn, imageData),
+      size: {
+        naturalWidth: imgWidth,
+        naturalHeight: imgHeight,
+        width: canvas.width,
+        height: canvas.height,
+        resized: resizeRatio !== 1
+      }
+    }
+  }, {
+    request: {maxDim: Arg(0, "nullable:number")},
+    response: RetVal("imageData")
+  }),
+
+  /**
    * Modify a node's attributes.  Passed an array of modifications
    * similar in format to "attributes" mutations.
    * {
@@ -275,8 +350,7 @@ var NodeActor = protocol.ActorClass({
       modifications: Arg(0, "array:json")
     },
     response: {}
-  }),
-
+  })
 });
 
 /**
@@ -1325,11 +1399,13 @@ var WalkerActor = protocol.ActorClass({
    * @param string selector
    */
   querySelector: method(function(baseNode, selector) {
+    if (!baseNode) {
+      return {}
+    };
     let node = baseNode.rawNode.querySelector(selector);
 
     if (!node) {
-      return {
-      }
+      return {}
     };
 
     let node = this._ref(node);
@@ -1542,6 +1618,62 @@ var WalkerActor = protocol.ActorClass({
     },
     response: {
       value: RetVal("longstring")
+    }
+  }),
+
+  /**
+   * Set a node's outerHTML property.
+   */
+  setOuterHTML: method(function(node, value) {
+    let parsedDOM = DOMParser.parseFromString(value, "text/html");
+    let rawNode = node.rawNode;
+    let parentNode = rawNode.parentNode;
+
+    // Special case for head and body.  Setting document.body.outerHTML
+    // creates an extra <head> tag, and document.head.outerHTML creates
+    // an extra <body>.  So instead we will call replaceChild with the
+    // parsed DOM, assuming that they aren't trying to set both tags at once.
+    if (rawNode.tagName === "BODY") {
+      if (parsedDOM.head.innerHTML === "") {
+        parentNode.replaceChild(parsedDOM.body, rawNode);
+      } else {
+        rawNode.outerHTML = value;
+      }
+    } else if (rawNode.tagName === "HEAD") {
+      if (parsedDOM.body.innerHTML === "") {
+        parentNode.replaceChild(parsedDOM.head, rawNode);
+      } else {
+        rawNode.outerHTML = value;
+      }
+    } else if (node.isDocumentElement()) {
+      // Unable to set outerHTML on the document element.  Fall back by
+      // setting attributes manually, then replace the body and head elements.
+      let finalAttributeModifications = [];
+      let attributeModifications = {};
+      for (let attribute of rawNode.attributes) {
+        attributeModifications[attribute.name] = null;
+      }
+      for (let attribute of parsedDOM.documentElement.attributes) {
+        attributeModifications[attribute.name] = attribute.value;
+      }
+      for (let key in attributeModifications) {
+        finalAttributeModifications.push({
+          attributeName: key,
+          newValue: attributeModifications[key]
+        });
+      }
+      node.modifyAttributes(finalAttributeModifications);
+      rawNode.replaceChild(parsedDOM.head, rawNode.querySelector("head"));
+      rawNode.replaceChild(parsedDOM.body, rawNode.querySelector("body"));
+    } else {
+      rawNode.outerHTML = value;
+    }
+  }, {
+    request: {
+      node: Arg(0, "domnode"),
+      value: Arg(1),
+    },
+    response: {
     }
   }),
 
@@ -2259,6 +2391,11 @@ var InspectorFront = exports.InspectorFront = protocol.FrontClass(InspectorActor
     // library, so we're going to self-own on the client side for now.
     client.addActorPool(this);
     this.manage(this);
+  },
+
+  destroy: function() {
+    delete this.walker;
+    protocol.Front.prototype.destroy.call(this);
   },
 
   getWalker: protocol.custom(function() {

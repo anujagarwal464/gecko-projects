@@ -686,16 +686,14 @@ HTMLFormElement::BuildSubmission(nsFormSubmission** aFormSubmission,
   // Get the originating frame (failure is non-fatal)
   nsGenericHTMLElement* originatingElement = nullptr;
   if (aEvent) {
-    if (NS_FORM_EVENT == aEvent->eventStructType) {
-      nsIContent* originator =
-        static_cast<InternalFormEvent*>(aEvent)->originator;
+    InternalFormEvent* formEvent = aEvent->AsFormEvent();
+    if (formEvent) {
+      nsIContent* originator = formEvent->originator;
       if (originator) {
         if (!originator->IsHTML()) {
           return NS_ERROR_UNEXPECTED;
         }
-        originatingElement =
-          static_cast<nsGenericHTMLElement*>(
-            static_cast<InternalFormEvent*>(aEvent)->originator);
+        originatingElement = static_cast<nsGenericHTMLElement*>(originator);
       }
     }
   }
@@ -809,9 +807,9 @@ HTMLFormElement::SubmitSubmission(nsFormSubmission* aFormSubmission)
   {
     nsAutoPopupStatePusher popupStatePusher(mSubmitPopupState);
 
-    nsAutoHandlingUserInputStatePusher userInpStatePusher(
-                                         mSubmitInitiatedFromUserInput,
-                                         nullptr, doc);
+    AutoHandlingUserInputStatePusher userInpStatePusher(
+                                       mSubmitInitiatedFromUserInput,
+                                       nullptr, doc);
 
     nsCOMPtr<nsIInputStream> postDataStream;
     rv = aFormSubmission->GetEncodedSubmission(actionURI,
@@ -1646,17 +1644,18 @@ HTMLFormElement::IsDefaultSubmitElement(const nsIFormControl* aControl) const
 }
 
 bool
-HTMLFormElement::HasSingleTextControl() const
+HTMLFormElement::ImplicitSubmissionIsDisabled() const
 {
   // Input text controls are always in the elements list.
-  uint32_t numTextControlsFound = 0;
+  uint32_t numDisablingControlsFound = 0;
   uint32_t length = mControls->mElements.Length();
-  for (uint32_t i = 0; i < length && numTextControlsFound < 2; ++i) {
-    if (mControls->mElements[i]->IsSingleLineTextControl(false)) {
-      numTextControlsFound++;
+  for (uint32_t i = 0; i < length && numDisablingControlsFound < 2; ++i) {
+    if (mControls->mElements[i]->IsSingleLineTextControl(false) ||
+        mControls->mElements[i]->GetType() == NS_FORM_INPUT_NUMBER) {
+      numDisablingControlsFound++;
     }
   }
-  return numTextControlsFound == 1;
+  return numDisablingControlsFound > 1;
 }
 
 NS_IMETHODIMP

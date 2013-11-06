@@ -86,6 +86,9 @@ let RILQUIRKS_EXTRA_UINT32_2ND_CALL = libcutils.property_get("ro.moz.ril.extra_i
 // On the emulator we support querying the number of lock retries
 let RILQUIRKS_HAVE_QUERY_ICC_LOCK_RETRY_COUNT = libcutils.property_get("ro.moz.ril.query_icc_count", "false") == "true";
 
+// Ril quirk to Send STK Profile Download
+let RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD = libcutils.property_get("ro.moz.ril.send_stk_profile_dl", "false") == "true";
+
 // Marker object.
 let PENDING_NETWORK_TYPE = {};
 
@@ -1065,10 +1068,10 @@ let RIL = {
    * @param on
    *        Boolean indicating whether the screen should be on or off.
    */
-  setScreenState: function setScreenState(on) {
+  setScreenState: function setScreenState(options) {
     Buf.newParcel(REQUEST_SCREEN_STATE);
     Buf.writeInt32(1);
-    Buf.writeInt32(on ? 1 : 0);
+    Buf.writeInt32(options.on ? 1 : 0);
     Buf.sendParcel();
   },
 
@@ -1790,19 +1793,30 @@ let RIL = {
   /**
    * Get the Short Message Service Center address.
    */
-  getSMSCAddress: function getSMSCAddress() {
-    Buf.simpleRequest(REQUEST_GET_SMSC_ADDRESS);
+  getSmscAddress: function getSmscAddress(options) {
+    if (!this.SMSC) {
+      Buf.simpleRequest(REQUEST_GET_SMSC_ADDRESS, options);
+      return;
+    }
+
+    if (!options || options.rilMessageType !== "getSmscAddress") {
+      return;
+    }
+
+    options.smscAddress = this.SMSC;
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendChromeMessage(options);
   },
 
   /**
    * Set the Short Message Service Center address.
    *
-   * @param SMSC
+   * @param smscAddress
    *        Short Message Service Center address in PDU format.
    */
-  setSMSCAddress: function setSMSCAddress(options) {
-    Buf.newParcel(REQUEST_SET_SMSC_ADDRESS);
-    Buf.writeString(options.SMSC);
+  setSmscAddress: function setSmscAddress(options) {
+    Buf.newParcel(REQUEST_SET_SMSC_ADDRESS, options);
+    Buf.writeString(options.smscAddress);
     Buf.sendParcel();
   },
 
@@ -2727,6 +2741,13 @@ let RIL = {
         };
         command.language = command.event.language;
         break;
+      case STK_EVENT_TYPE_BROWSER_TERMINATION:
+        command.deviceId = {
+          sourceId: STK_DEVICE_ID_ME,
+          destinationId: STK_DEVICE_ID_SIM
+        };
+        command.terminationCause = command.event.terminationCause;
+        break;
     }
     this.sendICCEnvelopeCommand(command);
   },
@@ -2746,6 +2767,7 @@ let RIL = {
    * @param [optional] cause
    * @param [optional] timerId
    * @param [optional] timerValue
+   * @param [optional] terminationCause
    */
   sendICCEnvelopeCommand: function sendICCEnvelopeCommand(options) {
     if (DEBUG) {
@@ -2851,6 +2873,14 @@ let RIL = {
     // Language
     if (options.language) {
       ComprehensionTlvHelper.writeLanguageTlv(options.language);
+    }
+
+    // Browser Termination
+    if (options.terminationCause != null) {
+      GsmPDUHelper.writeHexOctet(COMPREHENSIONTLV_TAG_BROWSER_TERMINATION_CAUSE |
+                                 COMPREHENSIONTLV_FLAG_CR);
+      GsmPDUHelper.writeHexOctet(1);
+      GsmPDUHelper.writeHexOctet(options.terminationCause);
     }
 
     // Calculate and write BER length to 2nd mark
@@ -2998,10 +3028,14 @@ let RIL = {
         ICCRecordHelper.readICCPhase();
         ICCRecordHelper.fetchICCRecords();
       } else if (this.appType == CARD_APPTYPE_USIM) {
-        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        if (RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD) {
+          this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        }
         ICCRecordHelper.fetchICCRecords();
       } else if (this.appType == CARD_APPTYPE_RUIM) {
-        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        if (RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD) {
+          this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        }
         RuimRecordHelper.fetchRuimRecords();
       }
       this.reportStkServiceIsRunning();
@@ -3307,7 +3341,7 @@ let RIL = {
     let rs = this.voiceRegistrationState;
     let stateChanged = this._processCREG(rs, state);
     if (stateChanged && rs.connected) {
-      RIL.getSMSCAddress();
+      RIL.getSmscAddress();
     }
 
     let cell = rs.cell;
@@ -4197,7 +4231,13 @@ let RIL = {
         // the (U)SIM before sending an ACK to the SC.`  ~ 3GPP 23.038 clause 4
         message.result = PDU_FCS_RESERVED;
       }
-      message.rilMessageType = "sms-received";
+
+      if (message.messageType == PDU_CDMA_MSG_TYPE_BROADCAST) {
+        message.rilMessageType = "broadcastsms-received";
+      } else {
+        message.rilMessageType = "sms-received";
+      }
+
       this.sendChromeMessage(message);
 
       // We will acknowledge receipt of the SMS after we try to store it
@@ -5011,6 +5051,10 @@ RIL[REQUEST_SWITCH_HOLDING_AND_ACTIVE] = function REQUEST_SWITCH_HOLDING_AND_ACT
 RIL[REQUEST_CONFERENCE] = function REQUEST_CONFERENCE(length, options) {
   if (options.rilRequestError) {
     this._hasConferenceRequest = false;
+    options = {rilMessageType: "conferenceError",
+               errorName: "addError",
+               errorMsg: RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError]};
+    this.sendChromeMessage(options);
     return;
   }
 };
@@ -5600,7 +5644,15 @@ RIL[REQUEST_BASEBAND_VERSION] = function REQUEST_BASEBAND_VERSION(length, option
   this.basebandVersion = Buf.readString();
   if (DEBUG) debug("Baseband version: " + this.basebandVersion);
 };
-RIL[REQUEST_SEPARATE_CONNECTION] = null;
+RIL[REQUEST_SEPARATE_CONNECTION] = function REQUEST_SEPARATE_CONNECTION(length, options) {
+  if (options.rilRequestError) {
+    options = {rilMessageType: "conferenceError",
+               errorName: "removeError",
+               errorMsg: RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError]};
+    this.sendChromeMessage(options);
+    return;
+  }
+};
 RIL[REQUEST_SET_MUTE] = null;
 RIL[REQUEST_GET_MUTE] = null;
 RIL[REQUEST_QUERY_CLIP] = function REQUEST_QUERY_CLIP(length, options) {
@@ -5873,11 +5925,15 @@ RIL[REQUEST_EXIT_EMERGENCY_CALLBACK_MODE] = function REQUEST_EXIT_EMERGENCY_CALL
   this.sendChromeMessage(options);
 };
 RIL[REQUEST_GET_SMSC_ADDRESS] = function REQUEST_GET_SMSC_ADDRESS(length, options) {
-  if (options.rilRequestError) {
+  this.SMSC = options.rilRequestError ? null : Buf.readString();
+
+  if (!options || options.rilMessageType !== "getSmscAddress") {
     return;
   }
 
-  this.SMSC = Buf.readString();
+  options.smscAddress = this.SMSC;
+  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  this.sendChromeMessage(options);
 };
 RIL[REQUEST_SET_SMSC_ADDRESS] = null;
 RIL[REQUEST_REPORT_SMS_MEMORY_STATUS] = null;
@@ -8787,25 +8843,28 @@ let CdmaPDUHelper = {
 
     // Transform message to GSM msg
     let msg = {
-      SMSC:           "",
-      mti:            0,
-      udhi:           0,
-      sender:         message.sender,
-      recipient:      null,
-      pid:            PDU_PID_DEFAULT,
-      epid:           PDU_PID_DEFAULT,
-      dcs:            0,
-      mwi:            null, //message[PDU_CDMA_MSG_USERDATA_BODY].header ? message[PDU_CDMA_MSG_USERDATA_BODY].header.mwi : null,
-      replace:        false,
-      header:         message[PDU_CDMA_MSG_USERDATA_BODY].header,
-      body:           message[PDU_CDMA_MSG_USERDATA_BODY].body,
-      data:           null,
-      timestamp:      message[PDU_CDMA_MSG_USERDATA_TIMESTAMP],
-      status:         null,
-      scts:           null,
-      dt:             null,
-      encoding:       message[PDU_CDMA_MSG_USERDATA_BODY].encoding,
-      messageClass:   GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_NORMAL]
+      SMSC:            "",
+      mti:             0,
+      udhi:            0,
+      sender:          message.sender,
+      recipient:       null,
+      pid:             PDU_PID_DEFAULT,
+      epid:            PDU_PID_DEFAULT,
+      dcs:             0,
+      mwi:             null, //message[PDU_CDMA_MSG_USERDATA_BODY].header ? message[PDU_CDMA_MSG_USERDATA_BODY].header.mwi : null,
+      replace:         false,
+      header:          message[PDU_CDMA_MSG_USERDATA_BODY].header,
+      body:            message[PDU_CDMA_MSG_USERDATA_BODY].body,
+      data:            null,
+      timestamp:       message[PDU_CDMA_MSG_USERDATA_TIMESTAMP],
+      language:        message[PDU_CDMA_LANGUAGE_INDICATOR],
+      status:          null,
+      scts:            null,
+      dt:              null,
+      encoding:        message[PDU_CDMA_MSG_USERDATA_BODY].encoding,
+      messageClass:    GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_NORMAL],
+      messageType:     message.messageType,
+      serviceCategory: message.service
     };
 
     return msg;
@@ -8906,6 +8965,9 @@ let CdmaPDUHelper = {
           break;
         case PDU_CDMA_REPLY_OPTION:
           message[id] = this.decodeUserDataReplyAction();
+          break;
+        case PDU_CDMA_LANGUAGE_INDICATOR:
+          message[id] = this.decodeLanguageIndicator();
           break;
         case PDU_CDMA_MSG_USERDATA_CALLBACK_NUMBER:
           message[id] = this.decodeUserDataCallbackNumber();
@@ -9284,6 +9346,17 @@ let CdmaPDUHelper = {
                    report: (replyAction & 0x1) ? true : false
                  };
 
+    return result;
+  },
+
+  /**
+   * User data subparameter decoder : Language Indicator
+   *
+   * @see 3GGP2 C.S0015-B 2.0, 4.5.14 Language Indicator
+   */
+  decodeLanguageIndicator: function cdma_decodeLanguageIndicator() {
+    let language = BitBufferHelper.readBits(8);
+    let result = CB_CDMA_LANG_GROUP[language];
     return result;
   },
 
@@ -9842,6 +9915,26 @@ let StkCommandParamsFactory = {
     }
 
     return timer;
+  },
+
+   /**
+    * Construct a param for BIP commands.
+    *
+    * @param cmdDetails
+    *        The value object of CommandDetails TLV.
+    * @param ctlvs
+    *        The all TLVs in this proactive command.
+    */
+  processBipMessage: function processBipMessage(cmdDetails, ctlvs) {
+    let bipMsg = {};
+
+    let ctlv = StkProactiveCmdHelper.searchForTag(
+        COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+    if (ctlv) {
+      bipMsg.text = ctlv.value.identifier;
+    }
+
+    return bipMsg;
   }
 };
 StkCommandParamsFactory[STK_CMD_REFRESH] = function STK_CMD_REFRESH(cmdDetails, ctlvs) {
@@ -9900,6 +9993,18 @@ StkCommandParamsFactory[STK_CMD_PLAY_TONE] = function STK_CMD_PLAY_TONE(cmdDetai
 };
 StkCommandParamsFactory[STK_CMD_TIMER_MANAGEMENT] = function STK_CMD_TIMER_MANAGEMENT(cmdDetails, ctlvs) {
   return this.processTimerManagement(cmdDetails, ctlvs);
+};
+StkCommandParamsFactory[STK_CMD_OPEN_CHANNEL] = function STK_CMD_OPEN_CHANNEL(cmdDetails, ctlvs) {
+  return this.processBipMessage(cmdDetails, ctlvs);
+};
+StkCommandParamsFactory[STK_CMD_CLOSE_CHANNEL] = function STK_CMD_CLOSE_CHANNEL(cmdDetails, ctlvs) {
+  return this.processBipMessage(cmdDetails, ctlvs);
+};
+StkCommandParamsFactory[STK_CMD_RECEIVE_DATA] = function STK_CMD_RECEIVE_DATA(cmdDetails, ctlvs) {
+  return this.processBipMessage(cmdDetails, ctlvs);
+};
+StkCommandParamsFactory[STK_CMD_SEND_DATA] = function STK_CMD_SEND_DATA(cmdDetails, ctlvs) {
+  return this.processBipMessage(cmdDetails, ctlvs);
 };
 
 let StkProactiveCmdHelper = {
@@ -10366,7 +10471,7 @@ let ComprehensionTlvHelper = {
     } else {
       RIL.sendStkTerminalResponse({
         resultCode: STK_RESULT_CMD_DATA_NOT_UNDERSTOOD});
-      throw new Error("Invalid octet in Comprehension TLV :" + length);
+      throw new Error("Invalid octet in Comprehension TLV :" + temp);
     }
 
     let ctlv = {
@@ -10995,10 +11100,8 @@ let ICCRecordHelper = {
   fetchICCRecords: function fetchICCRecords() {
     this.readICCID();
     RIL.getIMSI();
-    this.readMSISDN();
     this.readAD();
     this.readSST();
-    this.readMBDN();
   },
 
   /**
@@ -11012,7 +11115,8 @@ let ICCRecordHelper = {
       let phase = GsmPDUHelper.readHexOctet();
       // If EF_phase is coded '03' or greater, an ME supporting STK shall
       // perform the PROFILE DOWNLOAD procedure.
-      if (phase >= ICC_PHASE_2_PROFILE_DOWNLOAD_REQUIRED) {
+      if (RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD &&
+          phase >= ICC_PHASE_2_PROFILE_DOWNLOAD_REQUIRED) {
         RIL.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
       }
 
@@ -11143,12 +11247,26 @@ let ICCRecordHelper = {
         debug("SST: " + str);
       }
 
+      if (ICCUtilsHelper.isICCServiceAvailable("MSISDN")) {
+        if (DEBUG) debug("MSISDN: MSISDN is available");
+        this.readMSISDN();
+      } else {
+        if (DEBUG) debug("MSISDN: MSISDN service is not available");
+      }
+
       // Fetch SPN and PLMN list, if some of them are available.
       if (ICCUtilsHelper.isICCServiceAvailable("SPN")) {
         if (DEBUG) debug("SPN: SPN is available");
         this.readSPN();
       } else {
         if (DEBUG) debug("SPN: SPN service is not available");
+      }
+
+      if (ICCUtilsHelper.isICCServiceAvailable("MDN")) {
+        if (DEBUG) debug("MDN: MDN available.");
+        this.readMBDN();
+      } else {
+        if (DEBUG) debug("MDN: MDN service is not available");
       }
 
       if (ICCUtilsHelper.isICCServiceAvailable("SPDI")) {

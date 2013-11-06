@@ -3079,7 +3079,7 @@ var gCSSProperties = {
 		// don't know whether left and right are same as start
 		initial_values: [ "start" ],
 		other_values: [ "center", "justify", "end" ],
-		invalid_values: []
+		invalid_values: [ "true", "true true" ]
 	},
 	"-moz-text-align-last": {
 		domProp: "MozTextAlignLast",
@@ -4442,6 +4442,12 @@ if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
 			"grayscale(1) url(#my-filter-1)",
 			"url(#my-filter-1) brightness(50%) contrast(0.9)",
 
+			// The CSS parser will accept these weird URLs. However, we'll fail
+			// to resolve them when computing style, so we'll fall back to the
+			// initial value ("none").
+			"url('feed:javascript:5')",
+			"blur(3px) url('feed:javascript:5') grayscale(50%)",
+
 			"blur(0)",
 			"blur(0px)",
 			"blur(0.5px)",
@@ -4786,5 +4792,10 @@ if (SpecialPowers.getBoolPref("layout.css.unset-value.enabled")) {
   gCSSProperties["-moz-animation-name"].invalid_values.push("bounce, unset", "unset, bounce");
   if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
     gCSSProperties["filter"].invalid_values.push("drop-shadow(unset, 2px 2px)", "drop-shadow(2px 2px, unset)");
+  }
+  if (SpecialPowers.getBoolPref("layout.css.text-align-true-value.enabled")) {
+    gCSSProperties["text-align"].other_values.push("true left");
+  } else {
+    gCSSProperties["text-align"].invalid_values.push("true left");
   }
 }

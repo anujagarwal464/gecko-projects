@@ -8,6 +8,7 @@
 #include <algorithm>                    // for max
 #include "BasicImplData.h"              // for BasicImplData
 #include "BasicLayersImpl.h"            // for ToData
+#include "BufferUnrotate.h"             // for BufferUnrotate
 #include "GeckoProfiler.h"              // for PROFILER_LABEL
 #include "Layers.h"                     // for ThebesLayer, Layer, etc
 #include "gfxColor.h"                   // for gfxRGBA
@@ -47,6 +48,27 @@ RotatedBuffer::GetQuadrantRectangle(XSide aXSide, YSide aYSide) const
   quadrantTranslation.x += aXSide == LEFT ? mBufferRect.width : 0;
   quadrantTranslation.y += aYSide == TOP ? mBufferRect.height : 0;
   return mBufferRect + quadrantTranslation;
+}
+
+Rect
+RotatedBuffer::GetSourceRectangle(XSide aXSide, YSide aYSide) const
+{
+  Rect result;
+  if (aXSide == LEFT) {
+    result.x = 0;
+    result.width = mBufferRotation.x;
+  } else {
+    result.x = mBufferRotation.x;
+    result.width = mBufferRect.width - mBufferRotation.x;
+  }
+  if (aYSide == TOP) {
+    result.y = 0;
+    result.height = mBufferRotation.y;
+  } else {
+    result.y = mBufferRotation.y;
+    result.height = mBufferRect.height - mBufferRotation.y;
+  }
+  return result;
 }
 
 /**
@@ -177,6 +199,19 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
 
   gfx::Point quadrantTranslation(quadrantRect.x, quadrantRect.y);
 
+  MOZ_ASSERT(aOperator == OP_OVER || aOperator == OP_SOURCE);
+  // direct2d is much slower when using OP_SOURCE so use OP_OVER and
+  // (maybe) a clear instead. Normally we need to draw in a single operation
+  // (to avoid flickering) but direct2d is ok since it defers rendering.
+  // We should try abstract this logic in a helper when we have other use
+  // cases.
+  if (aTarget->GetType() == BACKEND_DIRECT2D && aOperator == OP_SOURCE) {
+    aOperator = OP_OVER;
+    if (mDTBuffer->GetFormat() == FORMAT_B8G8R8A8) {
+      aTarget->ClearRect(ToRect(fillRect));
+    }
+  }
+
   RefPtr<SourceSurface> snapshot;
   if (aSource == BUFFER_BLACK) {
     snapshot = mDTBuffer->Snapshot();
@@ -184,16 +219,6 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
     MOZ_ASSERT(aSource == BUFFER_WHITE);
     snapshot = mDTBufferOnWhite->Snapshot();
   }
-
-  // Transform from user -> buffer space.
-  Matrix transform;
-  transform.Translate(quadrantTranslation.x, quadrantTranslation.y);
-
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-  SurfacePattern source(snapshot, EXTEND_CLAMP, transform, FILTER_POINT);
-#else
-  SurfacePattern source(snapshot, EXTEND_CLAMP, transform);
-#endif
 
   if (aOperator == OP_SOURCE) {
     // OP_SOURCE is unbounded in Azure, and we really don't want that behaviour here.
@@ -204,14 +229,30 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
   }
 
   if (aMask) {
+    // Transform from user -> buffer space.
+    Matrix transform;
+    transform.Translate(quadrantTranslation.x, quadrantTranslation.y);
+
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+    SurfacePattern source(snapshot, EXTEND_CLAMP, transform, FILTER_POINT);
+#else
+    SurfacePattern source(snapshot, EXTEND_CLAMP, transform);
+#endif
+
     Matrix oldTransform = aTarget->GetTransform();
     aTarget->SetTransform(*aMaskTransform);
     aTarget->MaskSurface(source, aMask, Point(0, 0), DrawOptions(aOpacity, aOperator));
     aTarget->SetTransform(oldTransform);
   } else {
-    aTarget->FillRect(gfx::Rect(fillRect.x, fillRect.y,
-                                fillRect.width, fillRect.height),
-                      source, DrawOptions(aOpacity, aOperator));
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+    DrawSurfaceOptions options(FILTER_POINT);
+#else
+    DrawSurfaceOptions options;
+#endif
+    aTarget->DrawSurface(snapshot, ToRect(fillRect),
+                         GetSourceRectangle(aXSide, aYSide),
+                         options,
+                         DrawOptions(aOpacity, aOperator));
   }
 
   if (aOperator == OP_SOURCE) {
@@ -657,17 +698,13 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
           nsIntPoint dest = mBufferRect.TopLeft() - destBufferRect.TopLeft();
           if (IsAzureBuffer()) {
             MOZ_ASSERT(mDTBuffer);
-            RefPtr<SourceSurface> source = mDTBuffer->Snapshot();
-            mDTBuffer->CopySurface(source,
-                                   IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
-                                   IntPoint(dest.x, dest.y));
+            mDTBuffer->CopyRect(IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
+                                IntPoint(dest.x, dest.y));
             if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
               EnsureBufferOnWhite();
               MOZ_ASSERT(mDTBufferOnWhite);
-              RefPtr<SourceSurface> sourceOnWhite = mDTBufferOnWhite->Snapshot();
-              mDTBufferOnWhite->CopySurface(sourceOnWhite,
-                                            IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
-                                            IntPoint(dest.x, dest.y));
+              mDTBufferOnWhite->CopyRect(IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
+                                         IntPoint(dest.x, dest.y));
             }
           } else {
             MOZ_ASSERT(mBuffer);
@@ -679,18 +716,54 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
             }
           }
           result.mDidSelfCopy = true;
+          mDidSelfCopy = true;
           // Don't set destBuffer; we special-case self-copies, and
           // just did the necessary work above.
           mBufferRect = destBufferRect;
         } else {
-          // We can't do a real self-copy because the buffer is rotated.
-          // So allocate a new buffer for the destination.
-          destBufferRect = ComputeBufferRect(neededRegion.GetBounds());
-          CreateBuffer(contentType, destBufferRect, bufferFlags,
-                       getter_AddRefs(destBuffer), getter_AddRefs(destBufferOnWhite),
-                       &destDTBuffer, &destDTBufferOnWhite);
-          if (!destBuffer && !destDTBuffer)
-            return result;
+          // With azure and a data surface perform an buffer unrotate
+          // (SelfCopy).
+          if (IsAzureBuffer()) {
+            unsigned char* data;
+            IntSize size;
+            int32_t stride;
+            SurfaceFormat format;
+
+            if (mDTBuffer->LockBits(&data, &size, &stride, &format)) {
+              uint8_t bytesPerPixel = BytesPerPixel(format);
+              BufferUnrotate(data,
+                             size.width * bytesPerPixel,
+                             size.height, stride,
+                             newRotation.x * bytesPerPixel, newRotation.y);
+              mDTBuffer->ReleaseBits(data);
+
+              if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
+                mDTBufferOnWhite->LockBits(&data, &size, &stride, &format);
+                uint8_t bytesPerPixel = BytesPerPixel(format);
+                BufferUnrotate(data,
+                               size.width * bytesPerPixel,
+                               size.height, stride,
+                               newRotation.x * bytesPerPixel, newRotation.y);
+                mDTBufferOnWhite->ReleaseBits(data);
+              }
+
+              // Buffer unrotate moves all the pixels, note that
+              // we self copied for SyncBackToFrontBuffer
+              result.mDidSelfCopy = true;
+              mDidSelfCopy = true;
+              mBufferRect = destBufferRect;
+              mBufferRotation = nsIntPoint(0, 0);
+            }
+          }
+
+          if (!result.mDidSelfCopy) {
+            destBufferRect = ComputeBufferRect(neededRegion.GetBounds());
+            CreateBuffer(contentType, destBufferRect, bufferFlags,
+                         getter_AddRefs(destBuffer), getter_AddRefs(destBufferOnWhite),
+                         &destDTBuffer, &destDTBufferOnWhite);
+            if (!destBuffer && !destDTBuffer)
+              return result;
+          }
         }
       } else {
         mBufferRect = destBufferRect;

@@ -1806,7 +1806,7 @@ JSScript::fullyInitTrivial(ExclusiveContext *cx, Handle<JSScript*> script)
     if (!ssd)
         return false;
 
-    ssd->data[0] = JSOP_STOP;
+    ssd->data[0] = JSOP_RETRVAL;
     ssd->data[1] = SRC_NULL;
     script->length = 1;
     return SaveSharedScriptData(cx, script, ssd, 1);
@@ -2942,6 +2942,7 @@ LazyScript::LazyScript(JSFunction *fun, void *table, uint32_t numFreeVariables, 
     directlyInsideEval_(false),
     usesArgumentsAndApply_(false),
     hasBeenCloned_(false),
+    treatAsRunOnce_(false),
     begin_(begin),
     end_(end),
     lineno_(lineno),

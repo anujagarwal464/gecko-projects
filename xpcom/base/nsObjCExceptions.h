@@ -85,8 +85,8 @@ static void nsObjCExceptionLog(NSException* aException)
       unsigned int stackCount = [stackTrace count];
       unsigned int stackIndex = 0;
       for (; stackIndex < stackCount; stackIndex++) {
-        NSUInteger address =
-          [[stackTrace objectAtIndex:stackIndex] unsignedIntegerValue];
+        unsigned long address =
+          [[stackTrace objectAtIndex:stackIndex] unsignedLongValue];
         [args addObject:[NSString stringWithFormat:@"0x%lx", address]];
       }
 
@@ -133,7 +133,7 @@ static void nsObjCExceptionAbort()
   // We need to raise a mach-o signal here, the Mozilla crash reporter on
   // Mac OS X does not respond to POSIX signals. Raising mach-o signals directly
   // is tricky so we do it by just derefing a null pointer.
-  int* foo = NULL;
+  int* foo = nullptr;
   *foo = 1;
 }
 

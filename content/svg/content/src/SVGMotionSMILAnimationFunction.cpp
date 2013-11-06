@@ -227,7 +227,7 @@ SVGMotionSMILAnimationFunction::
       bool ok =
         path.GetDistancesFromOriginToEndsOfVisibleSegments(&mPathVertices);
       if (ok && mPathVertices.Length()) {
-        mPath = pathElem->GetFlattenedPath(gfxMatrix());
+        mPath = pathElem->GetPath(gfxMatrix());
       }
     }
   }
@@ -239,20 +239,20 @@ SVGMotionSMILAnimationFunction::RebuildPathAndVerticesFromPathAttr()
   const nsAString& pathSpec = GetAttr(nsGkAtoms::path)->GetStringValue();
   mPathSourceType = ePathSourceType_PathAttr;
 
-  // Generate gfxFlattenedPath from |path| attr
+  // Generate gfxPath from |path| attr
   SVGPathData path;
-  nsSVGPathDataParserToInternal pathParser(&path);
+  nsSVGPathDataParser pathParser(pathSpec, &path);
 
   // We ignore any failure returned from Parse() since the SVG spec says to
   // accept all segments up to the first invalid token. Instead we must
   // explicitly check that the parse produces at least one path segment (if
   // the path data doesn't begin with a valid "M", then it's invalid).
-  pathParser.Parse(pathSpec);
+  pathParser.Parse();
   if (!path.Length()) {
     return;
   }
 
-  mPath = path.ToFlattenedPath(gfxMatrix());
+  mPath = path.ToPath(gfxMatrix());
   bool ok = path.GetDistancesFromOriginToEndsOfVisibleSegments(&mPathVertices);
   if (!ok || !mPathVertices.Length()) {
     mPath = nullptr;
@@ -292,7 +292,7 @@ SVGMotionSMILAnimationFunction::
 
 bool
 SVGMotionSMILAnimationFunction::
-  GenerateValuesForPathAndPoints(gfxFlattenedPath* aPath,
+  GenerateValuesForPathAndPoints(gfxPath* aPath,
                                  bool aIsKeyPoints,
                                  nsTArray<double>& aPointDistances,
                                  nsTArray<nsSMILValue>& aResult)

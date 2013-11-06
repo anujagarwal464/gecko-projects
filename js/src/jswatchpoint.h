@@ -31,8 +31,10 @@ struct WatchKey {
 
 struct Watchpoint {
     JSWatchPointHandler handler;
-    RelocatablePtrObject closure;
+    EncapsulatedPtrObject closure;  /* This is always marked in minor GCs and so doesn't require a postbarrier. */
     bool held;  /* true if currently running handler */
+    Watchpoint(JSWatchPointHandler handler, JSObject* closure, bool held)
+      : handler(handler), closure(closure), held(held) {}
 };
 
 template <>

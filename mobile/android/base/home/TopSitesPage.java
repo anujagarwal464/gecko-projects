@@ -15,11 +15,12 @@ import org.mozilla.gecko.db.BrowserContract.Thumbnails;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.db.BrowserDB.TopSitesCursorWrapper;
+import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.home.HomeListView.HomeContextMenuInfo;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.home.PinSiteDialog.OnSiteSelectedListener;
-import org.mozilla.gecko.home.TopSitesGridView.OnPinSiteListener;
+import org.mozilla.gecko.home.TopSitesGridView.OnEditPinnedSiteListener;
 import org.mozilla.gecko.home.TopSitesGridView.TopSitesGridContextMenuInfo;
 import org.mozilla.gecko.util.ThreadUtils;
 
@@ -32,7 +33,6 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.v4.app.FragmentManager;
-import android.support.v4.app.LoaderManager;
 import android.support.v4.app.LoaderManager.LoaderCallbacks;
 import android.support.v4.content.AsyncTaskLoader;
 import android.support.v4.content.Loader;
@@ -100,8 +100,8 @@ public class TopSitesPage extends HomeFragment {
     // Callback for thumbnail loader
     private ThumbnailsLoaderCallbacks mThumbnailsLoaderCallbacks;
 
-    // Listener for pinning sites
-    private PinSiteListener mPinSiteListener;
+    // Listener for editing pinned sites.
+    private EditPinnedSiteListener mEditPinnedSiteListener;
 
     // On URL open listener
     private OnUrlOpenListener mUrlOpenListener;
@@ -112,28 +112,27 @@ public class TopSitesPage extends HomeFragment {
     // Time in ms until the Gecko thread is reset to normal priority.
     private static final long PRIORITY_RESET_TIMEOUT = 10000;
 
-    /**
-     *  Class to hold the bitmap of cached thumbnails/favicons.
-     */
-    public static class Thumbnail {
-        // Thumbnail or favicon.
-        private final boolean isThumbnail;
-
-        // Bitmap of thumbnail/favicon.
-        private final Bitmap bitmap;
-
-        public Thumbnail(Bitmap bitmap, boolean isThumbnail) {
-            this.bitmap = bitmap;
-            this.isThumbnail = isThumbnail;
-        }
-    }
-
     public static TopSitesPage newInstance() {
         return new TopSitesPage();
     }
 
     public TopSitesPage() {
         mUrlOpenListener = null;
+    }
+
+    private static boolean logDebug = Log.isLoggable(LOGTAG, Log.DEBUG);
+    private static boolean logVerbose = Log.isLoggable(LOGTAG, Log.VERBOSE);
+
+    private static void debug(final String message) {
+        if (logDebug) {
+            Log.d(LOGTAG, message);
+        }
+    }
+
+    private static void trace(final String message) {
+        if (logVerbose) {
+            Log.v(LOGTAG, message);
+        }
     }
 
     @Override
@@ -171,7 +170,7 @@ public class TopSitesPage extends HomeFragment {
 
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
-        mPinSiteListener = new PinSiteListener();
+        mEditPinnedSiteListener = new EditPinnedSiteListener();
 
         mList.setTag(HomePager.LIST_TAG_TOP_SITES);
         mList.setHeaderDividersEnabled(false);
@@ -202,7 +201,7 @@ public class TopSitesPage extends HomeFragment {
         });
 
         mGrid.setOnUrlOpenListener(mUrlOpenListener);
-        mGrid.setOnPinSiteListener(mPinSiteListener);
+        mGrid.setOnEditPinnedSiteListener(mEditPinnedSiteListener);
 
         registerForContextMenu(mList);
         registerForContextMenu(mGrid);
@@ -354,7 +353,8 @@ public class TopSitesPage extends HomeFragment {
         }
 
         if (itemId == R.id.top_sites_edit) {
-            mPinSiteListener.onPinSite(info.position);
+            // Decode "user-entered" URLs before showing them.
+            mEditPinnedSiteListener.onEditPinnedSite(info.position, decodeUserEnteredUrl(info.url));
             return true;
         }
 
@@ -387,10 +387,10 @@ public class TopSitesPage extends HomeFragment {
     }
 
     /**
-     * Listener for pinning sites.
+     * Listener for editing pinned sites.
      */
-    private class PinSiteListener implements OnPinSiteListener,
-                                             OnSiteSelectedListener {
+    private class EditPinnedSiteListener implements OnEditPinnedSiteListener,
+                                                    OnSiteSelectedListener {
         // Tag for the PinSiteDialog fragment.
         private static final String TAG_PIN_SITE = "pin_site";
 
@@ -398,7 +398,7 @@ public class TopSitesPage extends HomeFragment {
         private int mPosition;
 
         @Override
-        public void onPinSite(int position) {
+        public void onEditPinnedSite(int position, String searchTerm) {
             mPosition = position;
 
             final FragmentManager manager = getActivity().getSupportFragmentManager();
@@ -408,6 +408,7 @@ public class TopSitesPage extends HomeFragment {
             }
 
             dialog.setOnSiteSelectedListener(this);
+            dialog.setSearchTerm(searchTerm);
             dialog.show(manager, TAG_PIN_SITE);
         }
 
@@ -494,14 +495,14 @@ public class TopSitesPage extends HomeFragment {
 
         @Override
         public Cursor loadCursor() {
-            Log.d(LOGTAG, "TopSitesLoader.loadCursor()");
+            trace("TopSitesLoader.loadCursor()");
             return BrowserDB.getTopSites(getContext().getContentResolver(), mMaxGridEntries, SEARCH_LIMIT);
         }
     }
 
     private class VisitedAdapter extends CursorAdapter {
         public VisitedAdapter(Context context, Cursor cursor) {
-            super(context, cursor);
+            super(context, cursor, 0);
         }
 
         @Override
@@ -531,10 +532,11 @@ public class TopSitesPage extends HomeFragment {
 
     public class TopSitesGridAdapter extends CursorAdapter {
         // Cache to store the thumbnails.
-        private Map<String, Thumbnail> mThumbnails;
+        // Ensure that this is only accessed from the UI thread.
+        private Map<String, Bitmap> mThumbnails;
 
         public TopSitesGridAdapter(Context context, Cursor cursor) {
-            super(context, cursor);
+            super(context, cursor, 0);
         }
 
         @Override
@@ -554,7 +556,7 @@ public class TopSitesPage extends HomeFragment {
          *
          * @param thumbnails A map of urls and their thumbnail bitmaps.
          */
-        public void updateThumbnails(Map<String, Thumbnail> thumbnails) {
+        public void updateThumbnails(Map<String, Bitmap> thumbnails) {
             mThumbnails = thumbnails;
             notifyDataSetChanged();
         }
@@ -572,25 +574,48 @@ public class TopSitesPage extends HomeFragment {
                 pinned = ((TopSitesCursorWrapper) cursor).isPinned();
             }
 
-            TopSitesGridItemView view = (TopSitesGridItemView) bindView;
-            view.setTitle(title);
-            view.setUrl(url);
-            view.setPinned(pinned);
+            final TopSitesGridItemView view = (TopSitesGridItemView) bindView;
 
             // If there is no url, then show "add bookmark".
             if (TextUtils.isEmpty(url)) {
-                view.displayThumbnail(R.drawable.top_site_add);
-            } else {
-                // Show the thumbnail.
-                Thumbnail thumbnail = (mThumbnails != null ? mThumbnails.get(url) : null);
-                if (thumbnail == null) {
-                    view.displayThumbnail(null);
-                } else if (thumbnail.isThumbnail) {
-                    view.displayThumbnail(thumbnail.bitmap);
-                } else {
-                    view.displayFavicon(thumbnail.bitmap);
-                }
+                view.blankOut();
+                return;
             }
+
+            // Show the thumbnail, if any.
+            Bitmap thumbnail = (mThumbnails != null ? mThumbnails.get(url) : null);
+
+            // Debounce bindView calls to avoid redundant redraws and favicon
+            // fetches.
+            final boolean updated = view.updateState(title, url, pinned, thumbnail);
+
+            // If we sent in a thumbnail, we're done now.
+            if (thumbnail != null) {
+                return;
+            }
+
+            // Thumbnails are delivered late, so we can't short-circuit any
+            // sooner than this. But we can avoid a duplicate favicon
+            // fetch...
+            if (!updated) {
+                debug("bindView called twice for same values; short-circuiting.");
+                return;
+            }
+
+            // If we have no thumbnail, attempt to show a Favicon instead.
+            LoadIDAwareFaviconLoadedListener listener = new LoadIDAwareFaviconLoadedListener(view);
+            final int loadId = Favicons.getSizedFaviconForPageFromLocal(url, listener);
+            if (loadId == Favicons.LOADED) {
+                // Great!
+                return;
+            }
+
+            // Otherwise, do this until the async lookup returns.
+            view.displayThumbnail(R.drawable.favicon);
+
+            // Give each side enough information to shake hands later.
+            listener.setLoadId(loadId);
+            view.setLoadId(loadId);
         }
 
         @Override
@@ -599,10 +624,27 @@ public class TopSitesPage extends HomeFragment {
         }
     }
 
+    private static class LoadIDAwareFaviconLoadedListener implements OnFaviconLoadedListener {
+        private volatile int loadId = Favicons.NOT_LOADING;
+        private final TopSitesGridItemView view;
+        public LoadIDAwareFaviconLoadedListener(TopSitesGridItemView view) {
+            this.view = view;
+        }
+
+        public void setLoadId(int id) {
+            this.loadId = id;
+        }
+
+        @Override
+        public void onFaviconLoaded(String url, String faviconURL, Bitmap favicon) {
+            this.view.displayFavicon(favicon, faviconURL, this.loadId);
+        }
+    }
+
     private class CursorLoaderCallbacks implements LoaderCallbacks<Cursor> {
         @Override
         public Loader<Cursor> onCreateLoader(int id, Bundle args) {
-            Log.d(LOGTAG, "Creating TopSitesLoader: " + id);
+            trace("Creating TopSitesLoader: " + id);
             return new TopSitesLoader(getActivity());
         }
 
@@ -618,7 +660,7 @@ public class TopSitesPage extends HomeFragment {
          */
         @Override
         public void onLoadFinished(Loader<Cursor> loader, Cursor c) {
-            Log.d(LOGTAG, "onLoadFinished: " + c.getCount() + " rows.");
+            debug("onLoadFinished: " + c.getCount() + " rows.");
 
             mListAdapter.swapCursor(c);
             mGridAdapter.swapCursor(c);
@@ -665,8 +707,8 @@ public class TopSitesPage extends HomeFragment {
     /**
      * An AsyncTaskLoader to load the thumbnails from a cursor.
      */
-    private static class ThumbnailsLoader extends AsyncTaskLoader<Map<String, Thumbnail>> {
-        private Map<String, Thumbnail> mThumbnails;
+    private static class ThumbnailsLoader extends AsyncTaskLoader<Map<String, Bitmap>> {
+        private Map<String, Bitmap> mThumbnails;
         private ArrayList<String> mUrls;
 
         public ThumbnailsLoader(Context context, ArrayList<String> urls) {
@@ -675,7 +717,7 @@ public class TopSitesPage extends HomeFragment {
         }
 
         @Override
-        public Map<String, Thumbnail> loadInBackground() {
+        public Map<String, Bitmap> loadInBackground() {
             if (mUrls == null || mUrls.size() == 0) {
                 return null;
             }
@@ -688,7 +730,7 @@ public class TopSitesPage extends HomeFragment {
                 return null;
             }
 
-            final Map<String, Thumbnail> thumbnails = new HashMap<String, Thumbnail>();
+            final Map<String, Bitmap> thumbnails = new HashMap<String, Bitmap>();
 
             try {
                 final int urlIndex = cursor.getColumnIndexOrThrow(Thumbnails.URL);
@@ -713,29 +755,17 @@ public class TopSitesPage extends HomeFragment {
                         break;
                     }
 
-                    thumbnails.put(url, new Thumbnail(bitmap, true));
+                    thumbnails.put(url, bitmap);
                 }
             } finally {
                 cursor.close();
-            }
-
-            // Query the DB for favicons for the urls without thumbnails.
-            for (String url : mUrls) {
-                if (!thumbnails.containsKey(url)) {
-                    final Bitmap bitmap = BrowserDB.getFaviconForUrl(cr, url);
-                    if (bitmap != null) {
-                        // Favicons.scaleImage can return several different size favicons,
-                        // but will at least prevent this from being too large.
-                        thumbnails.put(url, new Thumbnail(Favicons.scaleImage(bitmap), false));
-                    }
-                }
             }
 
             return thumbnails;
         }
 
         @Override
-        public void deliverResult(Map<String, Thumbnail> thumbnails) {
+        public void deliverResult(Map<String, Bitmap> thumbnails) {
             if (isReset()) {
                 mThumbnails = null;
                 return;
@@ -765,7 +795,7 @@ public class TopSitesPage extends HomeFragment {
         }
 
         @Override
-        public void onCanceled(Map<String, Thumbnail> thumbnails) {
+        public void onCanceled(Map<String, Bitmap> thumbnails) {
             mThumbnails = null;
         }
 
@@ -783,14 +813,14 @@ public class TopSitesPage extends HomeFragment {
     /**
      * Loader callbacks for the thumbnails on TopSitesGridView.
      */
-    private class ThumbnailsLoaderCallbacks implements LoaderCallbacks<Map<String, Thumbnail>> {
+    private class ThumbnailsLoaderCallbacks implements LoaderCallbacks<Map<String, Bitmap>> {
         @Override
-        public Loader<Map<String, Thumbnail>> onCreateLoader(int id, Bundle args) {
+        public Loader<Map<String, Bitmap>> onCreateLoader(int id, Bundle args) {
             return new ThumbnailsLoader(getActivity(), args.getStringArrayList(THUMBNAILS_URLS_KEY));
         }
 
         @Override
-        public void onLoadFinished(Loader<Map<String, Thumbnail>> loader, Map<String, Thumbnail> thumbnails) {
+        public void onLoadFinished(Loader<Map<String, Bitmap>> loader, Map<String, Bitmap> thumbnails) {
             if (mGridAdapter != null) {
                 mGridAdapter.updateThumbnails(thumbnails);
             }
@@ -801,7 +831,7 @@ public class TopSitesPage extends HomeFragment {
         }
 
         @Override
-        public void onLoaderReset(Loader<Map<String, Thumbnail>> loader) {
+        public void onLoaderReset(Loader<Map<String, Bitmap>> loader) {
             if (mGridAdapter != null) {
                 mGridAdapter.updateThumbnails(null);
             }

@@ -71,8 +71,7 @@ MobileMessageCallback::NotifySuccess(nsISupports *aMessage, bool aAsync)
   JSAutoCompartment ac(cx, global);
 
   JS::Rooted<JS::Value> wrappedMessage(cx);
-  rv = nsContentUtils::WrapNative(cx, global, aMessage,
-                                  wrappedMessage.address());
+  rv = nsContentUtils::WrapNative(cx, global, aMessage, &wrappedMessage);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NotifySuccess(wrappedMessage, aAsync);
@@ -106,6 +105,9 @@ MobileMessageCallback::NotifyError(int32_t aError, bool aAsync)
       break;
     case nsIMobileMessageCallback::FDN_CHECK_ERROR:
       errorStr = NS_LITERAL_STRING("FdnCheckError");
+      break;
+    case nsIMobileMessageCallback::NON_ACTIVE_SIM_CARD_ERROR:
+      errorStr = NS_LITERAL_STRING("NonActiveSimCardError");
       break;
     default: // SUCCESS_NO_ERROR is handled above.
       MOZ_CRASH("Should never get here!");
@@ -164,7 +166,8 @@ MobileMessageCallback::NotifyMessageDeleted(bool *aDeleted, uint32_t aSize)
   AutoPushJSContext cx(sc->GetNativeContext());
   NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
 
-  JS::Rooted<JSObject*> deleteArrayObj(cx, JS_NewArrayObject(cx, aSize, NULL));
+  JS::Rooted<JSObject*> deleteArrayObj(cx,
+                                       JS_NewArrayObject(cx, aSize, nullptr));
   JS::Rooted<JS::Value> value(cx);
   for (uint32_t i = 0; i < aSize; i++) {
     value.setBoolean(aDeleted[i]);
@@ -205,6 +208,28 @@ NS_IMETHODIMP
 MobileMessageCallback::NotifyGetSegmentInfoForTextFailed(int32_t aError)
 {
   return NotifyError(aError, true);
+}
+
+NS_IMETHODIMP
+MobileMessageCallback::NotifyGetSmscAddress(const nsAString& aSmscAddress)
+{
+  AutoJSContext cx;
+  JSString* smsc = JS_NewUCStringCopyN(cx,
+                                       static_cast<const jschar *>(aSmscAddress.BeginReading()),
+                                       aSmscAddress.Length());
+
+  if (!smsc) {
+    return NotifyError(nsIMobileMessageCallback::INTERNAL_ERROR);
+  }
+
+  JS::Rooted<JS::Value> val(cx, STRING_TO_JSVAL(smsc));
+  return NotifySuccess(val);
+}
+
+NS_IMETHODIMP
+MobileMessageCallback::NotifyGetSmscAddressFailed(int32_t aError)
+{
+  return NotifyError(aError);
 }
 
 } // namesapce mobilemessage

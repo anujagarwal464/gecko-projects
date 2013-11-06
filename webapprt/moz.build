@@ -15,10 +15,10 @@ DIRS += ['locales']
 
 EXTRA_COMPONENTS += [
     'CommandLineHandler.js',
+    'components.manifest',
     'ContentPermission.js',
     'DirectoryProvider.js',
     'PaymentUIGlue.js',
-    'components.manifest',
 ]
 
 EXTRA_JS_MODULES += [
@@ -26,8 +26,12 @@ EXTRA_JS_MODULES += [
     'Startup.jsm',
     'WebappRT.jsm',
     'WebappsHandler.jsm',
+    'WebRTCHandler.jsm',
 ]
 
 MOCHITEST_WEBAPPRT_CHROME_MANIFESTS += ['test/chrome/webapprt.ini']
 MOCHITEST_MANIFESTS += ['test/content/mochitest.ini']
 
+# Place webapprt resources in a separate app dir
+DIST_SUBDIR = 'webapprt'
+export('DIST_SUBDIR')

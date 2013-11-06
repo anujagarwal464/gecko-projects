@@ -64,6 +64,10 @@ typedef HashMap<CallsiteCloneKey,
                 CallsiteCloneKey,
                 SystemAllocPolicy> CallsiteCloneTable;
 
+JSFunction *
+ExistingCloneFunctionAtCallsite(JSCompartment *comp, JSFunction *fun,
+                                JSScript *script, jsbytecode *pc);
+
 JSFunction *CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun,
                                     HandleScript script, jsbytecode *pc);
 
@@ -274,6 +278,7 @@ struct ThreadSafeContext : ContextFriendFields,
     // Accessors for immutable runtime data.
     JSAtomState &names() { return runtime_->atomState; }
     StaticStrings &staticStrings() { return runtime_->staticStrings; }
+    const JS::AsmJSCacheOps &asmJSCacheOps() { return runtime_->asmJSCacheOps; }
     PropertyName *emptyString() { return runtime_->emptyString; }
     FreeOp *defaultFreeOp() { return runtime_->defaultFreeOp(); }
     bool useHelperThreads() { return runtime_->useHelperThreads(); }
@@ -428,7 +433,7 @@ struct JSContext : public js::ExclusiveContext,
     js::Value           exception;           /* most-recently-thrown exception */
 
     /* Per-context options. */
-    unsigned            options_;            /* see jsapi.h for JSOPTION_* */
+    JS::ContextOptions  options_;
 
   public:
     int32_t             reportGranularity;  /* see vm/Probes.h */
@@ -463,7 +468,7 @@ struct JSContext : public js::ExclusiveContext,
     inline void setDefaultCompartmentObject(JSObject *obj);
     inline void setDefaultCompartmentObjectIfUnset(JSObject *obj);
     JSObject *maybeDefaultCompartmentObject() const {
-        JS_ASSERT(!hasOption(JSOPTION_NO_DEFAULT_COMPARTMENT_OBJECT));
+        JS_ASSERT(!options().noDefaultCompartmentObject());
         return defaultCompartmentObject_;
     }
 
@@ -492,20 +497,13 @@ struct JSContext : public js::ExclusiveContext,
      */
     JSVersion findVersion() const;
 
-    void setOptions(unsigned opts) {
-        JS_ASSERT((opts & JSOPTION_MASK) == opts);
-        options_ = opts;
+    const JS::ContextOptions &options() const {
+        return options_;
     }
 
-    unsigned options() const { return options_; }
-
-    bool hasOption(unsigned opt) const {
-        JS_ASSERT((opt & JSOPTION_MASK) == opt);
-        return !!(options_ & opt);
+    JS::ContextOptions &options() {
+        return options_;
     }
-
-    bool hasExtraWarningsOption() const { return hasOption(JSOPTION_EXTRA_WARNINGS); }
-    bool hasWErrorOption() const { return hasOption(JSOPTION_WERROR); }
 
     js::LifoAlloc &tempLifoAlloc() { return runtime()->tempLifoAlloc; }
 
@@ -744,6 +742,16 @@ enum ErrorArgumentsType {
     ArgumentsAreUnicode,
     ArgumentsAreASCII
 };
+
+
+/*
+ * Loads and returns a self-hosted function by name. For performance, define
+ * the property name in vm/CommonPropertyNames.h.
+ *
+ * Defined in SelfHosting.cpp.
+ */
+JSFunction *
+SelfHostedFunction(JSContext *cx, HandlePropertyName propName);
 
 } /* namespace js */
 

@@ -12,6 +12,7 @@
 #include "nsICommandLineRunner.h"
 #include "FrameworkView.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "GeckoProfiler.h"
 #include <shellapi.h>
 
 using namespace ABI::Windows::ApplicationModel;
@@ -21,11 +22,14 @@ using namespace ABI::Windows::System;
 using namespace ABI::Windows::Foundation;
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
+using namespace mozilla::widget;
 
 // Metro specific XRE methods we call from here on an
 // appropriate thread.
 extern nsresult XRE_metroStartup(bool runXREMain);
 extern void XRE_metroShutdown();
+
+static const char* gGeckoThreadName = "GeckoMain";
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gWindowsLog;
@@ -65,6 +69,12 @@ MetroApp::Run()
 {
   LogThread();
 
+  // Name this thread for debugging and register it with the profiler
+  // as the main gecko thread.
+  char aLocal;
+  PR_SetCurrentThreadName(gGeckoThreadName);
+  profiler_register_thread(gGeckoThreadName, &aLocal);
+
   HRESULT hr;
   hr = sCoreApp->add_Suspending(Callback<__FIEventHandler_1_Windows__CApplicationModel__CSuspendingEventArgs_t>(
     this, &MetroApp::OnSuspending).Get(), &mSuspendEvent);
@@ -74,11 +84,11 @@ MetroApp::Run()
     this, &MetroApp::OnResuming).Get(), &mResumeEvent);
   AssertHRESULT(hr);
 
-  Log("XPCOM startup initialization began");
+  WinUtils::Log("XPCOM startup initialization began");
   nsresult rv = XRE_metroStartup(true);
-  Log("XPCOM startup initialization complete");
+  WinUtils::Log("XPCOM startup initialization complete");
   if (NS_FAILED(rv)) {
-    Log("XPCOM startup initialization failed, bailing. rv=%X", rv);
+    WinUtils::Log("XPCOM startup initialization failed, bailing. rv=%X", rv);
     CoreExit();
   }
 }
@@ -101,6 +111,9 @@ MetroApp::ShutdownXPCOM()
 
   // Shut down xpcom
   XRE_metroShutdown();
+
+  // Unhook this thread from the profiler
+  profiler_unregister_thread();
 }
 
 // Request a shutdown of the application
@@ -141,7 +154,7 @@ HRESULT
 MetroApp::OnAsyncTileCreated(ABI::Windows::Foundation::IAsyncOperation<bool>* aOperation,
                              AsyncStatus aStatus)
 {
-  Log("Async operation status: %d", aStatus);
+  WinUtils::Log("Async operation status: %d", aStatus);
   return S_OK;
 }
 
@@ -205,12 +218,6 @@ XRE_MetroCoreApplicationRun()
 
   using namespace mozilla::widget::winrt;
 
-#ifdef PR_LOGGING
-  if (!gWindowsLog) {
-    gWindowsLog = PR_NewLogModule("nsWindow");
-  }
-#endif
-
   sMetroApp = Make<MetroApp>();
 
   HStringReference className(RuntimeClass_Windows_ApplicationModel_Core_CoreApplication);
@@ -244,7 +251,7 @@ XRE_MetroCoreApplicationRun()
   hr = sCoreApp->Run(sMetroApp.Get());
   sFrameworkView = nullptr;
 
-  Log("Exiting CoreApplication::Run");
+  WinUtils::Log("Exiting CoreApplication::Run");
 
   sCoreApp = nullptr;
   sMetroApp = nullptr;

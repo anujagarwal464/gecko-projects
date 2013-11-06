@@ -160,17 +160,6 @@ TimeDuration::Resolution()
   return TimeDuration::FromTicks(int64_t(sResolution));
 }
 
-struct TimeStampInitialization
-{
-  TimeStampInitialization() {
-    TimeStamp::Startup();
-  }
-  ~TimeStampInitialization() {
-    TimeStamp::Shutdown();
-  }
-};
-
-static TimeStampInitialization initOnce;
 static bool gInitialized = false;
 
 nsresult
@@ -193,8 +182,6 @@ TimeStamp::Startup()
        sResolutionSigDigs *= 10);
 
   gInitialized = true;
-  sFirstTimeStamp = TimeStamp::Now();
-  sProcessCreation = TimeStamp();
 
   return NS_OK;
 }
@@ -330,7 +317,7 @@ TimeStamp::ComputeProcessUptime()
 
   KINFO_PROC proc;
   size_t bufferSize = sizeof(proc);
-  rv = sysctl(mib, mibLen, &proc, &bufferSize, NULL, 0);
+  rv = sysctl(mib, mibLen, &proc, &bufferSize, nullptr, 0);
 
   if (rv == -1)
     return 0;

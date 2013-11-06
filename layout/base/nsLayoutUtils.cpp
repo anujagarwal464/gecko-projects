@@ -96,6 +96,7 @@ using mozilla::image::Orientation;
 
 #define FLEXBOX_ENABLED_PREF_NAME "layout.css.flexbox.enabled"
 #define STICKY_ENABLED_PREF_NAME "layout.css.sticky.enabled"
+#define TEXT_ALIGN_TRUE_ENABLED_PREF_NAME "layout.css.text-align-true-value.enabled"
 
 #ifdef DEBUG
 // TODO: remove, see bug 598468.
@@ -209,11 +210,50 @@ StickyEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
   return 0;
 }
 
+// When the pref "layout.css.text-align-true-value.enabled" changes, this
+// function is called to let us update kTextAlignKTable & kTextAlignLastKTable,
+// to selectively disable or restore the entries for "true" in those tables.
+static int
+TextAlignTrueEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
+{
+  NS_ASSERTION(strcmp(aPrefName, TEXT_ALIGN_TRUE_ENABLED_PREF_NAME) == 0,
+               "Did you misspell " TEXT_ALIGN_TRUE_ENABLED_PREF_NAME " ?");
+
+  static bool sIsInitialized;
+  static int32_t sIndexOfTrueInTextAlignTable;
+  static int32_t sIndexOfTrueInTextAlignLastTable;
+  bool isTextAlignTrueEnabled =
+    Preferences::GetBool(TEXT_ALIGN_TRUE_ENABLED_PREF_NAME, false);
+
+  if (!sIsInitialized) {
+    // First run: find the position of "true" in kTextAlignKTable.
+    sIndexOfTrueInTextAlignTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_true,
+                                     nsCSSProps::kTextAlignKTable);
+    // First run: find the position of "true" in kTextAlignLastKTable.
+    sIndexOfTrueInTextAlignLastTable =
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_true,
+                                     nsCSSProps::kTextAlignLastKTable);
+    sIsInitialized = true;
+  }
+
+  // OK -- now, stomp on or restore the "true" entry in the keyword tables,
+  // depending on whether the pref is enabled vs. disabled.
+  MOZ_ASSERT(sIndexOfTrueInTextAlignTable >= 0);
+  nsCSSProps::kTextAlignKTable[sIndexOfTrueInTextAlignTable] =
+    isTextAlignTrueEnabled ? eCSSKeyword_true : eCSSKeyword_UNKNOWN;
+  MOZ_ASSERT(sIndexOfTrueInTextAlignLastTable >= 0);
+  nsCSSProps::kTextAlignLastKTable[sIndexOfTrueInTextAlignLastTable] =
+    isTextAlignTrueEnabled ? eCSSKeyword_true : eCSSKeyword_UNKNOWN;
+
+  return 0;
+}
+
 template <class AnimationsOrTransitions>
 static AnimationsOrTransitions*
-HasAnimationOrTransition(nsIContent* aContent,
-                         nsIAtom* aAnimationProperty,
-                         nsCSSProperty aProperty)
+HasAnimationOrTransitionForCompositor(nsIContent* aContent,
+                                      nsIAtom* aAnimationProperty,
+                                      nsCSSProperty aProperty)
 {
   AnimationsOrTransitions* animations =
     static_cast<AnimationsOrTransitions*>(aContent->GetProperty(aAnimationProperty));
@@ -235,12 +275,40 @@ nsLayoutUtils::HasAnimationsForCompositor(nsIContent* aContent,
 {
   if (!aContent->MayHaveAnimations())
     return false;
-  if (HasAnimationOrTransition<ElementAnimations>
-        (aContent, nsGkAtoms::animationsProperty, aProperty)) {
-    return true;
+  return HasAnimationOrTransitionForCompositor<ElementAnimations>
+            (aContent, nsGkAtoms::animationsProperty, aProperty) ||
+         HasAnimationOrTransitionForCompositor<ElementTransitions>
+            (aContent, nsGkAtoms::transitionsProperty, aProperty);
+}
+
+template <class AnimationsOrTransitions>
+static AnimationsOrTransitions*
+HasAnimationOrTransition(nsIContent* aContent,
+                         nsIAtom* aAnimationProperty,
+                         nsCSSProperty aProperty)
+{
+  AnimationsOrTransitions* animations =
+    static_cast<AnimationsOrTransitions*>(aContent->GetProperty(aAnimationProperty));
+  if (animations) {
+    bool propertyMatches = animations->HasAnimationOfProperty(aProperty);
+    if (propertyMatches) {
+      return animations;
+    }
   }
-  return HasAnimationOrTransition<ElementTransitions>
-    (aContent, nsGkAtoms::transitionsProperty, aProperty);
+
+  return nullptr;
+}
+
+bool
+nsLayoutUtils::HasAnimations(nsIContent* aContent,
+                             nsCSSProperty aProperty)
+{
+  if (!aContent->MayHaveAnimations())
+    return false;
+  return HasAnimationOrTransition<ElementAnimations>
+            (aContent, nsGkAtoms::animationsProperty, aProperty) ||
+         HasAnimationOrTransition<ElementTransitions>
+            (aContent, nsGkAtoms::transitionsProperty, aProperty);
 }
 
 static gfxSize
@@ -283,7 +351,7 @@ gfxSize
 nsLayoutUtils::GetMaximumAnimatedScale(nsIContent* aContent)
 {
   gfxSize result;
-  ElementAnimations* animations = HasAnimationOrTransition<ElementAnimations>
+  ElementAnimations* animations = HasAnimationOrTransitionForCompositor<ElementAnimations>
     (aContent, nsGkAtoms::animationsProperty, eCSSProperty_transform);
   if (animations) {
     for (uint32_t animIdx = animations->mAnimations.Length(); animIdx-- != 0; ) {
@@ -306,7 +374,7 @@ nsLayoutUtils::GetMaximumAnimatedScale(nsIContent* aContent)
       }
     }
   }
-  ElementTransitions* transitions = HasAnimationOrTransition<ElementTransitions>
+  ElementTransitions* transitions = HasAnimationOrTransitionForCompositor<ElementTransitions>
     (aContent, nsGkAtoms::transitionsProperty, eCSSProperty_transform);
   if (transitions) {
     for (uint32_t i = 0, i_end = transitions->mPropertyTransitions.Length();
@@ -447,6 +515,22 @@ nsLayoutUtils::UnsetValueEnabled()
   return sUnsetValueEnabled;
 }
 
+bool
+nsLayoutUtils::IsTextAlignTrueValueEnabled()
+{
+  static bool sTextAlignTrueValueEnabled;
+  static bool sTextAlignTrueValueEnabledPrefCached = false;
+
+  if (!sTextAlignTrueValueEnabledPrefCached) {
+    sTextAlignTrueValueEnabledPrefCached = true;
+    Preferences::AddBoolVarCache(&sTextAlignTrueValueEnabled,
+                                 TEXT_ALIGN_TRUE_ENABLED_PREF_NAME,
+                                 false);
+  }
+
+  return sTextAlignTrueValueEnabled;
+}
+
 void
 nsLayoutUtils::UnionChildOverflow(nsIFrame* aFrame,
                                   nsOverflowAreas& aOverflowAreas)
@@ -500,6 +584,16 @@ nsLayoutUtils::FindOrCreateIDFor(nsIContent* aContent, bool aRoot)
 
   if (!FindIDFor(aContent, &scrollId)) {
     scrollId = aRoot ? FrameMetrics::ROOT_SCROLL_ID : sScrollIdCounter++;
+    if (aRoot) {
+      // We are possibly replacing the old ROOT_SCROLL_ID content with a new one, so
+      // we should clear the property on the old content if there is one. Otherwise when
+      // that content is destroyed it will clear its property list and clobber ROOT_SCROLL_ID.
+      nsIContent* oldRoot;
+      bool oldExists = GetContentMap().Get(scrollId, &oldRoot);
+      if (oldExists) {
+        oldRoot->DeleteProperty(nsGkAtoms::RemoteId);
+      }
+    }
     aContent->SetProperty(nsGkAtoms::RemoteId, new ViewID(scrollId),
                           DestroyViewID);
     GetContentMap().Put(scrollId, aContent);
@@ -683,11 +777,7 @@ nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
                    "Unexpected parent");
 #endif // DEBUG
 
-      // XXX FIXME: Bug 350740
-      // Return here, because the postcondition for this function actually
-      // fails for this case, since the popups are not in a "real" frame list
-      // in the popup set.
-      return nsIFrame::kPopupList;
+      id = nsIFrame::kPopupList;
 #endif // MOZ_XUL
     } else {
       NS_ASSERTION(aChildFrame->IsFloating(), "not a floated frame");
@@ -698,17 +788,24 @@ nsLayoutUtils::GetChildListNameFor(nsIFrame* aChildFrame)
     nsIAtom* childType = aChildFrame->GetType();
     if (nsGkAtoms::menuPopupFrame == childType) {
       nsIFrame* parent = aChildFrame->GetParent();
-      nsIFrame* firstPopup = (parent)
-                             ? parent->GetFirstChild(nsIFrame::kPopupList)
-                             : nullptr;
-      NS_ASSERTION(!firstPopup || !firstPopup->GetNextSibling(),
-                   "We assume popupList only has one child, but it has more.");
-      id = firstPopup == aChildFrame
-             ? nsIFrame::kPopupList
-             : nsIFrame::kPrincipalList;
+      MOZ_ASSERT(parent, "nsMenuPopupFrame can't be the root frame");
+      if (parent) {
+        if (parent->GetType() == nsGkAtoms::popupSetFrame) {
+          id = nsIFrame::kPopupList;
+        } else {
+          nsIFrame* firstPopup = parent->GetFirstChild(nsIFrame::kPopupList);
+          MOZ_ASSERT(!firstPopup || !firstPopup->GetNextSibling(),
+                     "We assume popupList only has one child, but it has more.");
+          id = firstPopup == aChildFrame
+                 ? nsIFrame::kPopupList
+                 : nsIFrame::kPrincipalList;
+        }
+      } else {
+        id = nsIFrame::kPrincipalList;
+      }
     } else if (nsGkAtoms::tableColGroupFrame == childType) {
       id = nsIFrame::kColGroupList;
-    } else if (nsGkAtoms::tableCaptionFrame == aChildFrame->GetType()) {
+    } else if (nsGkAtoms::tableCaptionFrame == childType) {
       id = nsIFrame::kCaptionList;
     } else {
       id = nsIFrame::kPrincipalList;
@@ -992,9 +1089,11 @@ nsLayoutUtils::DoCompareTreePosition(nsIContent* aContent1,
   return index1 - index2;
 }
 
-static nsIFrame* FillAncestors(nsIFrame* aFrame,
-                               nsIFrame* aStopAtAncestor,
-                               nsTArray<nsIFrame*>* aAncestors)
+// static
+nsIFrame*
+nsLayoutUtils::FillAncestors(nsIFrame* aFrame,
+                             nsIFrame* aStopAtAncestor,
+                             nsTArray<nsIFrame*>* aAncestors)
 {
   while (aFrame && aFrame != aStopAtAncestor) {
     aAncestors->AppendElement(aFrame);
@@ -1026,6 +1125,27 @@ nsLayoutUtils::DoCompareTreePosition(nsIFrame* aFrame1,
   NS_PRECONDITION(aFrame1, "aFrame1 must not be null");
   NS_PRECONDITION(aFrame2, "aFrame2 must not be null");
 
+  nsAutoTArray<nsIFrame*,20> frame2Ancestors;
+  nsIFrame* nonCommonAncestor =
+    FillAncestors(aFrame2, aCommonAncestor, &frame2Ancestors);
+
+  return DoCompareTreePosition(aFrame1, aFrame2, frame2Ancestors,
+                               aIf1Ancestor, aIf2Ancestor,
+                               nonCommonAncestor ? aCommonAncestor : nullptr);
+}
+
+// static
+int32_t
+nsLayoutUtils::DoCompareTreePosition(nsIFrame* aFrame1,
+                                     nsIFrame* aFrame2,
+                                     nsTArray<nsIFrame*>& aFrame2Ancestors,
+                                     int32_t aIf1Ancestor,
+                                     int32_t aIf2Ancestor,
+                                     nsIFrame* aCommonAncestor)
+{
+  NS_PRECONDITION(aFrame1, "aFrame1 must not be null");
+  NS_PRECONDITION(aFrame2, "aFrame2 must not be null");
+
   nsPresContext* presContext = aFrame1->PresContext();
   if (presContext != aFrame2->PresContext()) {
     NS_ERROR("no common ancestor at all, different documents");
@@ -1033,25 +1153,18 @@ nsLayoutUtils::DoCompareTreePosition(nsIFrame* aFrame1,
   }
 
   nsAutoTArray<nsIFrame*,20> frame1Ancestors;
-  if (!FillAncestors(aFrame1, aCommonAncestor, &frame1Ancestors)) {
+  if (aCommonAncestor &&
+      !FillAncestors(aFrame1, aCommonAncestor, &frame1Ancestors)) {
     // We reached the root of the frame tree ... if aCommonAncestor was set,
     // it is wrong
-    aCommonAncestor = nullptr;
-  }
-
-  nsAutoTArray<nsIFrame*,20> frame2Ancestors;
-  if (!FillAncestors(aFrame2, aCommonAncestor, &frame2Ancestors) &&
-      aCommonAncestor) {
-    // We reached the root of the frame tree ... aCommonAncestor was wrong.
-    // Try again with no hint.
     return DoCompareTreePosition(aFrame1, aFrame2,
                                  aIf1Ancestor, aIf2Ancestor, nullptr);
   }
 
   int32_t last1 = int32_t(frame1Ancestors.Length()) - 1;
-  int32_t last2 = int32_t(frame2Ancestors.Length()) - 1;
+  int32_t last2 = int32_t(aFrame2Ancestors.Length()) - 1;
   while (last1 >= 0 && last2 >= 0 &&
-         frame1Ancestors[last1] == frame2Ancestors[last2]) {
+         frame1Ancestors[last1] == aFrame2Ancestors[last2]) {
     last1--;
     last2--;
   }
@@ -1071,7 +1184,7 @@ nsLayoutUtils::DoCompareTreePosition(nsIFrame* aFrame1,
   }
 
   nsIFrame* ancestor1 = frame1Ancestors[last1];
-  nsIFrame* ancestor2 = frame2Ancestors[last2];
+  nsIFrame* ancestor2 = aFrame2Ancestors[last2];
   // Now we should be able to walk sibling chains to find which one is first
   if (IsFrameAfter(ancestor2, ancestor1))
     return -1;
@@ -1140,15 +1253,33 @@ nsLayoutUtils::GetActiveScrolledRootFor(nsIFrame* aFrame,
                                         const nsIFrame* aStopAtAncestor)
 {
   nsIFrame* f = aFrame;
+  nsIFrame* stickyFrame = nullptr;
   while (f != aStopAtAncestor) {
     if (IsPopup(f))
       break;
     nsIFrame* parent = GetCrossDocParentFrame(f);
     if (!parent)
       break;
+    // Sticky frames are active if their nearest scrollable frame
+    // is also active, just keep a record of sticky frames that we
+    // encounter for now.
+    if (f->StyleDisplay()->mPosition == NS_STYLE_POSITION_STICKY &&
+        !stickyFrame) {
+      stickyFrame = f;
+    }
     nsIScrollableFrame* sf = do_QueryFrame(parent);
-    if (sf && sf->IsScrollingActive() && sf->GetScrolledFrame() == f)
-      break;
+    if (sf) {
+      if (sf->IsScrollingActive() && sf->GetScrolledFrame() == f) {
+        // If we found a sticky frame inside this active scroll frame,
+        // then use that. Otherwise use the scroll frame.
+        if (stickyFrame) {
+          return stickyFrame;
+        }
+        return f;
+      } else {
+        stickyFrame = nullptr;
+      }
+    }
     f = parent;
   }
   return f;
@@ -1313,10 +1444,9 @@ nsLayoutUtils::GetEventCoordinatesRelativeTo(const WidgetEvent* aEvent,
                   aEvent->eventStructType != NS_QUERY_CONTENT_EVENT))
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
 
-  const WidgetGUIEvent* GUIEvent = static_cast<const WidgetGUIEvent*>(aEvent);
   return GetEventCoordinatesRelativeTo(aEvent,
-                                       LayoutDeviceIntPoint::ToUntyped(GUIEvent->refPoint),
-                                       aFrame);
+           LayoutDeviceIntPoint::ToUntyped(aEvent->AsGUIEvent()->refPoint),
+           aFrame);
 }
 
 nsPoint
@@ -1328,8 +1458,7 @@ nsLayoutUtils::GetEventCoordinatesRelativeTo(const WidgetEvent* aEvent,
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
   }
 
-  const WidgetGUIEvent* GUIEvent = static_cast<const WidgetGUIEvent*>(aEvent);
-  nsIWidget* widget = GUIEvent->widget;
+  nsIWidget* widget = aEvent->AsGUIEvent()->widget;
   if (!widget) {
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
   }
@@ -2783,7 +2912,8 @@ static int32_t gNoiseIndent = 0;
 /* static */ nscoord
 nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
                                      nsIFrame *aFrame,
-                                     IntrinsicWidthType aType)
+                                     IntrinsicWidthType aType,
+                                     uint32_t aFlags)
 {
   NS_PRECONDITION(aFrame, "null frame");
   NS_PRECONDITION(aType == MIN_WIDTH || aType == PREF_WIDTH, "bad type");
@@ -2877,15 +3007,17 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
           // fall through
         }
         case NS_STYLE_BOX_SIZING_PADDING: {
-          const nsStylePadding* stylePadding = aFrame->StylePadding();
-          nscoord pad;
-          if (GetAbsoluteCoord(stylePadding->mPadding.GetTop(), pad) ||
-              GetPercentHeight(stylePadding->mPadding.GetTop(), aFrame, pad)) {
-            heightTakenByBoxSizing += pad;
-          }
-          if (GetAbsoluteCoord(stylePadding->mPadding.GetBottom(), pad) ||
-              GetPercentHeight(stylePadding->mPadding.GetBottom(), aFrame, pad)) {
-            heightTakenByBoxSizing += pad;
+          if (!(aFlags & IGNORE_PADDING)) {
+            const nsStylePadding* stylePadding = aFrame->StylePadding();
+            nscoord pad;
+            if (GetAbsoluteCoord(stylePadding->mPadding.GetTop(), pad) ||
+                GetPercentHeight(stylePadding->mPadding.GetTop(), aFrame, pad)) {
+              heightTakenByBoxSizing += pad;
+            }
+            if (GetAbsoluteCoord(stylePadding->mPadding.GetBottom(), pad) ||
+                GetPercentHeight(stylePadding->mPadding.GetBottom(), aFrame, pad)) {
+              heightTakenByBoxSizing += pad;
+            }
           }
           // fall through
         }
@@ -2936,18 +3068,22 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
   // percentages do not operate linearly.
   // Doing this is ok because although percentages aren't handled
   // linearly, they are handled monotonically.
-  nscoord coordOutsideWidth = offsets.hPadding;
-  float pctOutsideWidth = offsets.hPctPadding;
-
+  nscoord coordOutsideWidth = 0;
+  float pctOutsideWidth = 0;
   float pctTotal = 0.0f;
 
-  if (boxSizing == NS_STYLE_BOX_SIZING_PADDING) {
-    min += coordOutsideWidth;
-    result = NSCoordSaturatingAdd(result, coordOutsideWidth);
-    pctTotal += pctOutsideWidth;
+  if (!(aFlags & IGNORE_PADDING)) {
+    coordOutsideWidth += offsets.hPadding;
+    pctOutsideWidth += offsets.hPctPadding;
 
-    coordOutsideWidth = 0;
-    pctOutsideWidth = 0.0f;
+    if (boxSizing == NS_STYLE_BOX_SIZING_PADDING) {
+      min += coordOutsideWidth;
+      result = NSCoordSaturatingAdd(result, coordOutsideWidth);
+      pctTotal += pctOutsideWidth;
+
+      coordOutsideWidth = 0;
+      pctOutsideWidth = 0.0f;
+    }
   }
 
   coordOutsideWidth += offsets.hBorder;
@@ -5075,6 +5211,10 @@ nsLayoutUtils::Initialize()
   Preferences::RegisterCallback(StickyEnabledPrefChangeCallback,
                                 STICKY_ENABLED_PREF_NAME);
   StickyEnabledPrefChangeCallback(STICKY_ENABLED_PREF_NAME, nullptr);
+  Preferences::RegisterCallback(TextAlignTrueEnabledPrefChangeCallback,
+                                TEXT_ALIGN_TRUE_ENABLED_PREF_NAME);
+  TextAlignTrueEnabledPrefChangeCallback(TEXT_ALIGN_TRUE_ENABLED_PREF_NAME,
+                                         nullptr);
 
   nsComputedDOMStyle::RegisterPrefChangeCallbacks();
 }

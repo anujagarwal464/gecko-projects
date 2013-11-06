@@ -6,9 +6,9 @@
 
 #ifdef __APPLE__
 
-#include "jsapi.h"
 #include <dlfcn.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <unistd.h>
 
 // There are now 2 paths to the DTPerformanceSession framework. We try to load
 // the one contained in /Applications/Xcode.app first, falling back to the one
@@ -143,7 +143,7 @@ Error(CFErrorRef error)
 }
 
 bool
-Start()
+Start(pid_t pid)
 {
   if (gSession) {
     return false;
@@ -154,8 +154,7 @@ Start()
   }
 
   AutoReleased<CFStringRef> process =
-    CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%d"),
-                             getpid());
+    CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%d"), pid);
   if (!process) {
     return false;
   }

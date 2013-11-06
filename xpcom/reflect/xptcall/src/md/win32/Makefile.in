@@ -12,12 +12,9 @@ LOCAL_INCLUDES += -I$(srcdir)/../../../../xptinfo/src
 ifneq ($(TARGET_CPU),x86_64)
 ifndef GNU_CXX
 # FIXME: bug 413019
-OS_COMPILE_CXXFLAGS += -GL-
+NO_PROFILE_GUIDED_OPTIMIZE = 1
 endif #!GNU_CXX
 endif #!x86_64
-
-# we don't want the shared lib, but we want to force the creation of a static lib.
-FORCE_STATIC_LIB = 1
 
 include $(topsrcdir)/config/rules.mk
 

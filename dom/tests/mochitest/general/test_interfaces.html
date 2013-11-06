@@ -28,11 +28,9 @@ var ecmaGlobals =
   [
     "Array",
     "ArrayBuffer",
-    {name: "ArrayType", nightly: true},
     "Boolean",
     "DataView",
     "Date",
-    {name: "Data", nightly: true},
     "Error",
     "EvalError",
     "Float32Array",
@@ -59,9 +57,8 @@ var ecmaGlobals =
     "Set",
     "StopIteration",
     "String",
-    {name: "StructType", nightly: true},
     "SyntaxError",
-    {name: "Type", nightly: true},
+    {name: "TypedObject", nightly: true},
     "TypeError",
     "Uint16Array",
     "Uint32Array",
@@ -71,6 +68,23 @@ var ecmaGlobals =
     "WeakMap",
   ];
 // IMPORTANT: Do not change this list without review from a JavaScript Engine peer!
+
+// IMPORTANT: Do not change this list without review from a DOM peer, except to
+//            remove items from it!
+//
+// This is a list of interfaces that were prefixed with 'moz' instead of 'Moz'.
+// We should never to that again, interfaces in the DOM start with an uppercase
+// letter. If you think you need to add an interface here, DON'T. Rename your
+// interface.
+var legacyMozPrefixedInterfaces =
+  [
+    "mozContact",
+    "mozRTCIceCandidate",
+    "mozRTCPeerConnection",
+    "mozRTCSessionDescription",
+  ];
+// IMPORTANT: Do not change this list without review from a DOM peer, except to
+//            remove items from it!
 
 // IMPORTANT: Do not change this list without review from a DOM peer!
 var interfaceNamesInGlobalScope =
@@ -103,7 +117,8 @@ var interfaceNamesInGlobalScope =
     {name: "BluetoothStatusChangedEvent", b2g: true},
     {name: "BoxObject", xbl: true},
     {name: "BrowserFeedWriter", desktop: true},
-    {name: "CallEvent", b2g: true},
+    {name: "CallEvent", b2g: true, pref: "dom.telephony.enabled"},
+    {name: "CallGroupErrorEvent", b2g: true, pref: "dom.telephony.enabled"},
     "CameraCapabilities",
     "CameraControl",
     "CameraManager",
@@ -112,7 +127,7 @@ var interfaceNamesInGlobalScope =
     "CanvasRenderingContext2D",
     "CaretPosition",
     "CDATASection",
-    {name: "CFStateChangeEvent", b2g: true},
+    {name: "CFStateChangeEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
     "ChannelMergerNode",
     "ChannelSplitterNode",
     "CharacterData",
@@ -150,7 +165,7 @@ var interfaceNamesInGlobalScope =
     "CustomEvent",
     "DataChannel",
     "DataContainerEvent",
-    {name: "DataErrorEvent", b2g: true},
+    {name: "DataErrorEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
     {name: "DataStore", b2g: true, release: false},
     {name: "DataStoreChangeEvent", b2g: true, release: false},
     {name: "DataStoreCursor", b2g: true, release: false},
@@ -205,6 +220,7 @@ var interfaceNamesInGlobalScope =
     {name: "Gamepad", desktop: true},
     {name: "GamepadAxisMoveEvent", desktop: true},
     {name: "GamepadButtonEvent", desktop: true},
+    {name: "GamepadButton", desktop: true},
     {name: "GamepadEvent", desktop: true},
     "HashChangeEvent",
     "History",
@@ -280,7 +296,7 @@ var interfaceNamesInGlobalScope =
     "HTMLUListElement",
     "HTMLUnknownElement",
     "HTMLVideoElement",
-    {name: "IccCardLockErrorEvent", b2g: true},
+    {name: "IccCardLockError", b2g: true, pref: "dom.icc.enabled"},
     "IDBCursor",
     "IDBCursorWithValue",
     "IDBDatabase",
@@ -313,6 +329,7 @@ var interfaceNamesInGlobalScope =
     "MediaStreamEvent",
     "MediaStreamTrack",
     "MessageEvent",
+    "MessagePort",
     "MimeType",
     "MimeTypeArray",
     "ModalContentWindow",
@@ -320,24 +337,24 @@ var interfaceNamesInGlobalScope =
     "MouseScrollEvent",
     {name: "MozActivity", b2g: true},
     "MozApplicationEvent",
-    {name: "MozCellBroadcast", b2g: true},
-    {name: "MozCellBroadcastEvent", b2g: true},
+    {name: "MozCellBroadcast", b2g: true, pref: "dom.cellbroadcast.enabled"},
+    {name: "MozCellBroadcastEvent", b2g: true, pref: "dom.cellbroadcast.enabled"},
     "MozConnection",
     "mozContact",
     "MozContactChangeEvent",
     "MozCSSKeyframeRule",
     "MozCSSKeyframesRule",
-    {name: "MozEmergencyCbModeEvent", b2g: true},
-    {name: "MozIccManager", b2g: true},
+    {name: "MozEmergencyCbModeEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
+    {name: "MozIccManager", b2g: true, pref: "dom.icc.enabled"},
     {name: "MozInputContext", b2g: true},
     {name: "MozInputMethodManager", b2g: true},
     "MozMmsEvent",
     "MozMmsMessage",
-    {name: "MozMobileConnection", b2g: true},
+    {name: "MozMobileConnection", b2g: true, pref: "dom.mobileconnection.enabled"},
     "MozMobileMessageManager",
     "MozMobileMessageThread",
     "MozNamedAttrMap",
-    {name: "MozOtaStatusEvent", b2g: true},
+    {name: "MozOtaStatusEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
     "MozPowerManager",
     "mozRTCIceCandidate",
     "mozRTCPeerConnection",
@@ -347,10 +364,10 @@ var interfaceNamesInGlobalScope =
     "MozSmsFilter",
     "MozSmsMessage",
     "MozSmsSegmentInfo",
-    {name: "MozStkCommandEvent", b2g: true},
+    {name: "MozStkCommandEvent", b2g: true, pref: "dom.icc.enabled"},
     {name: "MozTimeManager", b2g: true},
-    {name: "MozVoicemail", b2g: true},
-    {name: "MozVoicemailEvent", b2g: true},
+    {name: "MozVoicemail", b2g: true, pref: "dom.voicemail.enabled"},
+    {name: "MozVoicemailEvent", b2g: true, pref: "dom.voicemail.enabled"},
     "MozWakeLock",
     {name: "MozWifiConnectionInfoEvent", b2g: true},
     {name: "MozWifiStatusChangeEvent", b2g: true},
@@ -393,6 +410,7 @@ var interfaceNamesInGlobalScope =
     "RGBColor",
     "RTCDataChannelEvent",
     "RTCPeerConnectionIceEvent",
+    "RTCStatsReport",
     "Screen",
     "ScriptProcessorNode",
     "ScrollAreaEvent",
@@ -411,10 +429,7 @@ var interfaceNamesInGlobalScope =
     {name: "SpecialPowers", xbl: false},
     "Storage",
     "StorageEvent",
-    "StyleRuleChangeEvent",
     "StyleSheet",
-    "StyleSheetApplicableStateChangeEvent",
-    "StyleSheetChangeEvent",
     "StyleSheetList",
     "SVGAElement",
     "SVGAltGlyphElement",
@@ -536,9 +551,9 @@ var interfaceNamesInGlobalScope =
     "SVGViewElement",
     "SVGZoomAndPan",
     "SVGZoomEvent",
-    {name: "Telephony", b2g: true},
-    {name: "TelephonyCall", b2g: true},
-    {name: "TelephonyCallGroup", b2g: true},
+    {name: "Telephony", b2g: true, pref: "dom.telephony.enabled"},
+    {name: "TelephonyCall", b2g: true, pref: "dom.telephony.enabled"},
+    {name: "TelephonyCallGroup", b2g: true, pref: "dom.telephony.enabled"},
     "Text",
     "TextDecoder",
     "TextEncoder",
@@ -560,7 +575,7 @@ var interfaceNamesInGlobalScope =
     "URL",
     {name: "UserDataHandler", xbl: true},
     "UserProximityEvent",
-    {name: "USSDReceivedEvent", b2g: true},
+    {name: "USSDReceivedEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
     "ValidityState",
     "VideoStreamTrack",
     "WaveShaperNode",
@@ -579,6 +594,7 @@ var interfaceNamesInGlobalScope =
     "WheelEvent",
     "Window",
     "WindowUtils",
+    "Worker",
     "XMLDocument",
     "XMLHttpRequest",
     "XMLHttpRequestUpload",
@@ -606,6 +622,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
 
 function createInterfaceMap(isXBLScope) {
+  var prefs = SpecialPowers.Services.prefs;
   var version = SpecialPowers.Cc["@mozilla.org/xre/app-info;1"].getService(SpecialPowers.Ci.nsIXULAppInfo).version;
   var isNightly = version.endsWith("a1");
   var isRelease = !version.contains("a");
@@ -623,7 +640,8 @@ function createInterfaceMap(isXBLScope) {
                  (entry.xbl === !isXBLScope) ||
                  (entry.desktop === !isDesktop) ||
                  (entry.b2g === !isB2G) ||
-                 (entry.release === !isRelease)) {
+                 (entry.release === !isRelease) ||
+                 (entry.pref && !prefs.getBoolPref(entry.pref))) {
         interfaceMap[entry.name] = false;
       } else {
         interfaceMap[entry.name] = shouldExpect;
@@ -643,7 +661,9 @@ function runTest(isXBLScope) {
   var interfaceMap = createInterfaceMap(isXBLScope);
   for (var name of Object.getOwnPropertyNames(window)) {
     // An interface name should start with an upper case character.
-    if (!/^(moz)?[A-Z]/.test(name)) {
+    // However, we have a couple of legacy interfaces that start with 'moz', so
+    // we want to allow those until we can remove them.
+    if (!/^[A-Z]/.test(name) && legacyMozPrefixedInterfaces.indexOf(name) < 0) {
       continue;
     }
     ok(interfaceMap[name],

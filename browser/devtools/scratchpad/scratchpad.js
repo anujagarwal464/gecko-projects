@@ -34,10 +34,8 @@ const VARIABLES_VIEW_URL = "chrome://browser/content/devtools/widgets/VariablesV
 const require   = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
 const promise   = require("sdk/core/promise");
 const Telemetry = require("devtools/shared/telemetry");
-const escodegen = require("escodegen/escodegen");
 const Editor    = require("devtools/sourceeditor/editor");
 const TargetFactory = require("devtools/framework/target").TargetFactory;
-const DevtoolsHelpers = require("devtools/shared/helpers");
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -73,6 +71,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "DebuggerClient",
 
 XPCOMUtils.defineLazyGetter(this, "REMOTE_TIMEOUT", () =>
   Services.prefs.getIntPref("devtools.debugger.remote-timeout"));
+
+XPCOMUtils.defineLazyModuleGetter(this, "ShortcutUtils",
+  "resource://gre/modules/ShortcutUtils.jsm");
 
 // Because we have no constructor / destructor where we can log metrics we need
 // to do so here.
@@ -157,7 +158,7 @@ var Scratchpad = {
   {
     this._dirty = aValue;
     if (!aValue && this.editor)
-      this.editor.markClean();
+      this.editor.setClean();
     this._updateTitle();
   },
 
@@ -349,7 +350,7 @@ var Scratchpad = {
         if (aResponse.error) {
           deferred.reject(aResponse);
         }
-        else if (aResponse.exception) {
+        else if (aResponse.exception !== null) {
           deferred.resolve([aString, aResponse]);
         }
         else {
@@ -514,25 +515,61 @@ var Scratchpad = {
     return deferred.promise;
   },
 
+  _prettyPrintWorker: null,
+
+  /**
+   * Get or create the worker that handles pretty printing.
+   */
+  get prettyPrintWorker() {
+    if (!this._prettyPrintWorker) {
+      this._prettyPrintWorker = new ChromeWorker(
+        "resource://gre/modules/devtools/server/actors/pretty-print-worker.js");
+
+      this._prettyPrintWorker.addEventListener("error", ({ message, filename, lineno }) => {
+        DevToolsUtils.reportException(message + " @ " + filename + ":" + lineno);
+      }, false);
+    }
+    return this._prettyPrintWorker;
+  },
+
   /**
    * Pretty print the source text inside the scratchpad.
+   *
+   * @return Promise
+   *         A promise resolved with the pretty printed code, or rejected with
+   *         an error.
    */
   prettyPrint: function SP_prettyPrint() {
     const uglyText = this.getText();
     const tabsize = Services.prefs.getIntPref("devtools.editor.tabsize");
-    try {
-      const ast = Reflect.parse(uglyText);
-      const prettyText = escodegen.generate(ast, {
-        format: {
-          indent: {
-            style: " ".repeat(tabsize)
-          }
-        }
-      });
-      this.editor.setText(prettyText);
-    } catch (e) {
-      this.writeAsErrorComment(DevToolsUtils.safeErrorString(e));
-    }
+    const id = Math.random();
+    const deferred = promise.defer();
+
+    const onReply = ({ data }) => {
+      if (data.id !== id) {
+        return;
+      }
+      this.prettyPrintWorker.removeEventListener("message", onReply, false);
+
+      if (data.error) {
+        let errorString = DevToolsUtils.safeErrorString(data.error);
+        this.writeAsErrorComment(errorString);
+        deferred.reject(errorString);
+      } else {
+        this.editor.setText(data.code);
+        deferred.resolve(data.code);
+      }
+    };
+
+    this.prettyPrintWorker.addEventListener("message", onReply, false);
+    this.prettyPrintWorker.postMessage({
+      id: id,
+      url: "(scratchpad)",
+      indent: tabsize,
+      source: uglyText
+    });
+
+    return deferred.promise;
   },
 
   /**
@@ -607,69 +644,40 @@ var Scratchpad = {
     let deferred = promise.defer();
 
     if (VariablesView.isPrimitive({ value: aError })) {
-      deferred.resolve(aError);
+      let type = aError.type;
+      if (type == "undefined" ||
+          type == "null" ||
+          type == "Infinity" ||
+          type == "-Infinity" ||
+          type == "NaN" ||
+          type == "-0") {
+        deferred.resolve(type);
+      }
+      else if (type == "longString") {
+        deferred.resolve(aError.initial + "\u2026");
+      }
+      else {
+        deferred.resolve(aError);
+      }
     }
     else {
-      let reject = aReason => deferred.reject(aReason);
       let objectClient = new ObjectClient(this.debuggerClient, aError);
-
-      // Because properties on Error objects are lazily added, this roundabout
-      // way of getting all the properties is required, rather than simply
-      // using getPrototypeAndProperties. See bug 724768.
-      let names = ["message", "stack", "fileName", "lineNumber"];
-      let promises = names.map(aName => {
-        let deferred = promise.defer();
-
-        objectClient.getProperty(aName, aResponse => {
-          if (aResponse.error) {
-            deferred.reject(aResponse);
-          }
-          else {
-            deferred.resolve({
-              name: aName,
-              descriptor: aResponse.descriptor
-            });
-          }
-        });
-
-        return deferred.promise;
-      });
-
-      {
-        // We also need to use getPrototypeAndProperties to retrieve any
-        // safeGetterValues in case this is a DOM error.
-        let deferred = promise.defer();
-        objectClient.getPrototypeAndProperties(aResponse => {
-          if (aResponse.error) {
-            deferred.reject(aResponse);
-          }
-          else {
-            deferred.resolve(aResponse);
-          }
-        });
-        promises.push(deferred.promise);
-      }
-
-      promise.all(promises).then(aProperties => {
-        let error = {};
-        let safeGetters;
-
-        // Combine all the property descriptor/getter values into one object.
-        for (let property of aProperties) {
-          if (property.descriptor) {
-            error[property.name] = property.descriptor.value;
-          }
-          else if (property.safeGetterValues) {
-            safeGetters = property.safeGetterValues;
-          }
+      objectClient.getPrototypeAndProperties(aResponse => {
+        if (aResponse.error) {
+          deferred.reject(aResponse);
+          return;
         }
 
-        if (safeGetters) {
-          for (let key of Object.keys(safeGetters)) {
-            if (!error.hasOwnProperty(key)) {
-              error[key] = safeGetters[key].getterValue;
-            }
-          }
+        let { ownProperties, safeGetterValues } = aResponse;
+        let error = Object.create(null);
+
+        // Combine all the property descriptor/getter values into one object.
+        for (let key of Object.keys(safeGetterValues)) {
+          error[key] = safeGetterValues[key].getterValue;
+        }
+
+        for (let key of Object.keys(ownProperties)) {
+          error[key] = ownProperties[key].value;
         }
 
         // Assemble the best possible stack we can given the properties we have.
@@ -693,23 +701,23 @@ var Scratchpad = {
           deferred.resolve(error.message + stack);
         }
         else {
-          objectClient.getDisplayString(aResult => {
-            if (aResult.error) {
-              deferred.reject(aResult);
+          objectClient.getDisplayString(aResponse => {
+            if (aResponse.error) {
+              deferred.reject(aResponse);
             }
-            else if (aResult.displayString.type == "null") {
-              deferred.resolve(stack);
+            else if (typeof aResponse.displayString == "string") {
+              deferred.resolve(aResponse.displayString + stack);
             }
             else {
-              deferred.resolve(aResult.displayString + stack);
+              deferred.resolve(stack);
             }
-          }, reject);
+          });
         }
-      }, reject);
+      });
     }
 
     return deferred.promise.then(aMessage => {
-      console.log(aMessage);
+      console.error(aMessage);
       this.writeAsComment("Exception: " + aMessage);
     });
   },
@@ -1291,9 +1299,9 @@ var Scratchpad = {
 
     let initialText = this.strings.formatStringFromName(
       "scratchpadIntro1",
-      [DevtoolsHelpers.prettyKey(document.getElementById("sp-key-run")),
-       DevtoolsHelpers.prettyKey(document.getElementById("sp-key-inspect")),
-       DevtoolsHelpers.prettyKey(document.getElementById("sp-key-display"))],
+      [ShortcutUtils.prettifyShortcut(document.getElementById("sp-key-run"), true),
+       ShortcutUtils.prettifyShortcut(document.getElementById("sp-key-inspect"), true),
+       ShortcutUtils.prettifyShortcut(document.getElementById("sp-key-display"), true)],
       3);
 
     let args = window.arguments;
@@ -1391,6 +1399,7 @@ var Scratchpad = {
     }
 
     PreferenceObserver.uninit();
+    CloseObserver.uninit();
 
     this.editor.off("change", this._onChanged);
     this.editor.destroy();
@@ -1401,6 +1410,12 @@ var Scratchpad = {
       this._sidebar = null;
     }
 
+    if (this._prettyPrintWorker) {
+      this._prettyPrintWorker.terminate();
+      this._prettyPrintWorker = null;
+    }
+
+    scratchpadTargets = null;
     this.webConsoleClient = null;
     this.debuggerClient = null;
     this.initialized = false;

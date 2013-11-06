@@ -18,6 +18,7 @@ loader.lazyGetter(this, "HTMLBreadcrumbs", () => require("devtools/inspector/bre
 loader.lazyGetter(this, "Highlighter", () => require("devtools/inspector/highlighter").Highlighter);
 loader.lazyGetter(this, "ToolSidebar", () => require("devtools/framework/sidebar").ToolSidebar);
 loader.lazyGetter(this, "SelectorSearch", () => require("devtools/inspector/selector-search").SelectorSearch);
+loader.lazyGetter(this, "InspectorFront", () => require("devtools/server/actors/inspector").InspectorFront);
 
 const LAYOUT_CHANGE_TIMER = 250;
 
@@ -26,6 +27,33 @@ const LAYOUT_CHANGE_TIMER = 250;
  * The inspector controls the highlighter, the breadcrumbs,
  * the markup view, and the sidebar (computed view, rule view
  * and layout view).
+ *
+ * Events:
+ * - ready
+ *      Fired when the inspector panel is opened for the first time and ready to
+ *      use
+ * - new-root
+ *      Fired after a new root (navigation to a new page) event was fired by
+ *      the walker, and taken into account by the inspector (after the markup
+ *      view has been reloaded)
+ * - markuploaded
+ *      Fired when the markup-view frame has loaded
+ * - layout-change
+ *      Fired when the layout of the inspector changes
+ * - breadcrumbs-updated
+ *      Fired when the breadcrumb widget updates to a new node
+ * - layoutview-updated
+ *      Fired when the layoutview (box model) updates to a new node
+ * - markupmutation
+ *      Fired after markup mutations have been processed by the markup-view
+ * - computed-view-refreshed
+ *      Fired when the computed rules view updates to a new node
+ * - computed-view-property-expanded
+ *      Fired when a property is expanded in the computed rules view
+ * - computed-view-property-collapsed
+ *      Fired when a property is collapsed in the computed rules view
+ * - rule-view-refreshed
+ *      Fired when the rule view updates to a new node
  */
 function InspectorPanel(iframeWindow, toolbox) {
   this._toolbox = toolbox;
@@ -33,6 +61,10 @@ function InspectorPanel(iframeWindow, toolbox) {
   this.panelDoc = iframeWindow.document;
   this.panelWin = iframeWindow;
   this.panelWin.inspector = this;
+  this._inspector = null;
+
+  this._onBeforeNavigate = this._onBeforeNavigate.bind(this);
+  this._target.on("will-navigate", this._onBeforeNavigate);
 
   EventEmitter.decorate(this);
 }
@@ -53,8 +85,20 @@ InspectorPanel.prototype = {
     }).then(null, console.error);
   },
 
+  get inspector() {
+    if (!this._target.form) {
+      throw new Error("Target.inspector requires an initialized remote actor.");
+    }
+    if (!this._inspector) {
+      this._inspector = InspectorFront(this._target.client, this._target.form);
+    }
+    return this._inspector;
+  },
+
   _deferredOpen: function(defaultSelection) {
     let deferred = promise.defer();
+
+    this.outerHTMLEditable = this._target.client.traits.editOuterHTML;
 
     this.onNewRoot = this.onNewRoot.bind(this);
     this.walker.on("new-root", this.onNewRoot);
@@ -144,11 +188,17 @@ InspectorPanel.prototype = {
     return deferred.promise;
   },
 
+  _onBeforeNavigate: function() {
+    this._defaultNode = null;
+    this.selection.setNodeFront(null);
+    this._destroyMarkup();
+    this.isDirty = false;
+  },
+
   _getWalker: function() {
-    let inspector = this.target.inspector;
-    return inspector.getWalker().then(walker => {
+    return this.inspector.getWalker().then(walker => {
       this.walker = walker;
-      return inspector.getPageStyle();
+      return this.inspector.getPageStyle();
     }).then(pageStyle => {
       this.pageStyle = pageStyle;
     });
@@ -308,8 +358,12 @@ InspectorPanel.prototype = {
 
       this._initMarkup();
       this.once("markuploaded", () => {
+        if (this._destroyPromise) {
+          return;
+        }
         this.markup.expandNode(this.selection.nodeFront);
         this.setupSearchBox();
+        this.emit("new-root");
       });
     });
   },
@@ -456,9 +510,16 @@ InspectorPanel.prototype = {
       this.highlighter.destroy();
     }
 
+    delete this.onLockStateChanged;
+
     if (this.walker) {
       this.walker.off("new-root", this.onNewRoot);
-      this._destroyPromise = this.walker.release().then(null, console.error);
+      this._destroyPromise = this.walker.release()
+        .then(() => this._inspector.destroy())
+        .then(() => {
+          this._inspector = null;
+        }, console.error);
+
       delete this.walker;
       delete this.pageStyle;
     } else {
@@ -472,6 +533,8 @@ InspectorPanel.prototype = {
       this.browser.removeEventListener("resize", this.scheduleLayoutChange, true);
       this.browser = null;
     }
+
+    this.target.off("will-navigate", this._onBeforeNavigate);
 
     this.target.off("thread-paused", this.updateDebuggerPausedWarning);
     this.target.off("thread-resumed", this.updateDebuggerPausedWarning);
@@ -487,6 +550,7 @@ InspectorPanel.prototype = {
     this.nodemenu.removeEventListener("popuphiding", this._resetNodeMenu, true);
     this.breadcrumbs.destroy();
     this.searchSuggestions.destroy();
+    delete this.searchBox;
     this.selection.off("new-node-front", this.onNewSelection);
     this.selection.off("before-new-node", this.onBeforeNewSelection);
     this.selection.off("before-new-node-front", this.onBeforeNewSelection);
@@ -553,7 +617,8 @@ InspectorPanel.prototype = {
     let unique = this.panelDoc.getElementById("node-menu-copyuniqueselector");
     let copyInnerHTML = this.panelDoc.getElementById("node-menu-copyinner");
     let copyOuterHTML = this.panelDoc.getElementById("node-menu-copyouter");
-    if (this.selection.isElementNode()) {
+    let selectionIsElement = this.selection.isElementNode();
+    if (selectionIsElement) {
       unique.removeAttribute("disabled");
       copyInnerHTML.removeAttribute("disabled");
       copyOuterHTML.removeAttribute("disabled");
@@ -561,6 +626,13 @@ InspectorPanel.prototype = {
       unique.setAttribute("disabled", "true");
       copyInnerHTML.setAttribute("disabled", "true");
       copyOuterHTML.setAttribute("disabled", "true");
+    }
+
+    let editHTML = this.panelDoc.getElementById("node-menu-edithtml");
+    if (this.outerHTMLEditable && selectionIsElement) {
+      editHTML.removeAttribute("disabled");
+    } else {
+      editHTML.setAttribute("disabled", "true");
     }
   },
 
@@ -622,6 +694,8 @@ InspectorPanel.prototype = {
       this._markupFrame.parentNode.removeChild(this._markupFrame);
       delete this._markupFrame;
     }
+
+    this._markupBox = null;
   },
 
   /**
@@ -662,6 +736,19 @@ InspectorPanel.prototype = {
     }
     else if (event.type == "mouseout") {
       this.highlighter.show();
+    }
+  },
+
+  /**
+   * Edit the outerHTML of the selected Node.
+   */
+  editHTML: function InspectorPanel_editHTML()
+  {
+    if (!this.selection.isNode()) {
+      return;
+    }
+    if (this.markup) {
+      this.markup.beginEditingOuterHTML(this.selection.nodeFront);
     }
   },
 
@@ -732,18 +819,30 @@ InspectorPanel.prototype = {
   },
 
   /**
+  * Trigger a high-priority layout change for things that need to be
+  * updated immediately
+  */
+  immediateLayoutChange: function Inspector_immediateLayoutChange()
+  {
+    this.emit("layout-change");
+  },
+
+  /**
    * Schedule a low-priority change event for things like paint
    * and resize.
    */
-  scheduleLayoutChange: function Inspector_scheduleLayoutChange()
+  scheduleLayoutChange: function Inspector_scheduleLayoutChange(event)
   {
-    if (this._timer) {
-      return null;
+    // Filter out non browser window resize events (i.e. triggered by iframes)
+    if (this.browser.contentWindow === event.target) {
+      if (this._timer) {
+        return null;
+      }
+      this._timer = this.panelWin.setTimeout(function() {
+        this.emit("layout-change");
+        this._timer = null;
+      }.bind(this), LAYOUT_CHANGE_TIMER);
     }
-    this._timer = this.panelWin.setTimeout(function() {
-      this.emit("layout-change");
-      this._timer = null;
-    }.bind(this), LAYOUT_CHANGE_TIMER);
   },
 
   /**

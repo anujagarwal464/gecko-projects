@@ -18,6 +18,7 @@
 #endif
 #include "jsobj.h"
 #include "jsopcode.h"
+#include "jstypes.h"
 
 #include "gc/Barrier.h"
 #include "gc/Rooting.h"
@@ -832,9 +833,6 @@ class JSScript : public js::gc::BarrieredCell<JSScript>
     /* Ensure the script has a TypeScript. */
     inline bool ensureHasTypes(JSContext *cx);
 
-    /* Ensure the script has a TypeScript and map for computing BytecodeTypes. */
-    inline bool ensureHasBytecodeTypeMap(JSContext *cx);
-
     /*
      * Ensure the script has bytecode analysis information. Performed when the
      * script first runs, or first runs after a TypeScript GC purge.
@@ -872,7 +870,6 @@ class JSScript : public js::gc::BarrieredCell<JSScript>
 
   private:
     bool makeTypes(JSContext *cx);
-    bool makeBytecodeTypeMap(JSContext *cx);
     bool makeAnalysis(JSContext *cx);
 
   public:
@@ -1009,7 +1006,7 @@ class JSScript : public js::gc::BarrieredCell<JSScript>
         jsbytecode *pc = code;
         if (noScriptRval && JSOp(*pc) == JSOP_FALSE)
             ++pc;
-        return JSOp(*pc) == JSOP_STOP;
+        return JSOp(*pc) == JSOP_RETRVAL;
     }
 
     bool varIsAliased(unsigned varSlot);
@@ -1183,7 +1180,7 @@ class LazyScript : public gc::BarrieredCell<LazyScript>
     uint32_t version_ : 8;
 
     uint32_t numFreeVariables_ : 24;
-    uint32_t numInnerFunctions_ : 24;
+    uint32_t numInnerFunctions_ : 23;
 
     uint32_t generatorKindBits_:2;
 
@@ -1194,6 +1191,7 @@ class LazyScript : public gc::BarrieredCell<LazyScript>
     uint32_t directlyInsideEval_:1;
     uint32_t usesArgumentsAndApply_:1;
     uint32_t hasBeenCloned_:1;
+    uint32_t treatAsRunOnce_:1;
 
     // Source location for the script.
     uint32_t begin_;
@@ -1308,6 +1306,13 @@ class LazyScript : public gc::BarrieredCell<LazyScript>
     }
     void setHasBeenCloned() {
         hasBeenCloned_ = true;
+    }
+
+    bool treatAsRunOnce() const {
+        return treatAsRunOnce_;
+    }
+    void setTreatAsRunOnce() {
+        treatAsRunOnce_ = true;
     }
 
     ScriptSource *source() const {

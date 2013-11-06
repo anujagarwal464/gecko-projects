@@ -6,7 +6,7 @@
 
 MODULE = 'uconv'
 
-CPP_SOURCES += [
+UNIFIED_SOURCES += [
     'nsUCConstructors.cpp',
     'nsUCSupport.cpp',
     'nsUnicodeDecodeHelper.cpp',
@@ -17,7 +17,7 @@ LIBRARY_NAME = 'ucvutil_s'
 
 LIBXUL_LIBRARY = True
 
-CSRCS += [
+UNIFIED_SOURCES += [
     'ugen.c',
     'umap.c',
     'uscan.c',

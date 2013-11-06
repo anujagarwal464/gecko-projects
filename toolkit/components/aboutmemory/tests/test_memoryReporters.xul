@@ -155,6 +155,21 @@
     }
   }
 
+  // Run sizeOfTab() to make sure it doesn't crash.  We can't check the result
+  // values because they're non-deterministic.
+  let jsObjectsSize = {};
+  let jsStringsSize = {};
+  let jsOtherSize = {};
+  let domSize = {};
+  let styleSize = {};
+  let otherSize = {};
+  let totalSize = {};
+  let jsMilliseconds = {};
+  let nonJSMilliseconds = {};
+  mgr.sizeOfTab(window, jsObjectsSize, jsStringsSize, jsOtherSize,
+                domSize, styleSize, otherSize, totalSize,
+                jsMilliseconds, nonJSMilliseconds);
+
   let e = mgr.enumerateReporters();
   while (e.hasMoreElements()) {
     let r = e.getNext().QueryInterface(Ci.nsIMemoryReporter);
@@ -164,12 +179,12 @@
     dummy = r.name;
   }
 
-  function checkSpecialReport(aName, aAmounts)
+  function checkSpecialReport(aName, aAmounts, aCanBeUnreasonable)
   {
     ok(aAmounts.length == 1, aName + " has " + aAmounts.length + " report");
     let n = aAmounts[0];
     // Check the size is reasonable -- i.e. not ridiculously large or small.
-    ok(100 * 1000 <= n && n <= 10 * 1000 * 1000 * 1000,
+    ok((100 * 1000 <= n && n <= 10 * 1000 * 1000 * 1000) || aCanBeUnreasonable,
        aName + "'s size is reasonable");
   }
 
@@ -177,7 +192,8 @@
   if (haveExplicit) {
     checkSpecialReport("heap-allocated", heapAllocatedAmounts);
   }
-  checkSpecialReport("vsize",          vsizeAmounts);
+  // vsize may be unreasonable if ASAN is enabled
+  checkSpecialReport("vsize",          vsizeAmounts, /*canBeUnreasonable*/true);
   checkSpecialReport("resident",       residentAmounts);
   checkSpecialReport("js-main-runtime-gc-heap-committed/used/gc-things", jsGcHeapAmounts);
 

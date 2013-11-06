@@ -165,7 +165,7 @@ public:
   const char* GetPluginName()
   {
     if (mInstance && mPluginHost) {
-      const char* name = NULL;
+      const char* name = nullptr;
       if (NS_SUCCEEDED(mPluginHost->GetPluginName(mInstance, &name)) && name)
         return name;
     }
@@ -339,8 +339,9 @@ private:
     : mWindow(aWindow), mInstanceOwner(aInstanceOwner),
     mPluginSize(aPluginSize), mDirtyRect(aDirtyRect)
     {}
-    virtual nsresult DrawWithXlib(gfxXlibSurface* surface, nsIntPoint offset, 
-                                  nsIntRect* clipRects, uint32_t numClipRects);
+    virtual nsresult DrawWithXlib(cairo_surface_t* surface,
+                                  nsIntPoint offset,
+                                  nsIntRect* clipRects, uint32_t numClipRects) MOZ_OVERRIDE;
   private:
     NPWindow* mWindow;
     nsPluginInstanceOwner* mInstanceOwner;

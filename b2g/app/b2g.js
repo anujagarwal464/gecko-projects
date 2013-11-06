@@ -262,7 +262,6 @@ pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.async-animations", true);
 pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
-pref("gfx.content.azure.enabled", true);
 pref("gfx.content.azure.backends", "cairo");
 #endif
 
@@ -360,6 +359,7 @@ pref("browser.dom.window.dump.enabled", false);
 
 // Default Content Security Policy to apply to privileged and certified apps
 pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
+// If you change this CSP, make sure to update the fast path in nsCSPService.cpp
 pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
 
 // Temporarily force-enable GL compositing.  This is default-disabled
@@ -388,9 +388,6 @@ pref("dom.ipc.browser_frames.oop_by_default", false);
 
 // SMS/MMS
 pref("dom.sms.enabled", true);
-pref("dom.sms.strict7BitEncoding", false); // Disabled by default.
-pref("dom.sms.requestStatusReport", true); // Enabled by default.
-pref("dom.mms.requestStatusReport", true); // Enabled by default.
 
 //The waiting time in network manager.
 pref("network.gonk.ms-release-mms-connection", 30000);
@@ -432,9 +429,8 @@ pref("services.push.requestTimeout", 10000);
 pref("services.push.udp.wakeupEnabled", true);
 
 // NetworkStats
-#ifdef MOZ_B2G_RIL
+#ifdef MOZ_WIDGET_GONK
 pref("dom.mozNetworkStats.enabled", true);
-pref("ril.cellbroadcast.disabled", false);
 pref("dom.webapps.firstRunWithSIM", true);
 #endif
 
@@ -559,6 +555,7 @@ pref("dom.webapps.useCurrentProfile", true);
 pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
 pref("media.omx.enabled", true);
+pref("media.rtsp.enabled", true);
 
 // Disable printing (particularly, window.print())
 pref("dom.disable_window_print", true);
@@ -569,6 +566,10 @@ pref("dom.disable_window_showModalDialog", true);
 // Enable new experimental html forms
 pref("dom.experimental_forms", true);
 pref("dom.forms.number", true);
+
+// Don't enable <input type=color> yet as we don't have a color picker
+// implemented for b2g (bug 875751)
+pref("dom.forms.color", false);
 
 // Turns on gralloc-based direct texturing for Gonk
 pref("gfx.gralloc.enabled", false);
@@ -729,11 +730,8 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
 
-// UAProfile settings
-pref("wap.UAProf.url", "");
-pref("wap.UAProf.tagname", "x-wap-profile");
-
 pref("layout.imagevisibility.enabled", false);
+pref("layout.imagevisibility.enabled_for_browser_elements_only", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -755,7 +753,7 @@ pref("memory_info_dumper.watch_fifo.directory", "/data/local");
 pref("general.useragent.enable_overrides", true);
 // See ua-update.json.in for the packaged UA override list
 pref("general.useragent.updates.enabled", true);
-pref("general.useragent.updates.url", "");
+pref("general.useragent.updates.url", "https://dynamicua.cdn.mozilla.net/0/%APP_ID%");
 pref("general.useragent.updates.interval", 604800); // 1 week
 pref("general.useragent.updates.retry", 86400); // 1 day
 
@@ -801,10 +799,7 @@ pref("dom.datastore.enabled", true);
 #endif
 
 // DOM Inter-App Communication API.
-#ifdef MOZ_WIDGET_GONK
-// Enable this only for gonk-specific build but not for desktop build.
 pref("dom.inter-app-communication-api.enabled", true);
-#endif
 
 // Allow ADB to run for this many hours before disabling
 // (only applies when marionette is disabled)
@@ -823,8 +818,14 @@ pref("devtools.debugger.unix-domain-socket", "/data/local/debugger-socket");
 pref("gfx.canvas.azure.backends", "skia");
 pref("gfx.canvas.azure.accelerated", true);
 
-// Enable Telephony API
-pref("dom.telephony.enabled", true);
+// Turn on dynamic cache size for Skia
+pref("gfx.canvas.skiagl.dynamic-cache", true);
+
+// enable fence with readpixels for SurfaceStream
+pref("gfx.gralloc.fence-with-readpixels", true);
+
+// Cell Broadcast API
+pref("ril.cellbroadcast.disabled", false);
 
 // The url of the page used to display network error details.
 pref("b2g.neterror.url", "app://system.gaiamobile.org/net_error.html");

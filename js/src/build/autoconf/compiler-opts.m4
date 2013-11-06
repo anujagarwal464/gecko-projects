@@ -6,6 +6,18 @@ dnl Add compiler specific options
 
 AC_DEFUN([MOZ_DEFAULT_COMPILER],
 [
+dnl set DEVELOPER_OPTIONS early; MOZ_DEFAULT_COMPILER is usually the first non-setup directive
+  if test -z "$MOZILLA_OFFICIAL"; then
+    DEVELOPER_OPTIONS=1
+  fi
+  MOZ_ARG_ENABLE_BOOL(release,
+  [  --enable-release        Build with more conservative, release engineering-oriented options.
+                          This may slow down builds.],
+      DEVELOPER_OPTIONS=,
+      DEVELOPER_OPTIONS=1)
+
+  AC_SUBST(DEVELOPER_OPTIONS)
+
 dnl Default to MSVC for win32 and gcc-4.2 for darwin
 dnl ==============================================================
 if test -z "$CROSS_COMPILE"; then
@@ -160,21 +172,10 @@ fi
 dnl A high level macro for selecting compiler options.
 AC_DEFUN([MOZ_COMPILER_OPTS],
 [
-  if test -z "$MOZILLA_OFFICIAL"; then
-    DEVELOPER_OPTIONS=1
-  fi
-  MOZ_ARG_ENABLE_BOOL(release,
-  [  --enable-release        Build with more conservative, release engineering-oriented options.
-                          This may slow down builds.],
-      DEVELOPER_OPTIONS=,
-      DEVELOPER_OPTIONS=1)
-
-  AC_SUBST(DEVELOPER_OPTIONS)
-
-  if test -n "$DEVELOPER_OPTIONS" -a "${MOZ_PSEUDO_DERECURSE-unset}" = unset; then
+  if test "${MOZ_PSEUDO_DERECURSE-unset}" = unset; then
     dnl Don't enable on pymake, because of bug 918652. Bug 912979 is an annoyance
     dnl with pymake, too.
-    MOZ_PSEUDO_DERECURSE=no-parallel-export,no-pymake,no-skip
+    MOZ_PSEUDO_DERECURSE=no-pymake
   fi
 
   MOZ_DEBUGGING_OPTS
@@ -190,6 +191,18 @@ if test "$CLANG_CXX"; then
     ## without any easy way for non-Clang users to check for it.
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-unknown-warning-option -Wno-return-type-c-linkage -Wno-mismatched-tags"
 fi
+
+AC_MSG_CHECKING([whether the C++ compiler ($CXX $CXXFLAGS $LDFLAGS) actually is a C++ compiler])
+AC_LANG_SAVE
+AC_LANG_CPLUSPLUS
+_SAVE_LIBS=$LIBS
+LIBS=
+AC_TRY_LINK([#include <new>], [int *foo = new int;],,
+            AC_MSG_RESULT([no])
+            AC_MSG_ERROR([$CXX $CXXFLAGS $LDFLAGS failed to compile and link a simple C++ source.]))
+LIBS=$_SAVE_LIBS
+AC_LANG_RESTORE
+AC_MSG_RESULT([yes])
 
 if test -z "$GNU_CC"; then
     case "$target" in

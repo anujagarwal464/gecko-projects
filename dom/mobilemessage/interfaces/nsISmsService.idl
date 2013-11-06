@@ -13,15 +13,18 @@ interface nsIMobileMessageCallback;
 #define SMS_SERVICE_CONTRACTID "@mozilla.org/sms/smsservice;1"
 %}
 
-[scriptable, builtinclass, uuid(0f3f75ec-00dd-11e3-87ac-0b1d5c79afdf)]
+[scriptable, builtinclass, uuid(0a28f55b-95fe-4b32-994f-b08fe8edf77a)]
 interface nsISmsService : nsISupports
 {
+  readonly attribute unsigned long smsDefaultServiceId;
+
   boolean hasSupport();
 
   void getSegmentInfoForText(in DOMString text,
                              in nsIMobileMessageCallback request);
 
-  void send(in DOMString number,
+  void send(in unsigned long serviceId,
+            in DOMString number,
             in DOMString message,
             in boolean silent,
             in nsIMobileMessageCallback request);
@@ -29,4 +32,7 @@ interface nsISmsService : nsISupports
   boolean isSilentNumber(in DOMString number);
   void addSilentNumber(in DOMString number);
   void removeSilentNumber(in DOMString number);
+
+  void getSmscAddress(in unsigned long serviceId,
+                      in nsIMobileMessageCallback request);
 };

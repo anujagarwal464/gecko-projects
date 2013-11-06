@@ -7,6 +7,7 @@
 #include "mozilla/DebugOnly.h"
 
 #include "MediaResource.h"
+#include "RtspMediaResource.h"
 
 #include "mozilla/Mutex.h"
 #include "nsDebug.h"
@@ -1412,28 +1413,6 @@ private:
   bool mSizeInitialized;
 };
 
-class LoadedEvent : public nsRunnable
-{
-public:
-  LoadedEvent(MediaDecoder* aDecoder) :
-    mDecoder(aDecoder)
-  {
-    MOZ_COUNT_CTOR(LoadedEvent);
-  }
-  ~LoadedEvent()
-  {
-    MOZ_COUNT_DTOR(LoadedEvent);
-  }
-
-  NS_IMETHOD Run() {
-    mDecoder->NotifyDownloadEnded(NS_OK);
-    return NS_OK;
-  }
-
-private:
-  nsRefPtr<MediaDecoder> mDecoder;
-};
-
 void FileMediaResource::EnsureSizeInitialized()
 {
   mLock.AssertCurrentThreadOwns();
@@ -1447,7 +1426,7 @@ void FileMediaResource::EnsureSizeInitialized()
   nsresult res = mInput->Available(&size);
   if (NS_SUCCEEDED(res) && size <= INT64_MAX) {
     mSize = (int64_t)size;
-    nsCOMPtr<nsIRunnable> event = new LoadedEvent(mDecoder);
+    nsCOMPtr<nsIRunnable> event = new DataEnded(mDecoder, NS_OK);
     NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
   }
 }
@@ -1695,6 +1674,8 @@ MediaResource::Create(MediaDecoder* aDecoder, nsIChannel* aChannel)
   nsRefPtr<MediaResource> resource;
   if (fc || IsBlobURI(uri)) {
     resource = new FileMediaResource(aDecoder, aChannel, uri, contentType);
+  } else if (IsRtspURI(uri)) {
+    resource = new RtspMediaResource(aDecoder, aChannel, uri, contentType);
   } else {
     resource = new ChannelMediaResource(aDecoder, aChannel, uri, contentType);
   }

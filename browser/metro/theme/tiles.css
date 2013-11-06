@@ -32,6 +32,7 @@ richgrid {
   display: -moz-box;
   overflow: hidden;
 }
+
 richgrid > .richgrid-grid {
   -moz-column-width: @grid_double_column_width@; /* tile width (2x unit + gutter) */
   min-width: @grid_double_column_width@; /* min 1 column */
@@ -54,9 +55,6 @@ richgriditem {
   -moz-column-gap: 0;
   overflow:hidden;
   cursor: default;
-  transition: 300ms height ease-out,
-              150ms opacity ease-out,
-              100ms transform ease-out;
 }
 
 .tile-content {
@@ -71,7 +69,8 @@ richgriditem {
   top: 2px; right: @tile_side_margin@; bottom: 10px; left: @tile_side_margin@;
   border: @metro_border_thin@ solid @tile_border_color@;
   box-shadow: 0 0 5px 0 rgba(0, 0, 0, 0.1);
-  transition: 150ms transform ease-out;
+  transition: 150ms transform ease-out,
+              @metro_animation_duration@ background-color @metro_animation_easing@;
 }
 
 .tile-start-container {
@@ -137,6 +136,7 @@ richgriditem[iconsize="large"] .tile-icon-box > image,
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  transition: @metro_animation_duration@ background-color @metro_animation_easing@;
 }
 
 richgriditem:not([tiletype="thumbnail"]) .tile-desc {
@@ -273,6 +273,26 @@ richgriditem[customColor] {
 
 richgriditem[bending] > .tile-content {
   transform-origin: center center;
+}
+
+/* Empty/unused tiles */
+richgriditem:not([value]) {
+  visibility: hidden;
+}
+richgriditem[tiletype="thumbnail"]:not([value]) {
+  visibility: visible;
+}
+richgriditem:not([value]) > .tile-content {
+  padding: 10px 14px;
+}
+richgriditem[tiletype="thumbnail"]:not([value]) > .tile-content {
+  box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.05);
+  background-image: url("chrome://browser/skin/images/firefox-watermark.png");
+  background-origin: content-box;
+  background-repeat: no-repeat;
+  background-color: rgba(255,255,255, 0.2);
+  background-position: center center;
+  background-size: @grid_row_height@;
 }
 
 /* Snapped-view variation

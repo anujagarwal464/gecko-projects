@@ -46,6 +46,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "nsILocaleService.h"
+#include "nsIObserverService.h"
 
 #include "nsWeakReference.h"
 
@@ -62,6 +63,7 @@
 #endif
 
 #ifdef USE_SKIA
+#include "mozilla/Hal.h"
 #include "skia/SkGraphics.h"
 #endif
 
@@ -203,6 +205,25 @@ OrientationSyncPrefsObserver::Observe(nsISupports *aSubject,
     return NS_OK;
 }
 
+class MemoryPressureObserver MOZ_FINAL : public nsIObserver
+{
+public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIOBSERVER
+};
+
+NS_IMPL_ISUPPORTS1(MemoryPressureObserver, nsIObserver)
+
+NS_IMETHODIMP
+MemoryPressureObserver::Observe(nsISupports *aSubject,
+                                const char *aTopic,
+                                const PRUnichar *someData)
+{
+    NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
+    Factory::PurgeTextureCaches();
+    return NS_OK;
+}
+
 // this needs to match the list of pref font.default.xx entries listed in all.js!
 // the order *must* match the order in eFontPrefLang
 static const char *gPrefLangNames[] = {
@@ -276,7 +297,8 @@ gfxPlatform::gfxPlatform()
 
     uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA);
     uint32_t contentMask = 1 << BACKEND_CAIRO;
-    InitBackendPrefs(canvasMask, contentMask);
+    InitBackendPrefs(canvasMask, BACKEND_CAIRO,
+                     contentMask, BACKEND_CAIRO);
 }
 
 gfxPlatform*
@@ -388,6 +410,15 @@ gfxPlatform::Init()
         NS_RUNTIMEABORT("Could not initialize mScreenReferenceSurface");
     }
 
+    if (gPlatform->SupportsAzureContent()) {
+        gPlatform->mScreenReferenceDrawTarget =
+            gPlatform->CreateOffscreenContentDrawTarget(IntSize(1, 1),
+                                                        FORMAT_B8G8R8A8);
+      if (!gPlatform->mScreenReferenceDrawTarget) {
+        NS_RUNTIMEABORT("Could not initialize mScreenReferenceDrawTarget");
+      }
+    }
+
     rv = gfxFontCache::Init();
     if (NS_FAILED(rv)) {
         NS_RUNTIMEABORT("Could not initialize gfxFontCache");
@@ -432,6 +463,17 @@ gfxPlatform::Init()
                                           false);
 
     CreateCMSOutputProfile();
+
+#ifdef USE_SKIA
+    gPlatform->InitializeSkiaCaches();
+#endif
+
+    // Listen to memory pressure event so we can purge DrawTarget caches
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+        gPlatform->mMemoryPressureObserver = new MemoryPressureObserver();
+        obs->AddObserver(gPlatform->mMemoryPressureObserver, "memory-pressure", false);
+    }
 }
 
 void
@@ -460,6 +502,14 @@ gfxPlatform::Shutdown()
         NS_ASSERTION(gPlatform->mFontPrefsObserver, "mFontPrefsObserver has alreay gone");
         Preferences::RemoveObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
         gPlatform->mFontPrefsObserver = nullptr;
+
+        NS_ASSERTION(gPlatform->mMemoryPressureObserver, "mMemoryPressureObserver has already gone");
+        nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+        if (obs) {
+            obs->RemoveObserver(gPlatform->mMemoryPressureObserver, "memory-pressure");
+        }
+
+        gPlatform->mMemoryPressureObserver = nullptr;
     }
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -495,6 +545,7 @@ gfxPlatform::Shutdown()
 gfxPlatform::~gfxPlatform()
 {
     mScreenReferenceSurface = nullptr;
+    mScreenReferenceDrawTarget = nullptr;
 
     // The cairo folks think we should only clean up in debug builds,
     // but we're generally in the habit of trying to shut down as
@@ -636,6 +687,10 @@ gfxPlatform::ClearSourceSurfaceForSurface(gfxASurface *aSurface)
 RefPtr<SourceSurface>
 gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurface)
 {
+  if (!aSurface->CairoSurface() || aSurface->CairoStatus()) {
+    return nullptr;
+  }
+
   void *userData = aSurface->GetData(&kSourceSurface);
 
   if (userData) {
@@ -732,10 +787,6 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
       // alive. This is true if gfxASurface actually -is- an ImageSurface or
       // if it is a gfxWindowsSurface which supports GetAsImageSurface.
       if (imgSurface != aSurface && !isWin32ImageSurf) {
-        // This shouldn't happen for now, it can be easily supported by making
-        // a copy. For now let's just abort.
-        NS_RUNTIMEABORT("Attempt to create unsupported SourceSurface from"
-            "non-image surface.");
         return nullptr;
       }
 
@@ -810,13 +861,48 @@ gfxPlatform::UseAcceleratedSkiaCanvas()
          mPreferredCanvasBackend == BACKEND_SKIA;
 }
 
+void
+gfxPlatform::InitializeSkiaCaches()
+{
+#ifdef USE_SKIA_GPU
+  if (UseAcceleratedSkiaCanvas()) {
+    bool usingDynamicCache = Preferences::GetBool("gfx.canvas.skiagl.dynamic-cache", false);
+
+    int cacheItemLimit = Preferences::GetInt("gfx.canvas.skiagl.cache-items", 256);
+    int cacheSizeLimit = Preferences::GetInt("gfx.canvas.skiagl.cache-size", 96);
+
+    // Prefs are in megabytes, but we want the sizes in bytes
+    cacheSizeLimit *= 1024*1024;
+
+    if (usingDynamicCache) {
+      uint32_t totalMemory = mozilla::hal::GetTotalSystemMemory();
+
+      if (totalMemory <= 256*1024*1024) {
+        // We need a very minimal cache on 256 meg devices
+        cacheSizeLimit = 2*1024*1024;
+      } else if (totalMemory > 0) {
+        cacheSizeLimit = totalMemory / 16;
+      }
+    }
+
+#ifdef DEBUG
+    printf_stderr("Determined SkiaGL cache limits: Size %i, Items: %i\n", cacheSizeLimit, cacheItemLimit);
+#endif
+
+    Factory::SetGlobalSkiaCacheLimits(cacheItemLimit, cacheSizeLimit);
+  }
+#endif
+}
+
 already_AddRefed<gfxASurface>
 gfxPlatform::GetThebesSurfaceForDrawTarget(DrawTarget *aTarget)
 {
   if (aTarget->GetType() == BACKEND_CAIRO) {
     cairo_surface_t* csurf =
       static_cast<cairo_surface_t*>(aTarget->GetNativeSurface(NATIVE_SURFACE_CAIRO_SURFACE));
-    return gfxASurface::Wrap(csurf);
+    if (csurf) {
+      return gfxASurface::Wrap(csurf);
+    }
   }
 
   // The semantics of this part of the function are sort of weird. If we
@@ -1385,39 +1471,38 @@ gfxPlatform::AppendPrefLang(eFontPrefLang aPrefLangs[], uint32_t& aLen, eFontPre
 }
 
 void
-gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, uint32_t aContentBitmask)
+gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, BackendType aCanvasDefault,
+                              uint32_t aContentBitmask, BackendType aContentDefault)
 {
     mPreferredCanvasBackend = GetCanvasBackendPref(aCanvasBitmask);
     if (!mPreferredCanvasBackend) {
-      mPreferredCanvasBackend = BACKEND_CAIRO;
+        mPreferredCanvasBackend = aCanvasDefault;
     }
-    mFallbackCanvasBackend = GetCanvasBackendPref(aCanvasBitmask & ~(1 << mPreferredCanvasBackend));
+    mFallbackCanvasBackend =
+        GetCanvasBackendPref(aCanvasBitmask & ~(1 << mPreferredCanvasBackend));
 
     mContentBackendBitmask = aContentBitmask;
     mContentBackend = GetContentBackendPref(mContentBackendBitmask);
+    if (!mContentBackend) {
+        mContentBackend = aContentDefault;
+    }
 }
 
 /* static */ BackendType
 gfxPlatform::GetCanvasBackendPref(uint32_t aBackendBitmask)
 {
-    return GetBackendPref(nullptr, "gfx.canvas.azure.backends", aBackendBitmask);
+    return GetBackendPref("gfx.canvas.azure.backends", aBackendBitmask);
 }
 
 /* static */ BackendType
 gfxPlatform::GetContentBackendPref(uint32_t &aBackendBitmask)
 {
-    return GetBackendPref("gfx.content.azure.enabled", "gfx.content.azure.backends", aBackendBitmask);
+    return GetBackendPref("gfx.content.azure.backends", aBackendBitmask);
 }
 
 /* static */ BackendType
-gfxPlatform::GetBackendPref(const char* aEnabledPrefName, const char* aBackendPrefName, uint32_t &aBackendBitmask)
+gfxPlatform::GetBackendPref(const char* aBackendPrefName, uint32_t &aBackendBitmask)
 {
-    if (aEnabledPrefName &&
-        !Preferences::GetBool(aEnabledPrefName, false)) {
-        aBackendBitmask = 0;
-        return BACKEND_NONE;
-    }
-
     nsTArray<nsCString> backendList;
     nsCString prefString;
     if (NS_SUCCEEDED(Preferences::GetCString(aBackendPrefName, &prefString))) {
@@ -1488,22 +1573,6 @@ gfxPlatform::GetLowPrecisionResolution()
     }
 
     return sLowPrecisionResolution;
-}
-
-bool
-gfxPlatform::UseReusableTileStore()
-{
-    static bool sUseReusableTileStore;
-    static bool sUseReusableTileStorePrefCached = false;
-
-    if (!sUseReusableTileStorePrefCached) {
-        sUseReusableTileStorePrefCached = true;
-        mozilla::Preferences::AddBoolVarCache(&sUseReusableTileStore,
-                                              "layers.reuse-invalid-tiles",
-                                              false);
-    }
-
-    return sUseReusableTileStore;
 }
 
 bool

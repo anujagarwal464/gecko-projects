@@ -13,7 +13,7 @@ EXPORTS.mozilla.dom.network += [
     'Types.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'Connection.cpp',
     'TCPServerSocketChild.cpp',
     'TCPServerSocketParent.cpp',
@@ -22,9 +22,14 @@ CPP_SOURCES += [
 ]
 
 if CONFIG['MOZ_B2G_RIL']:
-    CPP_SOURCES += [
+    EXPORTS.mozilla.dom.network += [
+        'MobileConnection.h',
+    ]
+    SOURCES += [
         'MobileConnection.cpp',
     ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     EXTRA_JS_MODULES = [
         'NetworkStatsDB.jsm',
         'NetworkStatsService.jsm',
@@ -40,7 +45,7 @@ EXTRA_PP_COMPONENTS += [
     'TCPSocket.js',
 ]
 
-if CONFIG['MOZ_B2G_RIL']:
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     EXTRA_COMPONENTS += [
         'NetworkStatsManager.js',
         'NetworkStatsManager.manifest',
@@ -58,4 +63,6 @@ FAIL_ON_WARNINGS = True
 LIBXUL_LIBRARY = True
 
 LIBRARY_NAME = 'dom_network_s'
+
+include('/ipc/chromium/chromium-config.mozbuild')
 

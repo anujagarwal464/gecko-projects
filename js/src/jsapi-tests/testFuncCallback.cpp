@@ -131,8 +131,10 @@ virtual
 JSContext *createContext()
 {
     JSContext *cx = JSAPITest::createContext();
-    if (cx)
-        JS_SetOptions(cx, JS_GetOptions(cx) | JSOPTION_BASELINE | JSOPTION_ION);
+    if (!cx)
+        return nullptr;
+    JS::ContextOptionsRef(cx).setBaseline(true)
+                             .setIon(true);
     return cx;
 }
 

@@ -9,7 +9,9 @@ MODULE = 'mar'
 if CONFIG['MOZ_ENABLE_SIGNMAR']:
     PROGRAM = 'signmar'
 
-CSRCS = [
+SOURCES = [
     'mar.c',
 ]
-HOST_CSRCS += CSRCS
+HOST_SOURCES += SOURCES
+
+HOST_PROGRAM = 'mar'

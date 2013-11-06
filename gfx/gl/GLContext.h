@@ -99,6 +99,7 @@ namespace GLFeature {
         packed_depth_stencil,
         query_objects,
         robustness,
+        sRGB,
         standard_derivatives,
         texture_float,
         texture_float_linear,
@@ -395,6 +396,10 @@ public:
         EXT_transform_feedback,
         NV_transform_feedback,
         ANGLE_depth_texture,
+        EXT_sRGB,
+        EXT_texture_sRGB,
+        ARB_framebuffer_sRGB,
+        EXT_framebuffer_sRGB,
         KHR_debug,
         Extensions_Max,
         Extensions_End
@@ -2448,6 +2453,7 @@ public:
     }
 
     bool CanUploadSubTextures();
+    bool CanReadSRGBFromFBOTexture();
 
     static void PlatformStartup();
 
@@ -2494,7 +2500,6 @@ public:
 #ifdef MOZ_WIDGET_GONK
     virtual EGLImage CreateEGLImageForNativeBuffer(void* buffer) = 0;
     virtual void DestroyEGLImage(EGLImage image) = 0;
-    virtual EGLImage GetNullEGLImage() = 0;
 #endif
 
     virtual already_AddRefed<TextureImage>
@@ -3579,13 +3584,13 @@ protected:
 
 private:
     void Init(GLenum target) {
-        MOZ_ASSERT(target == LOCAL_GL_TEXTURE_2D ||
-                   target == LOCAL_GL_TEXTURE_RECTANGLE_ARB);
         mTarget = target;
         mOldTex = 0;
-        GLenum bindingTarget = (target == LOCAL_GL_TEXTURE_2D) ?
-                               LOCAL_GL_TEXTURE_BINDING_2D :
-                               LOCAL_GL_TEXTURE_BINDING_RECTANGLE_ARB;
+        GLenum bindingTarget = (target == LOCAL_GL_TEXTURE_2D) ? LOCAL_GL_TEXTURE_BINDING_2D
+                             : (target == LOCAL_GL_TEXTURE_RECTANGLE_ARB) ? LOCAL_GL_TEXTURE_BINDING_RECTANGLE_ARB
+                             : (target == LOCAL_GL_TEXTURE_CUBE_MAP) ? LOCAL_GL_TEXTURE_BINDING_CUBE_MAP
+                             : LOCAL_GL_NONE;
+        MOZ_ASSERT(bindingTarget != LOCAL_GL_NONE);
         mGL->GetUIntegerv(bindingTarget, &mOldTex);
     }
 

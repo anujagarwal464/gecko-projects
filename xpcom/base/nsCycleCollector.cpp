@@ -123,7 +123,7 @@
 #include <stdio.h>
 
 #include "mozilla/Likely.h"
-#include "mozilla/mozPoisonWrite.h"
+#include "mozilla/PoisonIOInterposer.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/ThreadLocal.h"
 
@@ -174,9 +174,9 @@ struct nsCycleCollectorParams
     bool mAllTracesAtShutdown;
 
     nsCycleCollectorParams() :
-        mLogAll      (PR_GetEnv("XPCOM_CC_LOG_ALL") != NULL),
-        mLogShutdown (PR_GetEnv("XPCOM_CC_LOG_SHUTDOWN") != NULL),
-        mAllTracesAtShutdown (PR_GetEnv("XPCOM_CC_ALL_TRACES_AT_SHUTDOWN") != NULL)
+        mLogAll      (PR_GetEnv("XPCOM_CC_LOG_ALL") != nullptr),
+        mLogShutdown (PR_GetEnv("XPCOM_CC_LOG_SHUTDOWN") != nullptr),
+        mAllTracesAtShutdown (PR_GetEnv("XPCOM_CC_ALL_TRACES_AT_SHUTDOWN") != nullptr)
     {
     }
 };
@@ -779,9 +779,9 @@ public:
                          bool aAsyncSnowWhiteFreeing,
                          CC_ForgetSkippableCallback aCb);
 
-    nsPurpleBufferEntry* NewEntry()
+    MOZ_ALWAYS_INLINE nsPurpleBufferEntry* NewEntry()
     {
-        if (!mFreeList) {
+        if (MOZ_UNLIKELY(!mFreeList)) {
             Block *b = new Block;
             StartBlock(b);
 
@@ -796,8 +796,8 @@ public:
         return e;
     }
 
-    void Put(void *p, nsCycleCollectionParticipant *cp,
-             nsCycleCollectingAutoRefCnt *aRefCnt)
+    MOZ_ALWAYS_INLINE void Put(void *p, nsCycleCollectionParticipant *cp,
+                               nsCycleCollectingAutoRefCnt *aRefCnt)
     {
         nsPurpleBufferEntry *e = NewEntry();
 
@@ -2132,7 +2132,7 @@ nsCycleCollector::MarkRoots(GCGraphBuilder &aBuilder)
     }
 
     if (aBuilder.RanOutOfMemory()) {
-        NS_ASSERTION(false,
+        MOZ_ASSERT(false,
                      "Ran out of memory while building cycle collector graph");
         CC_TELEMETRY(_OOM, true);
     }
@@ -2250,7 +2250,7 @@ nsCycleCollector::ScanWeakMaps()
     } while (anyChanged);
 
     if (failed) {
-        NS_ASSERTION(false, "Ran out of memory in ScanWeakMaps");
+        MOZ_ASSERT(false, "Ran out of memory in ScanWeakMaps");
         CC_TELEMETRY(_OOM, true);
     }
 }
@@ -2267,7 +2267,7 @@ nsCycleCollector::ScanRoots(nsICycleCollectorListener *aListener)
     GraphWalker<scanVisitor>(scanVisitor(mWhiteNodeCount, failed)).WalkFromRoots(mGraph);
 
     if (failed) {
-        NS_ASSERTION(false, "Ran out of memory in ScanRoots");
+        MOZ_ASSERT(false, "Ran out of memory in ScanRoots");
         CC_TELEMETRY(_OOM, true);
     }
 
@@ -2362,15 +2362,9 @@ nsCycleCollector::CollectWhite()
 
     for (uint32_t i = 0; i < count; ++i) {
         PtrInfo *pinfo = mWhiteNodes->ElementAt(i);
-#ifdef DEBUG
-        if (mJSRuntime) {
-            mJSRuntime->SetObjectToUnlink(pinfo->mPointer);
-        }
-#endif
         pinfo->mParticipant->Unlink(pinfo->mPointer);
 #ifdef DEBUG
         if (mJSRuntime) {
-            mJSRuntime->SetObjectToUnlink(nullptr);
             mJSRuntime->AssertNoObjectsToTrace(pinfo->mPointer);
         }
 #endif
@@ -2393,20 +2387,13 @@ nsCycleCollector::CollectWhite()
 // Memory reporter
 ////////////////////////
 
-class CycleCollectorReporter MOZ_FINAL : public nsIMemoryReporter
+class CycleCollectorReporter MOZ_FINAL : public MemoryMultiReporter
 {
   public:
     CycleCollectorReporter(nsCycleCollector* aCollector)
-      : mCollector(aCollector)
+        : MemoryMultiReporter("cycle-collector"),
+          mCollector(aCollector)
     {}
-
-    NS_DECL_ISUPPORTS
-
-    NS_IMETHOD GetName(nsACString& name)
-    {
-        name.AssignLiteral("cycle-collector");
-        return NS_OK;
-    }
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCb,
                               nsISupports* aClosure)
@@ -2466,8 +2453,6 @@ class CycleCollectorReporter MOZ_FINAL : public nsIMemoryReporter
 
     nsCycleCollector* mCollector;
 };
-
-NS_IMPL_ISUPPORTS1(CycleCollectorReporter, nsIMemoryReporter)
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -2541,7 +2526,7 @@ nsCycleCollector_isScanSafe(void *s, nsCycleCollectionParticipant *cp)
 }
 #endif
 
-void
+MOZ_ALWAYS_INLINE void
 nsCycleCollector::Suspect(void *n, nsCycleCollectionParticipant *cp,
                           nsCycleCollectingAutoRefCnt *aRefCnt)
 {
@@ -2551,7 +2536,7 @@ nsCycleCollector::Suspect(void *n, nsCycleCollectionParticipant *cp,
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here.
 
-    if (mScanInProgress)
+    if (MOZ_UNLIKELY(mScanInProgress))
         return;
 
     MOZ_ASSERT(nsCycleCollector_isScanSafe(n, cp),
@@ -3003,6 +2988,25 @@ DeferredFinalize(DeferredFinalizeAppendFunction aAppendFunc,
 } // namespace mozilla
 
 
+MOZ_NEVER_INLINE static void
+SuspectAfterShutdown(void* n, nsCycleCollectionParticipant* cp,
+                     nsCycleCollectingAutoRefCnt* aRefCnt,
+                     bool* aShouldDelete)
+{
+    if (aRefCnt->get() == 0) {
+        if (!aShouldDelete) {
+            CanonicalizeParticipant(&n, &cp);
+            aRefCnt->stabilizeForDeletion();
+            cp->DeleteCycleCollectable(n);
+        } else {
+            *aShouldDelete = true;
+        }
+    } else {
+        // Make sure we'll get called again.
+        aRefCnt->RemoveFromPurpleBuffer();
+    }
+}
+
 void
 NS_CycleCollectorSuspect3(void *n, nsCycleCollectionParticipant *cp,
                           nsCycleCollectingAutoRefCnt *aRefCnt,
@@ -3013,23 +3017,11 @@ NS_CycleCollectorSuspect3(void *n, nsCycleCollectionParticipant *cp,
     // We should have started the cycle collector by now.
     MOZ_ASSERT(data);
 
-    if (!data->mCollector) {
-        if (aRefCnt->get() == 0) {
-            if (!aShouldDelete) {
-                CanonicalizeParticipant(&n, &cp);
-                aRefCnt->stabilizeForDeletion();
-                cp->DeleteCycleCollectable(n);
-            } else {
-                *aShouldDelete = true;
-            }
-        } else {
-          // Make sure we'll get called again.
-          aRefCnt->RemoveFromPurpleBuffer();
-        }
+    if (MOZ_LIKELY(data->mCollector)) {
+        data->mCollector->Suspect(n, cp, aRefCnt);
         return;
     }
-
-    return data->mCollector->Suspect(n, cp, aRefCnt);
+    SuspectAfterShutdown(n, cp, aRefCnt, aShouldDelete);
 }
 
 uint32_t

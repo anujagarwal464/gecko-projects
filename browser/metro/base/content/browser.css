@@ -119,6 +119,9 @@ richgrid {
 }
 
 richgriditem {
+  -moz-binding: url("chrome://browser/content/bindings/grid.xml#richgrid-empty-item");
+}
+richgriditem[value] {
   -moz-binding: url("chrome://browser/content/bindings/grid.xml#richgrid-item");
 }
 
@@ -184,10 +187,6 @@ dialog {
 /* Do not allow these to inherit from the toolkit binding */
 dialog.content-dialog {
   -moz-binding: none;
-}
-
-arrowbox {
-  -moz-binding: url("chrome://browser/content/bindings/arrowbox.xml#arrowbox");
 }
 
 /* Disable context menus in textboxes */

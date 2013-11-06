@@ -259,6 +259,39 @@ var ContextCommands = {
     Appbar.onViewOnDesktop();
   },
 
+  // Checks for MS app store specific meta data, and if present opens
+  // the Windows Store to the appropriate app
+  openWindowsStoreLink: function cc_openWindowsStoreLink() {
+    let storeLink = this.getStoreLink();
+    if (storeLink) {
+      Browser.selectedBrowser.contentWindow.document.location = storeLink;
+    }
+  },
+
+  getStoreLink: function cc_getStoreLink() {
+    let metaData = Browser.selectedBrowser.contentWindow.document.getElementsByTagName("meta");
+    let msApplicationName = metaData.namedItem("msApplication-PackageFamilyName");
+    if (msApplicationName) {
+      return "ms-windows-store:PDP?PFN=" + msApplicationName.getAttribute("content");
+    }
+    return null;
+  },
+
+  getPageSource: function cc_getPageSource() {
+    let uri = Services.io.newURI(Browser.selectedBrowser.currentURI.spec, null, null);
+    if (!uri.schemeIs("view-source")) {
+      return "view-source:" + Browser.selectedBrowser.currentURI.spec;
+    }
+    return null;
+  },
+
+  viewPageSource: function cc_viewPageSource() {
+    let uri = this.getPageSource();
+    if (uri) {
+      BrowserUI.addAndShowTab(uri);
+    }
+  },
+
   /*
    * Utilities
    */
@@ -350,7 +383,8 @@ var ContextCommands = {
 
     // prefered save location
     Task.spawn(function() {
-      picker.displayDirectory = yield Downloads.getPreferredDownloadsDirectory();
+      let preferredDir = yield Downloads.getPreferredDownloadsDirectory();
+      picker.displayDirectory = new FileUtils.File(preferredDir);
 
       try {
         let lastDir = Services.prefs.getComplexValue("browser.download.lastDir", Ci.nsILocalFile);

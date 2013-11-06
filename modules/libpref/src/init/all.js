@@ -230,9 +230,12 @@ pref("media.navigator.video.default_width",640);
 pref("media.navigator.video.default_height",480);
 pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
+pref("media.navigator.video.max_fs", 0); // unrestricted
+pref("media.navigator.video.max_fr", 0); // unrestricted
+pref("media.navigator.load_adapt", false);
 pref("media.peerconnection.enabled", true);
 pref("media.navigator.permission.disabled", false);
-pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:23.21.150.121\"}]");
+pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:stun.services.mozilla.com\"}]");
 pref("media.peerconnection.trickle_ice", true);
 pref("media.peerconnection.use_document_iceservers", true);
 // These values (aec, agc, and noice) are from media/webrtc/trunk/webrtc/common_types.h
@@ -250,6 +253,11 @@ pref("media.peerconnection.noise", 1);
 pref("media.navigator.enabled", true);
 #endif
 #endif
+
+pref("media.tabstreaming.width", 320);
+pref("media.tabstreaming.height", 240);
+pref("media.tabstreaming.time_per_frame", 40);
+
 // TextTrack support
 pref("media.webvtt.enabled", false);
 
@@ -280,7 +288,7 @@ pref("media.audio_data.enabled", true);
 // 0 = FREE (No locking at all)
 // 1 = STANDARD (Once locked, remain locked until scrolling ends)
 // 2 = STICKY (Allow lock to be broken, with hysteresis)
-pref("apzc.axis_lock_mode", 0);
+pref("apz.axis_lock_mode", 0);
 
 #ifdef XP_MACOSX
 // Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
@@ -341,13 +349,17 @@ pref("gfx.font_rendering.graphite.enabled", true);
 //  SHAPING_THAI      = 0x0040
 // (see http://mxr.mozilla.org/mozilla-central/ident?i=ShapingType)
 // Scripts not listed are grouped in the default category.
-// Set the pref to -1 to have all text shaped via the harfbuzz backend.
+// Set the pref to 255 to have all text shaped via the harfbuzz backend.
 #ifdef XP_WIN
-// use harfbuzz for default (0x01) + arabic (0x02) + hebrew (0x04)
-pref("gfx.font_rendering.harfbuzz.scripts", 7);
+// Use harfbuzz for everything except Hangul (0x08). Harfbuzz doesn't yet
+// have a Hangul shaper, which means that the marks U+302E/302F would not
+// reorder properly in Malgun Gothic or similar fonts.
+pref("gfx.font_rendering.harfbuzz.scripts", 247);
 #else
-// use harfbuzz for all scripts (except when using AAT fonts on OS X)
-pref("gfx.font_rendering.harfbuzz.scripts", -1);
+// Use harfbuzz for all scripts (except when using AAT fonts on OS X).
+// AFAICT, Core Text doesn't support full OpenType Hangul shaping anyway,
+// so there's no benefit to excluding it here.
+pref("gfx.font_rendering.harfbuzz.scripts", 255);
 #endif
 
 #ifdef XP_WIN
@@ -362,13 +374,10 @@ pref("gfx.font_rendering.opentype_svg.enabled", true);
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
 pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
 pref("gfx.content.azure.backends", "direct2d,cairo");
-pref("gfx.content.azure.enabled", true);
 #else
-pref("gfx.content.azure.enabled", false);
 #ifdef XP_MACOSX
 pref("gfx.content.azure.backends", "cg");
 pref("gfx.canvas.azure.backends", "cg");
-pref("gfx.content.azure.enabled", true);
 // Accelerated cg canvas where available (10.7+)
 pref("gfx.canvas.azure.accelerated", false);
 #else
@@ -378,13 +387,11 @@ pref("gfx.content.azure.backends", "cairo");
 #endif
 
 #ifdef MOZ_WIDGET_GTK2
-pref("gfx.content.azure.enabled", true);
 pref("gfx.content.azure.backends", "cairo");
 #endif
 #ifdef ANDROID
 pref("gfx.textures.poweroftwo.force-enabled", false);
 pref("gfx.content.azure.backends", "cairo");
-pref("gfx.content.azure.enabled", true);
 #endif
 
 pref("gfx.work-around-driver-bugs", true);
@@ -412,6 +419,9 @@ pref("ui.scrollToClick", 0);
 // Only on mac tabfocus is expected to handle UI widgets as well as web content
 pref("accessibility.tabfocus_applies_to_xul", true);
 #endif
+
+// provide ability to turn on support for canvas focus rings
+pref("canvas.focusring.enabled", false);
 
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
@@ -543,7 +553,13 @@ pref("nglayout.debug.paint_flashing_chrome", false);
 // BasicLayers (other layer managers always update the entire widget area)
 pref("nglayout.debug.widget_update_flashing", false);
 
+// Whether image visibility is enabled globally (ie we will try to unlock images
+// that are not visible).
 pref("layout.imagevisibility.enabled", true);
+// Whether image visibility is enabled in documents that are within a browser
+// element as defined by nsDocShell::FrameType and GetInheritedFrameType. This
+// pref only has an effect if layout.imagevisibility.enabled is false.
+pref("layout.imagevisibility.enabled_for_browser_elements_only", false);
 pref("layout.imagevisibility.numscrollportwidths", 0);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -840,8 +856,9 @@ pref("dom.min_background_timeout_value", 1000);
 pref("dom.experimental_forms", false);
 pref("dom.forms.number", false);
 
-// Don't enable <input type=color> yet:
-pref("dom.forms.color", false);
+// Enable <input type=color> by default. It will be turned off for remaining
+// platforms which don't have a color picker implemented yet.
+pref("dom.forms.color", true);
 
 // Enables system messages and activities
 pref("dom.sysmsg.enabled", false);
@@ -1367,6 +1384,24 @@ pref("network.dir.format", 2);
 // enables the prefetch service (i.e., prefetching of <link rel="next"> URLs).
 pref("network.prefetch-next", true);
 
+// enables the predictive service
+pref("network.seer.enabled", true);
+pref("network.seer.enable-hover-on-ssl", false);
+pref("network.seer.page-degradation.day", 0);
+pref("network.seer.page-degradation.week", 5);
+pref("network.seer.page-degradation.month", 10);
+pref("network.seer.page-degradation.year", 25);
+pref("network.seer.page-degradation.max", 50);
+pref("network.seer.subresource-degradation.day", 1);
+pref("network.seer.subresource-degradation.week", 10);
+pref("network.seer.subresource-degradation.month", 25);
+pref("network.seer.subresource-degradation.year", 50);
+pref("network.seer.subresource-degradation.max", 100);
+pref("network.seer.preconnect-min-confidence", 90);
+pref("network.seer.preresolve-min-confidence", 60);
+pref("network.seer.redirect-likely-confidence", 75);
+pref("network.seer.max-queue-size", 50);
+
 
 // The following prefs pertain to the negotiate-auth extension (see bug 17578),
 // which provides transparent Kerberos or NTLM authentication using the SPNEGO
@@ -1487,7 +1522,7 @@ pref("intl.charsetmenu.mailview.cache",     "");
 pref("intl.charsetmenu.composer.cache",     "");
 pref("intl.charsetmenu.browser.cache.size", 5);
 pref("intl.charset.detector",               "chrome://global/locale/intl.properties");
-pref("intl.charset.default",                "chrome://global-platform/locale/intl.properties");
+pref("intl.charset.fallback.override",      "");
 pref("intl.ellipsis",                       "chrome://global-platform/locale/intl.properties");
 pref("intl.locale.matchOS",                 false);
 // fallback charset list for Unicode conversion (converting from Unicode)
@@ -1808,11 +1843,6 @@ pref("layout.word_select.stop_at_punctuation", true);
 // Windows default is 1 for word delete behavior, the rest as for 2.
 pref("layout.selection.caret_style", 0);
 
-// pref to control whether or not to replace backslashes with Yen signs
-// in documents encoded in one of Japanese legacy encodings (EUC-JP, 
-// Shift_JIS, ISO-2022-JP)
-pref("layout.enable_japanese_specific_transform", false);
-
 // pref to force frames to be resizable
 pref("layout.frames.force_resizability", false);
 
@@ -1859,6 +1889,9 @@ pref("layout.css.sticky.enabled", false);
 #else
 pref("layout.css.sticky.enabled", true);
 #endif
+
+// Is support for CSS "text-align: true X" enabled?
+pref("layout.css.text-align-true-value.enabled", false);
 
 // Is support for the CSS4 image-orientation property enabled?
 pref("layout.css.image-orientation.enabled", true);
@@ -2721,12 +2754,12 @@ pref("font.name-list.serif.ja", "Hiragino Mincho ProN,Hiragino Mincho Pro");
 pref("font.name-list.sans-serif.ja", "Hiragino Kaku Gothic ProN,Hiragino Kaku Gothic Pro");
 pref("font.name-list.monospace.ja", "Osaka-Mono"); 
 
-pref("font.name.serif.ko", "AppleMyungjo"); 
-pref("font.name.sans-serif.ko", "AppleGothic"); 
-pref("font.name.monospace.ko", "AppleGothic"); 
-pref("font.name-list.serif.ko", "AppleMyungjo"); 
-pref("font.name-list.sans-serif.ko", "AppleGothic"); 
-pref("font.name-list.monospace.ko", "AppleGothic"); 
+pref("font.name.serif.ko", "AppleMyungjo");
+pref("font.name.sans-serif.ko", "Apple SD Gothic Neo");
+pref("font.name.monospace.ko", "Apple SD Gothic Neo");
+pref("font.name-list.serif.ko", "AppleMyungjo");
+pref("font.name-list.sans-serif.ko", "Apple SD Gothic Neo,AppleGothic");
+pref("font.name-list.monospace.ko", "Apple SD Gothic Neo,AppleGothic");
 
 pref("font.name.serif.th", "Thonburi");
 pref("font.name.sans-serif.th", "Thonburi");
@@ -3432,92 +3465,92 @@ pref("font.name.monospace.zh-TW", "Fira Mono OT");
 // ar
 
 pref("font.name.serif.el", "Droid Serif"); // not Charis SIL Compact, only has a few Greek chars
-pref("font.name.sans-serif.el", "Open Sans");
+pref("font.name.sans-serif.el", "Clear Sans");
 pref("font.name.monospace.el", "Droid Sans Mono");
-pref("font.name-list.sans-serif.el", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.el", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.he", "Droid Serif");
-pref("font.name.sans-serif.he", "Open Sans");
+pref("font.name.sans-serif.he", "Clear Sans");
 pref("font.name.monospace.he", "Droid Sans Mono");
-pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Open Sans, Droid Sans");
+pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Clear Sans, Droid Sans");
 
 pref("font.name.serif.ja", "Charis SIL Compact");
-pref("font.name.sans-serif.ja", "Open Sans");
+pref("font.name.sans-serif.ja", "Clear Sans");
 pref("font.name.monospace.ja", "MotoyaLMaru");
 pref("font.name-list.serif.ja", "Droid Serif");
-pref("font.name-list.sans-serif.ja", "Open Sans, Roboto, Droid Sans, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
+pref("font.name-list.sans-serif.ja", "Clear Sans, Roboto, Droid Sans, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
 pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Droid Sans Mono");
 
 pref("font.name.serif.ko", "Charis SIL Compact");
-pref("font.name.sans-serif.ko", "Open Sans");
+pref("font.name.sans-serif.ko", "Clear Sans");
 pref("font.name.monospace.ko", "Droid Sans Mono");
 pref("font.name-list.serif.ko", "Droid Serif, HYSerif");
 pref("font.name-list.sans-serif.ko", "SmartGothic, NanumGothic, DroidSansFallback, Droid Sans Fallback");
 
 pref("font.name.serif.th", "Charis SIL Compact");
-pref("font.name.sans-serif.th", "Open Sans");
+pref("font.name.sans-serif.th", "Clear Sans");
 pref("font.name.monospace.th", "Droid Sans Mono");
 pref("font.name-list.serif.th", "Droid Serif");
-pref("font.name-list.sans-serif.th", "Droid Sans Thai, Open Sans, Droid Sans");
+pref("font.name-list.sans-serif.th", "Droid Sans Thai, Clear Sans, Droid Sans");
 
 pref("font.name.serif.tr", "Charis SIL Compact");
-pref("font.name.sans-serif.tr", "Open Sans");
+pref("font.name.sans-serif.tr", "Clear Sans");
 pref("font.name.monospace.tr", "Droid Sans Mono");
 pref("font.name-list.serif.tr", "Droid Serif");
-pref("font.name-list.sans-serif.tr", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.tr", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-baltic", "Charis SIL Compact");
-pref("font.name.sans-serif.x-baltic", "Open Sans");
+pref("font.name.sans-serif.x-baltic", "Clear Sans");
 pref("font.name.monospace.x-baltic", "Droid Sans Mono");
 pref("font.name-list.serif.x-baltic", "Droid Serif");
-pref("font.name-list.sans-serif.x-baltic", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-baltic", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-central-euro", "Charis SIL Compact");
-pref("font.name.sans-serif.x-central-euro", "Open Sans");
+pref("font.name.sans-serif.x-central-euro", "Clear Sans");
 pref("font.name.monospace.x-central-euro", "Droid Sans Mono");
 pref("font.name-list.serif.x-central-euro", "Droid Serif");
-pref("font.name-list.sans-serif.x-central-euro", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-central-euro", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-cyrillic", "Charis SIL Compact");
-pref("font.name.sans-serif.x-cyrillic", "Open Sans");
+pref("font.name.sans-serif.x-cyrillic", "Clear Sans");
 pref("font.name.monospace.x-cyrillic", "Droid Sans Mono");
 pref("font.name-list.serif.x-cyrillic", "Droid Serif");
-pref("font.name-list.sans-serif.x-cyrillic", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-cyrillic", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-unicode", "Charis SIL Compact");
-pref("font.name.sans-serif.x-unicode", "Open Sans");
+pref("font.name.sans-serif.x-unicode", "Clear Sans");
 pref("font.name.monospace.x-unicode", "Droid Sans Mono");
 pref("font.name-list.serif.x-unicode", "Droid Serif");
-pref("font.name-list.sans-serif.x-unicode", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-unicode", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-user-def", "Charis SIL Compact");
-pref("font.name.sans-serif.x-user-def", "Open Sans");
+pref("font.name.sans-serif.x-user-def", "Clear Sans");
 pref("font.name.monospace.x-user-def", "Droid Sans Mono");
 pref("font.name-list.serif.x-user-def", "Droid Serif");
-pref("font.name-list.sans-serif.x-user-def", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-user-def", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.x-western", "Charis SIL Compact");
-pref("font.name.sans-serif.x-western", "Open Sans");
+pref("font.name.sans-serif.x-western", "Clear Sans");
 pref("font.name.monospace.x-western", "Droid Sans Mono");
 pref("font.name-list.serif.x-western", "Droid Serif");
-pref("font.name-list.sans-serif.x-western", "Open Sans, Roboto, Droid Sans");
+pref("font.name-list.sans-serif.x-western", "Clear Sans, Roboto, Droid Sans");
 
 pref("font.name.serif.zh-CN", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-CN", "Open Sans");
+pref("font.name.sans-serif.zh-CN", "Clear Sans");
 pref("font.name.monospace.zh-CN", "Droid Sans Mono");
 pref("font.name-list.serif.zh-CN", "Droid Serif, Droid Sans Fallback");
 pref("font.name-list.sans-serif.zh-CN", "Roboto, Droid Sans, Droid Sans Fallback");
 pref("font.name-list.monospace.zh-CN", "Droid Sans Fallback");
 
 pref("font.name.serif.zh-HK", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-HK", "Open Sans");
+pref("font.name.sans-serif.zh-HK", "Clear Sans");
 pref("font.name.monospace.zh-HK", "Droid Sans Mono");
 pref("font.name-list.serif.zh-HK", "Droid Serif, Droid Sans Fallback");
 pref("font.name-list.sans-serif.zh-HK", "Roboto, Droid Sans, Droid Sans Fallback");
 pref("font.name-list.monospace.zh-HK", "Droid Sans Fallback");
 
 pref("font.name.serif.zh-TW", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-TW", "Open Sans");
+pref("font.name.sans-serif.zh-TW", "Clear Sans");
 pref("font.name.monospace.zh-TW", "Droid Sans Mono");
 pref("font.name-list.serif.zh-TW", "Droid Serif, Droid Sans Fallback");
 pref("font.name-list.sans-serif.zh-TW", "Roboto, Droid Sans, Droid Sans Fallback");
@@ -4085,6 +4118,20 @@ pref("image.mem.max_ms_before_yield", 5);
 // might keep around more than this, but we'll try to get down to this value).
 pref("image.mem.max_decoded_image_kb", 51200);
 
+// Minimum timeout for expiring unused images from the surface cache, in
+// milliseconds. This controls how long we store cached temporary surfaces.
+pref("image.mem.surfacecache.min_expiration_ms", 60000); // 60ms
+
+// Maximum size for the surface cache, in kilobytes.
+pref("image.mem.surfacecache.max_size_kb", 102400); // 100MB
+
+// The surface cache's size, within the constraints of the maximum size set
+// above, is determined using a formula based on system capabilities like memory
+// size. The size factor is used to tune this formula. Larger size factors
+// result in smaller caches. The default should be a good balance for most
+// systems.
+pref("image.mem.surfacecache.size_factor", 64);
+
 // Whether we decode images on multiple background threads rather than the
 // foreground thread.
 pref("image.multithreaded_decoding.enabled", true);
@@ -4284,6 +4331,9 @@ pref("dom.sms.enabled", false);
 // 7-bit default alphabet.
 pref("dom.sms.strict7BitEncoding", false);
 pref("dom.sms.requestStatusReport", true);
+// Numeric default service id for SMS API calls with |serviceId| parameter
+// omitted.
+pref("dom.sms.defaultServiceId", 0);
 
 // WebContacts
 pref("dom.mozContacts.enabled", false);
@@ -4400,7 +4450,7 @@ pref("dom.browserElement.maxScreenshotDelayMS", 2000);
 // Whether we should show the placeholder when the element is focused but empty.
 pref("dom.placeholder.show_on_focus", true);
 
-// UAProfile settings
+// MMS UA Profile settings
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
 
@@ -4408,6 +4458,8 @@ pref("wap.UAProf.tagname", "x-wap-profile");
 // MMS version 1.3 = 0x13 (or decimal 19)
 // @see OMA-TS-MMS_ENC-V1_3-20110913-A clause 7.3.34
 pref("dom.mms.version", 19);
+
+pref("dom.mms.requestStatusReport", true);
 
 // Retrieval mode for MMS
 // manual: Manual retrieval mode.
@@ -4421,15 +4473,28 @@ pref("dom.mms.sendRetryInterval", 300000);
 
 pref("dom.mms.retrievalRetryCount", 4);
 pref("dom.mms.retrievalRetryIntervals", "60000,300000,600000,1800000");
-
+// Numeric default service id for MMS API calls with |serviceId| parameter
+// omitted.
+pref("dom.mms.defaultServiceId", 0);
 // Debug enabler for MMS.
 pref("mms.debugging.enabled", false);
+
+// Request read report while sending MMS.
+pref("dom.mms.requestReadReport", true);
+
+// Number of RadioInterface instances to create.
+pref("ril.numRadioInterfaces", 0);
 
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before
 // tentatively deciding the gesture is actually a tap and activating
 // the target element?
 pref("ui.touch_activation.delay_ms", 100);
+
+// If the user has clicked an element, how long do we keep the
+// :active state before it is cleared by the mouse sequences
+// fired after a touchstart/touchend.
+pref("ui.touch_activation.duration_ms", 100);
 
 // nsMemoryInfoDumper can watch a fifo in the temp directory and take various
 // actions when the fifo is written to.  Disable this in general.
@@ -4454,7 +4519,45 @@ pref("dom.mozInputMethod.enabled", false);
 pref("dom.datastore.enabled", false);
 
 // Telephony API
+#ifdef MOZ_B2G_RIL
+pref("dom.telephony.enabled", true);
+#else
 pref("dom.telephony.enabled", false);
+#endif
+// Numeric default service id for WebTelephony API calls with |serviceId|
+// parameter omitted.
+pref("dom.telephony.defaultServiceId", 0);
+
+// Cell Broadcast API
+#ifdef MOZ_B2G_RIL
+pref("dom.cellbroadcast.enabled", true);
+#else
+pref("dom.cellbroadcast.enabled", false);
+#endif
+
+// ICC API
+#ifdef MOZ_B2G_RIL
+pref("dom.icc.enabled", true);
+#else
+pref("dom.icc.enabled", false);
+#endif
+
+// Mobile Connection API
+#ifdef MOZ_B2G_RIL
+pref("dom.mobileconnection.enabled", true);
+#else
+pref("dom.mobileconnection.enabled", false);
+#endif
+
+// Voice Mail API
+#ifdef MOZ_B2G_RIL
+pref("dom.voicemail.enabled", true);
+#else
+pref("dom.voicemail.enabled", false);
+#endif
+// Numeric default service id for Voice Mail API calls with |serviceId|
+// parameter omitted.
+pref("dom.voicemail.defaultServiceId", 0);
 
 // DOM Inter-App Communication API.
 pref("dom.inter-app-communication-api.enabled", false);
@@ -4464,3 +4567,6 @@ pref("urlclassifier.malware_table", "goog-malware-shavar");
 pref("urlclassifier.phish_table", "goog-phish-shavar");
 pref("urlclassifier.download_block_table", "goog-badbinurl-shavar");
 pref("urlclassifier.download_allow_table", "goog-downloadwhite-digest256");
+
+// Turn off Spatial navigation by default.
+pref("snav.enabled", false);

@@ -3968,8 +3968,10 @@ nsRuleNode::ComputeTextData(void* aStartStruct,
   }
 
 
-  // text-align: enum, string, inherit, initial
+  // text-align: enum, string, pair(enum|string), inherit, initial
+  // NOTE: string is not implemented yet.
   const nsCSSValue* textAlignValue = aRuleData->ValueForTextAlign();
+  text->mTextAlignTrue = false;
   if (eCSSUnit_String == textAlignValue->GetUnit()) {
     NS_NOTYETIMPLEMENTED("align string");
   } else if (eCSSUnit_Enumerated == textAlignValue->GetUnit() &&
@@ -3979,14 +3981,47 @@ nsRuleNode::ComputeTextData(void* aStartStruct,
     uint8_t parentAlign = parentText->mTextAlign;
     text->mTextAlign = (NS_STYLE_TEXT_ALIGN_DEFAULT == parentAlign) ?
       NS_STYLE_TEXT_ALIGN_CENTER : parentAlign;
-  } else
+  } else {
+    if (eCSSUnit_Pair == textAlignValue->GetUnit()) {
+      // Two values were specified, one must be 'true'.
+      text->mTextAlignTrue = true;
+      const nsCSSValuePair& textAlignValuePair = textAlignValue->GetPairValue();
+      textAlignValue = &textAlignValuePair.mXValue;
+      if (eCSSUnit_Enumerated == textAlignValue->GetUnit()) {
+        if (textAlignValue->GetIntValue() == NS_STYLE_TEXT_ALIGN_TRUE) {
+          textAlignValue = &textAlignValuePair.mYValue;
+        }
+      } else if (eCSSUnit_String == textAlignValue->GetUnit()) {
+        NS_NOTYETIMPLEMENTED("align string");
+      }
+    } else if (eCSSUnit_Inherit == textAlignValue->GetUnit() ||
+               eCSSUnit_Unset == textAlignValue->GetUnit()) {
+      text->mTextAlignTrue = parentText->mTextAlignTrue;
+    }
     SetDiscrete(*textAlignValue, text->mTextAlign, canStoreInRuleTree,
                 SETDSC_ENUMERATED | SETDSC_UNSET_INHERIT,
                 parentText->mTextAlign,
                 NS_STYLE_TEXT_ALIGN_DEFAULT, 0, 0, 0, 0);
+  }
 
-  // text-align-last: enum, inherit, initial
-  SetDiscrete(*aRuleData->ValueForTextAlignLast(), text->mTextAlignLast,
+  // text-align-last: enum, pair(enum), inherit, initial
+  const nsCSSValue* textAlignLastValue = aRuleData->ValueForTextAlignLast();
+  text->mTextAlignLastTrue = false;
+  if (eCSSUnit_Pair == textAlignLastValue->GetUnit()) {
+    // Two values were specified, one must be 'true'.
+    text->mTextAlignLastTrue = true;
+    const nsCSSValuePair& textAlignLastValuePair = textAlignLastValue->GetPairValue();
+    textAlignLastValue = &textAlignLastValuePair.mXValue;
+    if (eCSSUnit_Enumerated == textAlignLastValue->GetUnit()) {
+      if (textAlignLastValue->GetIntValue() == NS_STYLE_TEXT_ALIGN_TRUE) {
+        textAlignLastValue = &textAlignLastValuePair.mYValue;
+      }
+    }
+  } else if (eCSSUnit_Inherit == textAlignLastValue->GetUnit() ||
+             eCSSUnit_Unset == textAlignLastValue->GetUnit()) {
+    text->mTextAlignLastTrue = parentText->mTextAlignLastTrue;
+  }
+  SetDiscrete(*textAlignLastValue, text->mTextAlignLast,
               canStoreInRuleTree,
               SETDSC_ENUMERATED | SETDSC_UNSET_INHERIT,
               parentText->mTextAlignLast,
@@ -7992,7 +8027,8 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
   COMPUTE_END_INHERITED(SVG, svg)
 }
 
-void
+// Returns true if the nsStyleFilter was successfully set using the nsCSSValue.
+bool
 nsRuleNode::SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
                                      const nsCSSValue& aValue,
                                      nsStyleContext* aStyleContext,
@@ -8001,8 +8037,11 @@ nsRuleNode::SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
 {
   nsCSSUnit unit = aValue.GetUnit();
   if (unit == eCSSUnit_URL) {
-    aStyleFilter->SetURL(aValue.GetURLValue());
-    return;
+    nsIURI* url = aValue.GetURLValue();
+    if (!url)
+      return false;
+    aStyleFilter->SetURL(url);
+    return true;
   }
 
   NS_ABORT_IF_FALSE(unit == eCSSUnit_Function, "expected a filter function");
@@ -8024,7 +8063,7 @@ nsRuleNode::SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
       false,
       aCanStoreInRuleTree);
     aStyleFilter->SetDropShadow(shadowArray);
-    return;
+    return true;
   }
 
   int32_t mask = SETCOORD_PERCENT | SETCOORD_FACTOR;
@@ -8046,6 +8085,7 @@ nsRuleNode::SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
                                          aCanStoreInRuleTree);
   aStyleFilter->SetFilterParameter(filterParameter, type);
   NS_ABORT_IF_FALSE(didSetCoord, "unexpected unit");
+  return true;
 }
 
 const void*
@@ -8150,8 +8190,11 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
       const nsCSSValueList* cur = filterValue->GetListValue();
       while(cur) {
         nsStyleFilter styleFilter;
-        SetStyleFilterToCSSValue(&styleFilter, cur->mValue, aContext,
-                                 mPresContext, canStoreInRuleTree);
+        if (!SetStyleFilterToCSSValue(&styleFilter, cur->mValue, aContext,
+                                      mPresContext, canStoreInRuleTree)) {
+          svgReset->mFilters.Clear();
+          break;
+        }
         NS_ABORT_IF_FALSE(styleFilter.GetType() != NS_STYLE_FILTER_NONE,
                           "filter should be set");
         svgReset->mFilters.AppendElement(styleFilter);

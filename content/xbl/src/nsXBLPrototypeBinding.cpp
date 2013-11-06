@@ -1012,15 +1012,19 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
       rv = ReadNamespace(aStream, attrNamespace);
       NS_ENSURE_SUCCESS(rv, rv);
 
-      nsAutoString attrName, attrValue;
+      nsAutoString attrPrefix, attrName, attrValue;
+      rv = aStream->ReadString(attrPrefix);
+      NS_ENSURE_SUCCESS(rv, rv);
+
       rv = aStream->ReadString(attrName);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = aStream->ReadString(attrValue);
       NS_ENSURE_SUCCESS(rv, rv);
 
+      nsCOMPtr<nsIAtom> atomPrefix = do_GetAtom(attrPrefix);
       nsCOMPtr<nsIAtom> atomName = do_GetAtom(attrName);
-      mBinding->SetAttr(attrNamespace, atomName, attrValue, false);
+      mBinding->SetAttr(attrNamespace, atomName, atomPrefix, attrValue, false);
     }
   }
 
@@ -1157,12 +1161,21 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
     nsAutoString attrValue;
     for (uint32_t i = 0; i < attributes; ++i) {
       const nsAttrName* attr = mBinding->GetAttrNameAt(i);
-      nsDependentAtomString attrName = attr->Atom();
-      mBinding->GetAttr(attr->NamespaceID(), attr->Atom(), attrValue);
+      nsDependentAtomString attrName = attr->LocalName();
+      mBinding->GetAttr(attr->NamespaceID(), attr->LocalName(), attrValue);
       rv = aStream->Write8(XBLBinding_Serialize_Attribute);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = WriteNamespace(aStream, attr->NamespaceID());
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsIAtom* prefix = attr->GetPrefix();
+      nsAutoString prefixString;
+      if (prefix) {
+        prefix->ToString(prefixString);
+      }
+
+      rv = aStream->WriteWStringZ(prefixString.get());
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = aStream->WriteWStringZ(attrName.get());

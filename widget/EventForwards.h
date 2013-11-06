@@ -36,9 +36,9 @@ typedef uint16_t Modifiers;
 enum KeyNameIndex
 {
 #include "nsDOMKeyNameList.h"
-  // There shouldn't be "," at the end of enum definition, this dummy item
-  // avoids bustage on some platforms.
-  NUMBER_OF_KEY_NAME_INDEX
+  // If a DOM keyboard event is synthesized by script, this is used.  Then,
+  // specified key name should be stored and use it as .key value.
+  KEY_NAME_INDEX_USE_STRING
 };
 
 #undef NS_DEFINE_KEYNAME
@@ -49,62 +49,28 @@ enum KeyNameIndex
  * All header files should include this header instead of *Events.h.
  */
 
-// BasicEvents.h
 namespace mozilla {
-struct EventFlags;
 
-class WidgetEvent;
-class WidgetGUIEvent;
-class WidgetInputEvent;
-class InternalUIEvent;
+#define NS_EVENT_CLASS(aPrefix, aName) class aPrefix##aName;
+#define NS_ROOT_EVENT_CLASS(aPrefix, aName) NS_EVENT_CLASS(aPrefix, aName)
+
+#include "mozilla/EventClassList.h"
+
+#undef NS_EVENT_CLASS
+#undef NS_ROOT_EVENT_CLASS
+
+// BasicEvents.h
+struct EventFlags;
 
 // TextEvents.h
 struct AlternativeCharCode;
+
+// TextRange.h
 struct TextRangeStyle;
 struct TextRange;
 
 typedef TextRange* TextRangeArray;
 
-class WidgetKeyboardEvent;
-class WidgetTextEvent;
-class WidgetCompositionEvent;
-class WidgetQueryContentEvent;
-class WidgetSelectionEvent;
-
-// MouseEvents.h
-class WidgetMouseEventBase;
-class WidgetMouseEvent;
-class WidgetDragEvent;
-class WidgetMouseScrollEvent;
-class WidgetWheelEvent;
-
-// TouchEvents.h
-class WidgetGestureNotifyEvent;
-class WidgetSimpleGestureEvent;
-class WidgetTouchEvent;
-
-// ContentEvents.h
-class InternalScriptErrorEvent;
-class InternalScrollPortEvent;
-class InternalScrollAreaEvent;
-class InternalFormEvent;
-class InternalClipboardEvent;
-class InternalFocusEvent;
-class InternalTransitionEvent;
-class InternalAnimationEvent;
-
-// MiscEvents.h
-class WidgetCommandEvent;
-class WidgetContentCommandEvent;
-class WidgetPluginEvent;
-
-// MutationEvent.h (content/events/public)
-class InternalMutationEvent;
 } // namespace mozilla
-
-// TODO: Remove following typedefs
-namespace mozilla {
-typedef WidgetWheelEvent                   WheelEvent;
-}
 
 #endif // mozilla_EventForwards_h__

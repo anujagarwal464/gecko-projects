@@ -154,8 +154,9 @@ nsXBLService::getClass(nsCStringKey *k)
 
 // Constructors/Destructors
 nsXBLBinding::nsXBLBinding(nsXBLPrototypeBinding* aBinding)
-  : mMarkedForDeath(false),
-    mPrototypeBinding(aBinding)
+  : mMarkedForDeath(false)
+  , mUsingXBLScope(false)
+  , mPrototypeBinding(aBinding)
 {
   NS_ASSERTION(mPrototypeBinding, "Must have a prototype binding!");
   // Grab a ref to the document info so the prototype binding won't die
@@ -297,6 +298,20 @@ nsXBLBinding::SetBoundElement(nsIContent* aElement)
   mBoundElement = aElement;
   if (mNextBinding)
     mNextBinding->SetBoundElement(aElement);
+
+  if (!mBoundElement) {
+    return;
+  }
+
+  // Compute whether we're using an XBL scope.
+  //
+  // We disable XBL scopes for remote XUL, where we care about compat more
+  // than security. So we need to know whether we're using an XBL scope so that
+  // we can decide what to do about untrusted events when "allowuntrusted"
+  // is not given in the handler declaration.
+  nsCOMPtr<nsIGlobalObject> go = mBoundElement->OwnerDoc()->GetScopeObject();
+  NS_ENSURE_TRUE_VOID(go && go->GetGlobalJSObject());
+  mUsingXBLScope = xpc::UseXBLScope(js::GetObjectCompartment(go->GetGlobalJSObject()));
 }
 
 bool
@@ -498,8 +513,7 @@ nsXBLBinding::InstallEventHandlers()
     nsXBLPrototypeHandler* handlerChain = mPrototypeBinding->GetPrototypeHandlers();
 
     if (handlerChain) {
-      nsEventListenerManager* manager =
-        mBoundElement->GetListenerManager(true);
+      nsEventListenerManager* manager = mBoundElement->GetOrCreateListenerManager();
       if (!manager)
         return;
 
@@ -531,7 +545,7 @@ nsXBLBinding::InstallEventHandlers()
 
           bool hasAllowUntrustedAttr = curr->HasAllowUntrustedAttr();
           if ((hasAllowUntrustedAttr && curr->AllowUntrustedEvents()) ||
-              (!hasAllowUntrustedAttr && !isChromeDoc)) {
+              (!hasAllowUntrustedAttr && !isChromeDoc && !mUsingXBLScope)) {
             flags.mAllowUntrustedEvents = true;
           }
 
@@ -547,6 +561,7 @@ nsXBLBinding::InstallEventHandlers()
       for (i = 0; i < keyHandlers->Count(); ++i) {
         nsXBLKeyEventHandler* handler = keyHandlers->ObjectAt(i);
         handler->SetIsBoundToChrome(isChromeDoc);
+        handler->SetUsingXBLScope(mUsingXBLScope);
 
         nsAutoString type;
         handler->GetEventName(type);
@@ -648,7 +663,7 @@ nsXBLBinding::UnhookEventHandlers()
 
   if (handlerChain) {
     nsEventListenerManager* manager =
-      mBoundElement->GetListenerManager(false);
+      mBoundElement->GetExistingListenerManager();
     if (!manager) {
       return;
     }

@@ -176,15 +176,34 @@ class Range : public TempObject {
     // This function simply makes several JS_ASSERTs to verify the internal
     // consistency of this range.
     void assertInvariants() const {
+        // Basic sanity :).
         JS_ASSERT(lower_ <= upper_);
+
+        // When hasInt32LowerBound_ or hasInt32UpperBound_ are false, we set
+        // lower_ and upper_ to these specific values as it simplifies the
+        // implementation in some places.
         JS_ASSERT_IF(!hasInt32LowerBound_, lower_ == JSVAL_INT_MIN);
         JS_ASSERT_IF(!hasInt32UpperBound_, upper_ == JSVAL_INT_MAX);
-        JS_ASSERT_IF(!hasInt32LowerBound_ || !hasInt32UpperBound_, max_exponent_ >= MaxInt32Exponent);
+
+        // max_exponent_ must be one of three possible things.
         JS_ASSERT(max_exponent_ <= MaxFiniteExponent ||
                   max_exponent_ == IncludesInfinity ||
                   max_exponent_ == IncludesInfinityAndNaN);
-        JS_ASSERT(max_exponent_ >= mozilla::FloorLog2(mozilla::Abs(upper_)));
-        JS_ASSERT(max_exponent_ >= mozilla::FloorLog2(mozilla::Abs(lower_)));
+
+        // Forbid the max_exponent_ field from implying better bounds for
+        // lower_/upper_ fields. We have to add 1 to the max_exponent_ when
+        // canHaveFractionalPart_ is true in order to accomodate fractional
+        // offsets. For example, 2147483647.9 is greater than INT32_MAX, so a
+        // range containing that value will have hasInt32UpperBound_ set to
+        // false, however that value also has exponent 30, which is strictly
+        // less than MaxInt32Exponent. For another example, 1.9 has an exponent
+        // of 0 but requires upper_ to be at least 2, which has exponent 1.
+        JS_ASSERT_IF(!hasInt32LowerBound_ || !hasInt32UpperBound_,
+                     max_exponent_ + canHaveFractionalPart_ >= MaxInt32Exponent);
+        JS_ASSERT(max_exponent_ + canHaveFractionalPart_ >=
+                  mozilla::FloorLog2(mozilla::Abs(upper_)));
+        JS_ASSERT(max_exponent_ + canHaveFractionalPart_ >=
+                  mozilla::FloorLog2(mozilla::Abs(lower_)));
 
         // The following are essentially static assertions, but FloorLog2 isn't
         // trivially suitable for constexpr :(.
@@ -233,6 +252,24 @@ class Range : public TempObject {
          uint16_t result = mozilla::FloorLog2(max);
          JS_ASSERT(result == (max == 0 ? 0 : mozilla::ExponentComponent(double(max))));
          return result;
+    }
+
+    // When converting a range which contains fractional values to a range
+    // containing only integers, the old max_exponent_ value may imply a better
+    // lower and/or upper bound than was previously available, because they no
+    // longer need to be conservative about fractional offsets and the ends of
+    // the range.
+    //
+    // Given an exponent value and pointers to the lower and upper bound values,
+    // this function refines the lower and upper bound values to the tighest
+    // bound for integer values implied by the exponent.
+    static void refineInt32BoundsByExponent(uint16_t e, int32_t *l, int32_t *h) {
+       if (e < MaxInt32Exponent) {
+           // pow(2, max_exponent_+1)-1 to compute a maximum absolute value.
+           int32_t limit = (uint32_t(1) << (e + 1)) - 1;
+           *h = Min(*h, limit);
+           *l = Max(*l, -limit);
+       }
     }
 
     // If the value of any of the fields implies a stronger possible value for
@@ -307,6 +344,9 @@ class Range : public TempObject {
         assertInvariants();
     }
 
+    // Construct a range from the given MDefinition. This differs from the
+    // MDefinition's range() method in that it describes the range of values
+    // *after* any bailout checks.
     Range(const MDefinition *def);
 
     static Range *NewInt32Range(int32_t l, int32_t h) {
@@ -319,12 +359,13 @@ class Range : public TempObject {
         return new Range(l, h, false, MaxUInt32Exponent);
     }
 
-    static Range *NewDoubleRange(int64_t l, int64_t h, uint16_t e = IncludesInfinityAndNaN) {
-        return new Range(l, h, true, e);
-    }
+    static Range *NewDoubleRange(double l, double h) {
+        if (mozilla::IsNaN(l) && mozilla::IsNaN(h))
+            return nullptr;
 
-    static Range *NewSingleValueRange(int64_t v) {
-        return new Range(v, v, false, IncludesInfinityAndNaN);
+        Range *r = new Range();
+        r->setDouble(l, h);
+        return r;
     }
 
     void print(Sprinter &sp) const;
@@ -355,6 +396,17 @@ class Range : public TempObject {
     static Range * max(const Range *lhs, const Range *rhs);
 
     static bool negativeZeroMul(const Range *lhs, const Range *rhs);
+
+    bool isUnknownInt32() const {
+        return isInt32() && lower() == INT32_MIN && upper() == INT32_MAX;
+    }
+
+    bool isUnknown() const {
+        return !hasInt32LowerBound_ &&
+               !hasInt32UpperBound_ &&
+               canHaveFractionalPart_ &&
+               max_exponent_ == IncludesInfinityAndNaN;
+    }
 
     bool hasInt32LowerBound() const {
         return hasInt32LowerBound_;
@@ -471,12 +523,11 @@ class Range : public TempObject {
         assertInvariants();
     }
 
-    void setUnknown() {
-        setDouble(NoInt32LowerBound, NoInt32UpperBound);
-    }
+    void setDouble(double l, double h);
 
-    void setDouble(int64_t l, int64_t h, uint16_t e = IncludesInfinityAndNaN) {
-        set(l, h, true, e);
+    void setUnknown() {
+        set(NoInt32LowerBound, NoInt32UpperBound, true, IncludesInfinityAndNaN);
+        JS_ASSERT(isUnknown());
     }
 
     void set(int64_t l, int64_t h, bool f, uint16_t e) {
@@ -502,14 +553,6 @@ class Range : public TempObject {
     // If this range exceeds [0, 1] range, at either or both ends, change
     // it to the [0, 1] range.  Otherwise do nothing.
     void wrapAroundToBoolean();
-
-    // As we lack support of MIRType_UInt32, we need to work around the int32
-    // representation by doing an overflow while keeping the upper infinity to
-    // repesent the fact that the value might reach bigger numbers.
-    void extendUInt32ToInt32Min() {
-        JS_ASSERT(!hasInt32UpperBound());
-        lower_ = JSVAL_INT_MIN;
-    }
 
     const SymbolicBound *symbolicLower() const {
         return symbolicLower_;

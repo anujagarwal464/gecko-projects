@@ -29,6 +29,7 @@
 #include "nsIFileURL.h"
 #include "nsCRT.h"
 #include "nsIDocument.h"
+#include "nsINetworkSeer.h"
 
 #include "nsIApplicationCache.h"
 #include "nsIApplicationCacheContainer.h"
@@ -49,21 +50,12 @@ using namespace mozilla::image;
 
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(ImagesMallocSizeOf)
 
-class imgMemoryReporter MOZ_FINAL :
-  public nsIMemoryReporter
+class imgMemoryReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
   imgMemoryReporter()
-  {
-  }
-
-  NS_DECL_ISUPPORTS
-
-  NS_IMETHOD GetName(nsACString &name)
-  {
-    name.Assign("images");
-    return NS_OK;
-  }
+    : MemoryMultiReporter("images")
+  {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback *callback,
                             nsISupports *closure)
@@ -221,8 +213,6 @@ private:
     return PL_DHASH_NEXT;
   }
 };
-
-NS_IMPL_ISUPPORTS1(imgMemoryReporter, nsIMemoryReporter)
 
 NS_IMPL_ISUPPORTS3(nsProgressNotificationProxy,
                      nsIProgressEventSink,
@@ -1238,6 +1228,9 @@ bool imgLoader::ValidateRequestWithNewChannel(imgRequest *request,
     // Add the proxy without notifying
     hvc->AddProxy(proxy);
 
+    mozilla::net::SeerLearn(aURI, aInitialDocumentURI,
+        nsINetworkSeer::LEARN_LOAD_SUBRESOURCE, aLoadGroup);
+
     rv = newChannel->AsyncOpen(listener, nullptr);
     if (NS_SUCCEEDED(rv))
       NS_ADDREF(*aProxyRequest = req.get());
@@ -1734,6 +1727,9 @@ nsresult imgLoader::LoadImage(nsIURI *aURI,
 
     PR_LOG(GetImgLog(), PR_LOG_DEBUG,
            ("[this=%p] imgLoader::LoadImage -- Calling channel->AsyncOpen()\n", this));
+
+    mozilla::net::SeerLearn(aURI, aInitialDocumentURI,
+        nsINetworkSeer::LEARN_LOAD_SUBRESOURCE, aLoadGroup);
 
     nsresult openRes = newChannel->AsyncOpen(listener, nullptr);
 

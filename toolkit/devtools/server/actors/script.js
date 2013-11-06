@@ -467,6 +467,13 @@ ThreadActor.prototype = {
     return this._sources;
   },
 
+  get youngestFrame() {
+    if (!this.state == "paused") {
+      return null;
+    }
+    return this.dbg.getNewestFrame();
+  },
+
   _prettyPrintWorker: null,
   get prettyPrintWorker() {
     if (!this._prettyPrintWorker) {
@@ -490,8 +497,8 @@ ThreadActor.prototype = {
     return this._prettyPrintWorker;
   },
 
-  _onPrettyPrintError: function (error) {
-    reportError(new Error(error));
+  _onPrettyPrintError: function ({ message, filename, lineno }) {
+    reportError(new Error(message + " @ " + filename + ":" + lineno));
   },
 
   _onPrettyPrintMsg: function ({ data }) {
@@ -1179,10 +1186,6 @@ ThreadActor.prototype = {
                message: "cannot access the environment of this frame." };
     }
 
-    // We'll clobber the youngest frame if the eval causes a pause, so
-    // save our frame now to be restored after eval returns.
-    // XXX: or we could just start using dbg.getNewestFrame() now that it
-    // works as expected.
     let youngest = this.youngestFrame;
 
     // Put ourselves back in the running state and inform the client.
@@ -1558,19 +1561,18 @@ ThreadActor.prototype = {
 
   /**
    * Get the script and source lists from the debugger.
-   *
-   * TODO bug 637572: we should be dealing with sources directly, not inferring
-   * them through scripts.
    */
   _discoverSources: function TA__discoverSources() {
     // Only get one script per url.
-    let scriptsByUrl = {};
+    const sourcesToScripts = new Map();
     for (let s of this.dbg.findScripts()) {
-      scriptsByUrl[s.url] = s;
+      if (s.source) {
+        sourcesToScripts.set(s.source, s);
+      }
     }
 
-    return all([this.sources.sourcesForScript(scriptsByUrl[s])
-                for (s of Object.keys(scriptsByUrl))]);
+    return all([this.sources.sourcesForScript(script)
+                for (script of sourcesToScripts.values())]);
   },
 
   onSources: function TA_onSources(aRequest) {
@@ -1738,10 +1740,6 @@ ThreadActor.prototype = {
 
     this._state = "paused";
 
-    // Save the pause frame (if any) as the youngest frame for
-    // stack viewing.
-    this.youngestFrame = aFrame;
-
     // Create the actor pool that will hold the pause actor and its
     // children.
     dbg_assert(!this._pausePool, "No pause pool should exist yet");
@@ -1783,7 +1781,6 @@ ThreadActor.prototype = {
 
     this._pausePool = null;
     this._pauseActor = null;
-    this.youngestFrame = null;
 
     return { from: this.actorID, type: "resumed" };
   },
@@ -2367,11 +2364,25 @@ function SourceActor({ url, thread, sourceMap, generatedSource, text,
   this.onSource = this.onSource.bind(this);
   this._invertSourceMap = this._invertSourceMap.bind(this);
   this._saveMap = this._saveMap.bind(this);
+  this._getSourceText = this._getSourceText.bind(this);
+
+  if (this.threadActor.sources.isPrettyPrinted(this.url)) {
+    this._init = this.onPrettyPrint({
+      indent: this.threadActor.sources.prettyPrintIndent(this.url)
+    }).then(null, error => {
+      DevToolsUtils.reportException("SourceActor", error);
+    });
+  } else {
+    this._init = null;
+  }
 }
 
 SourceActor.prototype = {
   constructor: SourceActor,
   actorPrefix: "source",
+
+  _oldSourceMap: null,
+  _init: null,
 
   get threadActor() this._threadActor,
   get url() this._url,
@@ -2384,7 +2395,8 @@ SourceActor.prototype = {
     return {
       actor: this.actorID,
       url: this._url,
-      isBlackBoxed: this.threadActor.sources.isBlackBoxed(this.url)
+      isBlackBoxed: this.threadActor.sources.isBlackBoxed(this.url),
+      isPrettyPrinted: this.threadActor.sources.isPrettyPrinted(this.url)
       // TODO bug 637572: introductionScript
     };
   },
@@ -2419,8 +2431,9 @@ SourceActor.prototype = {
   /**
    * Handler for the "source" packet.
    */
-  onSource: function SA_onSource(aRequest) {
-    return this._getSourceText()
+  onSource: function SA_onSource() {
+    return resolve(this._init)
+      .then(this._getSourceText)
       .then(({ content, contentType }) => {
         return {
           from: this.actorID,
@@ -2429,7 +2442,7 @@ SourceActor.prototype = {
           contentType: contentType
         };
       })
-      .then(null, (aError) => {
+      .then(null, aError => {
         reportError(aError, "Got an exception during SA_onSource: ");
         return {
           "from": this.actorID,
@@ -2444,24 +2457,26 @@ SourceActor.prototype = {
    * Handler for the "prettyPrint" packet.
    */
   onPrettyPrint: function ({ indent }) {
+    this.threadActor.sources.prettyPrint(this._url, indent);
     return this._getSourceText()
-      .then(this._parseAST)
       .then(this._sendToPrettyPrintWorker(indent))
       .then(this._invertSourceMap)
       .then(this._saveMap)
+      .then(() => {
+        // We need to reset `_init` now because we have already done the work of
+        // pretty printing, and don't want onSource to wait forever for
+        // initialization to complete.
+        this._init = null;
+      })
       .then(this.onSource)
-      .then(null, error => ({
-        from: this.actorID,
-        error: "prettyPrintError",
-        message: DevToolsUtils.safeErrorString(error)
-      }));
-  },
-
-  /**
-   * Parse the source content into an AST.
-   */
-  _parseAST: function SA__parseAST({ content}) {
-    return Reflect.parse(content);
+      .then(null, error => {
+        this.onDisablePrettyPrint();
+        return {
+          from: this.actorID,
+          error: "prettyPrintError",
+          message: DevToolsUtils.safeErrorString(error)
+        };
+      });
   },
 
   /**
@@ -2477,7 +2492,7 @@ SourceActor.prototype = {
    *          printed code, and `mappings` is an array of source mappings.
    */
   _sendToPrettyPrintWorker: function SA__sendToPrettyPrintWorker(aIndent) {
-    return aAST => {
+    return ({ content }) => {
       const deferred = promise.defer();
       const id = Math.random();
 
@@ -2499,7 +2514,7 @@ SourceActor.prototype = {
         id: id,
         url: this._url,
         indent: aIndent,
-        ast: aAST
+        source: content
       });
 
       return deferred.promise;
@@ -2574,6 +2589,7 @@ SourceActor.prototype = {
   _saveMap: function SA__saveMap({ map }) {
     if (this._sourceMap) {
       // Compose the source maps
+      this._oldSourceMap = this._sourceMap;
       this._sourceMap = SourceMapGenerator.fromSourceMap(this._sourceMap);
       this._sourceMap.applySourceMap(map, this._url);
       this._sourceMap = SourceMapConsumer.fromSourceMap(this._sourceMap);
@@ -2583,6 +2599,17 @@ SourceActor.prototype = {
       this._sourceMap = map;
       this._threadActor.sources.saveSourceMap(this._sourceMap, this._url);
     }
+  },
+
+  /**
+   * Handler for the "disablePrettyPrint" packet.
+   */
+  onDisablePrettyPrint: function SA_onDisablePrettyPrint() {
+    this._sourceMap = this._oldSourceMap;
+    this.threadActor.sources.saveSourceMap(this._sourceMap,
+                                           this._generatedSource || this._url);
+    this.threadActor.sources.disablePrettyPrint(this._url);
+    return this.onSource();
   },
 
   /**
@@ -2616,7 +2643,8 @@ SourceActor.prototype.requestTypes = {
   "source": SourceActor.prototype.onSource,
   "blackbox": SourceActor.prototype.onBlackBox,
   "unblackbox": SourceActor.prototype.onUnblackBox,
-  "prettyPrint": SourceActor.prototype.onPrettyPrint
+  "prettyPrint": SourceActor.prototype.onPrettyPrint,
+  "disablePrettyPrint": SourceActor.prototype.onDisablePrettyPrint
 };
 
 
@@ -2636,6 +2664,8 @@ function ObjectActor(aObj, aThreadActor)
 
 ObjectActor.prototype = {
   actorPrefix: "obj",
+
+  _forcedMagicProps: false,
 
   /**
    * Returns a grip for this actor for returning in a protocol message.
@@ -2693,6 +2723,27 @@ ObjectActor.prototype = {
   },
 
   /**
+   * Force the magic Error properties to appear.
+   */
+  _forceMagicProperties: function OA__forceMagicProperties() {
+    if (this._forcedMagicProps) {
+      return;
+    }
+
+    const MAGIC_ERROR_PROPERTIES = [
+      "message", "stack", "fileName", "lineNumber", "columnNumber"
+    ];
+
+    if (this.obj.class.endsWith("Error")) {
+      for (let property of MAGIC_ERROR_PROPERTIES) {
+        this._propertyDescriptor(property);
+      }
+    }
+
+    this._forcedMagicProps = true;
+  },
+
+  /**
    * Handle a protocol request to provide the names of the properties defined on
    * the object and not its prototype.
    *
@@ -2700,6 +2751,7 @@ ObjectActor.prototype = {
    *        The protocol request object.
    */
   onOwnPropertyNames: function OA_onOwnPropertyNames(aRequest) {
+    this._forceMagicProperties();
     return { from: this.actorID,
              ownPropertyNames: this.obj.getOwnPropertyNames() };
   },
@@ -2712,6 +2764,7 @@ ObjectActor.prototype = {
    *        The protocol request object.
    */
   onPrototypeAndProperties: function OA_onPrototypeAndProperties(aRequest) {
+    this._forceMagicProperties();
     let ownProperties = Object.create(null);
     let names;
     try {
@@ -3695,6 +3748,7 @@ function ThreadSources(aThreadActor, aUseSourceMaps, aAllowPredicate,
  * the breakpoint store.
  */
 ThreadSources._blackBoxedSources = new Set();
+ThreadSources._prettyPrintedSources = new Map();
 
 ThreadSources.prototype = {
   /**
@@ -3824,6 +3878,10 @@ ThreadSources.prototype = {
    * down the line.
    */
   saveSourceMap: function TS_saveSourceMap(aSourceMap, aGeneratedSource) {
+    if (!aSourceMap) {
+      delete this._sourceMapsByGeneratedSource[aGeneratedSource];
+      return null;
+    }
     this._sourceMapsByGeneratedSource[aGeneratedSource] = resolve(aSourceMap);
     for (let s of aSourceMap.sources) {
       this._generatedUrlsByOriginalUrl[s] = aGeneratedSource;
@@ -3889,6 +3947,12 @@ ThreadSources.prototype = {
             line: aLine,
             column: aColumn
           };
+        })
+        .then(null, error => {
+          if (!DevToolsUtils.reportingDisabled) {
+            DevToolsUtils.reportException(error);
+          }
+          return { url: null, line: null, column: null };
         });
     }
 
@@ -3946,9 +4010,7 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Add the given source URL to the set of sources that are black boxed. If the
-   * thread is currently paused and we are black boxing the yougest frame's
-   * source, this will force a step.
+   * Add the given source URL to the set of sources that are black boxed.
    *
    * @param aURL String
    *        The URL of the source which we are black boxing.
@@ -3965,6 +4027,43 @@ ThreadSources.prototype = {
    */
   unblackBox: function TS_unblackBox(aURL) {
     ThreadSources._blackBoxedSources.delete(aURL);
+  },
+
+  /**
+   * Returns true if the given URL is pretty printed.
+   *
+   * @param aURL String
+   *        The URL of the source that might be pretty printed.
+   */
+  isPrettyPrinted: function TS_isPrettyPrinted(aURL) {
+    return ThreadSources._prettyPrintedSources.has(aURL);
+  },
+
+  /**
+   * Add the given URL to the set of sources that are pretty printed.
+   *
+   * @param aURL String
+   *        The URL of the source to be pretty printed.
+   */
+  prettyPrint: function TS_prettyPrint(aURL, aIndent) {
+    ThreadSources._prettyPrintedSources.set(aURL, aIndent);
+  },
+
+  /**
+   * Return the indent the given URL was pretty printed by.
+   */
+  prettyPrintIndent: function TS_prettyPrintIndent(aURL) {
+    return ThreadSources._prettyPrintedSources.get(aURL);
+  },
+
+  /**
+   * Remove the given URL from the set of sources that are pretty printed.
+   *
+   * @param aURL String
+   *        The URL of the source that is no longer pretty printed.
+   */
+  disablePrettyPrint: function TS_disablePrettyPrint(aURL) {
+    ThreadSources._prettyPrintedSources.delete(aURL);
   },
 
   /**
@@ -4024,7 +4123,7 @@ function getOffsetColumn(aOffset, aScript) {
  *          Returns an object of the form { url, line, column }
  */
 function getFrameLocation(aFrame) {
-  if (!aFrame.script) {
+  if (!aFrame || !aFrame.script) {
     return { url: null, line: null, column: null };
   }
   return {

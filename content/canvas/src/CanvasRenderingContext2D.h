@@ -22,7 +22,9 @@
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/gfx/2D.h"
 #include "gfx2DGlue.h"
+#include "imgIEncoder.h"
 
+class nsGlobalWindow;
 class nsXULElement;
 
 namespace mozilla {
@@ -169,6 +171,8 @@ public:
   void BeginPath();
   void Fill(const CanvasWindingRule& winding);
   void Stroke();
+  void DrawSystemFocusRing(mozilla::dom::Element& element);
+  bool DrawCustomFocusRing(mozilla::dom::Element& element);
   void Clip(const CanvasWindingRule& winding);
   bool IsPointInPath(double x, double y, const CanvasWindingRule& winding);
   bool IsPointInStroke(double x, double y);
@@ -333,6 +337,12 @@ public:
   void SetMozDash(JSContext* cx, const JS::Value& mozDash,
                   mozilla::ErrorResult& error);
 
+  void SetLineDash(const mozilla::dom::AutoSequence<double>& mSegments);
+  void GetLineDash(nsTArray<double>& mSegments) const;
+
+  void SetLineDashOffset(double mOffset);
+  double LineDashOffset() const;
+
   double MozDashOffset()
   {
     return CurrentState().dashOffset;
@@ -362,7 +372,7 @@ public:
     }
   }
 
-  void DrawWindow(nsIDOMWindow* window, double x, double y, double w, double h,
+  void DrawWindow(nsGlobalWindow& window, double x, double y, double w, double h,
                   const nsAString& bgColor, uint32_t flags,
                   mozilla::ErrorResult& error);
   void AsyncDrawXULElement(nsXULElement& elem, double x, double y, double w,
@@ -453,6 +463,8 @@ public:
   }
 
   friend class CanvasRenderingContext2DUserData;
+
+  virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat);
 
 protected:
   nsresult GetImageDataArray(JSContext* aCx, int32_t aX, int32_t aY,
@@ -841,6 +853,10 @@ protected:
   nsAutoTArray<ContextState, 3> mStyleStack;
 
   inline ContextState& CurrentState() {
+    return mStyleStack[mStyleStack.Length() - 1];
+  }
+
+  inline const ContextState& CurrentState() const {
     return mStyleStack[mStyleStack.Length() - 1];
   }
 

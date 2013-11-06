@@ -10,6 +10,8 @@ import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.R;
+import org.mozilla.gecko.Tab;
+import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.TouchEventInterceptor;
 import org.mozilla.gecko.ZoomConstraints;
 import org.mozilla.gecko.mozglue.GeneratableAndroidBridgeTarget;
@@ -21,12 +23,14 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.os.Build;
 import android.os.Handler;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -47,7 +51,7 @@ import java.util.ArrayList;
  *
  * Note that LayerView is accessed by Robocop via reflection.
  */
-public class LayerView extends FrameLayout {
+public class LayerView extends FrameLayout implements Tabs.OnTabsChangedListener {
     private static String LOGTAG = "GeckoLayerView";
 
     private GeckoLayerClient mLayerClient;
@@ -107,6 +111,7 @@ public class LayerView extends FrameLayout {
 
         mTouchInterceptors = new ArrayList<TouchEventInterceptor>();
         mOverscroll = new Overscroll(this);
+        Tabs.registerOnTabsChangedListener(this);
     }
 
     public void initializeView(EventDispatcher eventDispatcher) {
@@ -123,6 +128,18 @@ public class LayerView extends FrameLayout {
         setFocusableInTouchMode(true);
 
         GeckoAccessibility.setDelegate(this);
+    }
+
+    private Point getEventRadius(MotionEvent event) {
+        if (Build.VERSION.SDK_INT >= 9) {
+            return new Point((int)event.getToolMajor()/2,
+                             (int)event.getToolMinor()/2);
+        }
+
+        float size = event.getSize();
+        DisplayMetrics displaymetrics = getContext().getResources().getDisplayMetrics();
+        size = size * Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
+        return new Point((int)size, (int)size);
     }
 
     public void geckoConnected() {
@@ -157,8 +174,10 @@ public class LayerView extends FrameLayout {
                 }
 
                 if (mInitialTouchPoint != null && action == MotionEvent.ACTION_MOVE) {
+                    Point p = getEventRadius(event);
+
                     if (PointUtils.subtract(point, mInitialTouchPoint).length() <
-                        PanZoomController.PAN_THRESHOLD) {
+                        Math.max(PanZoomController.CLICK_THRESHOLD, Math.min(Math.min(p.x, p.y), PanZoomController.PAN_THRESHOLD))) {
                         // Don't send the touchmove event if if the users finger hasn't moved far.
                         // Necessary for Google Maps to work correctly. See bug 771099.
                         return true;
@@ -641,5 +660,13 @@ public class LayerView extends FrameLayout {
 
     public boolean isFullScreen() {
         return mFullScreen;
+    }
+
+    @Override
+    public void onTabChanged(Tab tab, Tabs.TabEvents msg, Object data) {
+        if (msg == Tabs.TabEvents.VIEWPORT_CHANGE && Tabs.getInstance().isSelectedTab(tab)) {
+            setZoomConstraints(tab.getZoomConstraints());
+            setIsRTL(tab.getIsRTL());
+        }
     }
 }

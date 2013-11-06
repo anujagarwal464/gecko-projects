@@ -817,6 +817,18 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
         char buf[BUFSIZ];
         int32_t bytesRead;
         
+        // record PR_Write() error for better error message later.
+        nsresult saved_write_error = NS_OK;    
+        nsresult saved_read_error = NS_OK;
+
+        // DONE: Does PR_Read() return bytesRead < 0 for error?
+        // Yes., The errors from PR_Read are not so common and
+        // the value may not have correspondence in NS_ERROR_*, but
+        // we do catch it still, immediately after while() loop.
+        // We can differentiate errors pf PR_Read and PR_Write by
+        // looking at saved_write_error value. If PR_Write error occurs (and not
+        // PR_Read() error), save_write_error is not NS_OK.
+
         while ((bytesRead = PR_Read(oldFD, buf, BUFSIZ)) > 0) {
 #ifdef DEBUG_blizzard
             totalRead += bytesRead;
@@ -825,6 +837,7 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
             // PR_Write promises never to do a short write
             int32_t bytesWritten = PR_Write(newFD, buf, bytesRead);
             if (bytesWritten < 0) {
+                saved_write_error = NSRESULT_FOR_ERRNO();
                 bytesRead = -1;
                 break;
             }
@@ -835,18 +848,39 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
 #endif
         }
 
+        // Record error if PR_Read() failed.
+        // Must be done before any other I/O which may reset errno.
+        if ( (bytesRead < 0) && (saved_write_error == NS_OK)) {
+            saved_read_error = NSRESULT_FOR_ERRNO();
+        }
+
 #ifdef DEBUG_blizzard
         printf("read %d bytes, wrote %d bytes\n",
                  totalRead, totalWritten);
 #endif
 
+        // TODO/FIXME: better find out how to propagate errors of
+        // close.  Errors of close can occur.  Read man page of
+        // close(2); At least, we should tell the user that
+        // filesystem/disk is hosed so that users can take remedial
+        // action.
+
         // close the files
         PR_Close(newFD);
         PR_Close(oldFD);
 
-        // check for read (or write) error after cleaning up
-        if (bytesRead < 0) 
-            return NS_ERROR_OUT_OF_MEMORY;
+        // Let us report the failure to write and read.
+        // check for write/read error after cleaning up
+        if (bytesRead < 0) {
+            if (saved_write_error != NS_OK)
+                return saved_write_error;
+            else if (saved_read_error != NS_OK)
+                return saved_read_error;
+#if DEBUG
+            else                // sanity check. Die and debug.
+                MOZ_ASSERT(0);
+#endif
+        }
     }
     return rv;
 }
@@ -1157,7 +1191,7 @@ GetDeviceName(int deviceMajor, int deviceMinor, nsACString &deviceName)
         char *p_dev = strstr(mountinfo_line,device_num);
     
         int i;
-        for(i = 0; i < kMountInfoDevPosition && p_dev != NULL; i++) {
+        for(i = 0; i < kMountInfoDevPosition && p_dev != nullptr; i++) {
             p_dev = strchr(p_dev,' ');
             if(p_dev)
               p_dev++;
@@ -2030,7 +2064,7 @@ static nsresult CFStringReftoUTF8(CFStringRef aInStrRef, nsACString& aOutStr)
   CFIndex usedBufLen, inStrLen = ::CFStringGetLength(aInStrRef);
   CFIndex charsConverted = ::CFStringGetBytes(aInStrRef, CFRangeMake(0, inStrLen),
                                               kCFStringEncodingUTF8, 0, false,
-                                              NULL, 0, &usedBufLen);
+                                              nullptr, 0, &usedBufLen);
   if (charsConverted == inStrLen) {
     // all characters converted, do the actual conversion
     aOutStr.SetLength(usedBufLen);
@@ -2094,7 +2128,7 @@ nsLocalFile::GetFSRef(FSRef *_retval)
 
   nsresult rv = NS_ERROR_FAILURE;
 
-  CFURLRef url = NULL;
+  CFURLRef url = nullptr;
   if (NS_SUCCEEDED(GetCFURL(&url))) {
     if (::CFURLGetFSRef(url, _retval)) {
       rv = NS_OK;
@@ -2224,7 +2258,7 @@ nsLocalFile::LaunchWithDoc(nsIFile *aDocToLoad, bool aLaunchInBackground)
   }
   thelaunchSpec.launchFlags = theLaunchFlags;
 
-  OSErr err = ::LSOpenFromRefSpec(&thelaunchSpec, NULL);
+  OSErr err = ::LSOpenFromRefSpec(&thelaunchSpec, nullptr);
   if (err != noErr)
     return MacErrorMapper(err);
 
@@ -2240,7 +2274,7 @@ nsLocalFile::OpenDocWithApp(nsIFile *aAppToOpenWith, bool aLaunchInBackground)
     return rv;
 
   if (!aAppToOpenWith) {
-    OSErr err = ::LSOpenFSRef(&docFSRef, NULL);
+    OSErr err = ::LSOpenFSRef(&docFSRef, nullptr);
     return MacErrorMapper(err);
   }
 
@@ -2272,7 +2306,7 @@ nsLocalFile::OpenDocWithApp(nsIFile *aAppToOpenWith, bool aLaunchInBackground)
   thelaunchSpec.itemRefs = &docFSRef;
   thelaunchSpec.launchFlags = theLaunchFlags;
 
-  OSErr err = ::LSOpenFromRefSpec(&thelaunchSpec, NULL);
+  OSErr err = ::LSOpenFromRefSpec(&thelaunchSpec, nullptr);
   if (err != noErr)
     return MacErrorMapper(err);
 
@@ -2336,7 +2370,7 @@ nsLocalFile::GetBundleIdentifier(nsACString& outBundleIdentifier)
 
   CFURLRef urlRef;
   if (NS_SUCCEEDED(GetCFURL(&urlRef))) {
-    CFBundleRef bundle = ::CFBundleCreate(NULL, urlRef);
+    CFBundleRef bundle = ::CFBundleCreate(nullptr, urlRef);
     if (bundle) {
       CFStringRef bundleIdentifier = ::CFBundleGetIdentifier(bundle);
       if (bundleIdentifier)

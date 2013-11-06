@@ -21,6 +21,10 @@ import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.StringUtils;
+import org.mozilla.gecko.widget.GeckoImageButton;
+import org.mozilla.gecko.widget.GeckoImageView;
+import org.mozilla.gecko.widget.GeckoRelativeLayout;
+import org.mozilla.gecko.widget.GeckoTextView;
 
 import org.json.JSONObject;
 
@@ -85,6 +89,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
                                        GeckoEventListener {
     private static final String LOGTAG = "GeckoToolbar";
     public static final String PREF_TITLEBAR_MODE = "browser.chrome.titlebarMode";
+    public static final String PREF_TRIM_URLS = "browser.urlbar.trimURLs";
 
     public interface OnActivateListener {
         public void onActivate();
@@ -184,6 +189,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
     private final ForegroundColorSpan mPrivateDomainColor;
 
     private boolean mShowUrl;
+    private boolean mTrimURLs;
 
     private Integer mPrefObserverId;
 
@@ -206,11 +212,17 @@ public class BrowserToolbar extends GeckoRelativeLayout
         mIsEditing = false;
         mAnimatingEntry = false;
         mShowUrl = false;
+        mTrimURLs = true;
 
+        final String[] prefs = {
+            PREF_TITLEBAR_MODE,
+            PREF_TRIM_URLS
+        };
         // listen to the title bar pref.
-        mPrefObserverId = PrefsHelper.getPref(PREF_TITLEBAR_MODE, new PrefsHelper.PrefHandlerBase() {
+        mPrefObserverId = PrefsHelper.getPrefs(prefs, new PrefsHelper.PrefHandlerBase() {
             @Override
             public void prefValue(String pref, String str) {
+                // Handles PREF_TITLEBAR_MODE, which is always a string.
                 int value = Integer.parseInt(str);
                 boolean shouldShowUrl = (value == 1);
 
@@ -219,12 +231,18 @@ public class BrowserToolbar extends GeckoRelativeLayout
                 }
                 mShowUrl = shouldShowUrl;
 
-                ThreadUtils.postToUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        updateTitle();
-                    }
-                });
+                triggerTitleUpdate();
+            }
+
+            @Override
+            public void prefValue(String pref, boolean value) {
+                // Handles PREF_TRIM_URLS, which should usually be a boolean.
+                if (value == mTrimURLs) {
+                    return;
+                }
+                mTrimURLs = value;
+
+                triggerTitleUpdate();
             }
 
             @Override
@@ -232,6 +250,15 @@ public class BrowserToolbar extends GeckoRelativeLayout
                 // We want to be notified of changes to be able to switch mode
                 // without restarting.
                 return true;
+            }
+
+            private void triggerTitleUpdate() {
+                ThreadUtils.postToUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateTitle();
+                    }
+                });
             }
         });
 
@@ -274,8 +301,12 @@ public class BrowserToolbar extends GeckoRelativeLayout
         mForward.setEnabled(false); // initialize the forward button to not be enabled
 
         mFavicon = (ImageButton) findViewById(R.id.favicon);
-        if (Build.VERSION.SDK_INT >= 16)
-            mFavicon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        if (Build.VERSION.SDK_INT >= 11) {
+            if (Build.VERSION.SDK_INT >= 16) {
+                mFavicon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            mFavicon.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        }
         mFaviconSize = Math.round(res.getDimension(R.dimen.browser_toolbar_favicon_size));
 
         mSiteSecurity = (ImageButton) findViewById(R.id.site_security);
@@ -383,6 +414,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
                 }
 
                 if (keyCode == KeyEvent.KEYCODE_BACK) {
+                    // Drop the virtual keyboard.
                     clearFocus();
                     return true;
                 }
@@ -709,6 +741,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
     // have no autocomplete results
     @Override
     public void onAutocomplete(final String result) {
+        if (!isEditing()) {
+            return;
+        }
+
         final String text = mUrlEditText.getText().toString();
 
         if (result == null) {
@@ -727,6 +763,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
 
     @Override
     public void afterTextChanged(final Editable s) {
+        if (!isEditing()) {
+            return;
+        }
+
         final String text = s.toString();
         boolean useHandler = false;
         boolean reuseAutocomplete = false;
@@ -1093,7 +1133,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
             return;
         }
 
-        CharSequence title = StringUtils.stripCommonSubdomains(StringUtils.stripScheme(url));
+        CharSequence title = url;
+        if (mTrimURLs) {
+            title = StringUtils.stripCommonSubdomains(StringUtils.stripScheme(url));
+        }
 
         String baseDomain = tab.getBaseDomain();
         if (!TextUtils.isEmpty(baseDomain)) {
@@ -1117,7 +1160,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
             image = Bitmap.createScaledBitmap(image, mFaviconSize, mFaviconSize, false);
             mFavicon.setImageBitmap(image);
         } else {
-            mFavicon.setImageResource(R.drawable.favicon);
+            mFavicon.setImageDrawable(null);
         }
     }
     
@@ -1272,6 +1315,41 @@ public class BrowserToolbar extends GeckoRelativeLayout
     }
 
     /**
+     * Disables and dims all toolbar elements which are not
+     * related to editing mode.
+     */
+    private void updateChildrenForEditing() {
+        // This is for the tablet UI only
+        if (!HardwareUtils.isTablet()) {
+            return;
+        }
+
+        // Disable toolbar elemens while in editing mode
+        final boolean enabled = !mIsEditing;
+
+        // This alpha value has to be in sync with the one used
+        // in setButtonEnabled().
+        final float alpha = (enabled ? 1.0f : 0.24f);
+
+        mTabs.setEnabled(enabled);
+        ViewHelper.setAlpha(mTabsCounter, alpha);
+        mMenu.setEnabled(enabled);
+        ViewHelper.setAlpha(mMenuIcon, alpha);
+
+        final int actionItemsCount = mActionItemBar.getChildCount();
+        for (int i = 0; i < actionItemsCount; i++) {
+            mActionItemBar.getChildAt(i).setEnabled(enabled);
+        }
+        ViewHelper.setAlpha(mActionItemBar, alpha);
+
+        final Tab tab = Tabs.getInstance().getSelectedTab();
+        if (tab != null) {
+            setButtonEnabled(mBack, enabled && tab.canDoBack());
+            setButtonEnabled(mForward, enabled && tab.canDoForward());
+        }
+    }
+
+    /**
      * Returns whether or not the URL bar is in editing mode (url bar is expanded, hiding the new
      * tab button). Note that selection state is independent of editing mode.
      */
@@ -1286,6 +1364,8 @@ public class BrowserToolbar extends GeckoRelativeLayout
 
         mUrlEditText.setText(url != null ? url : "");
         mIsEditing = true;
+
+        updateChildrenForEditing();
 
         if (mStartEditingListener != null) {
             mStartEditingListener.onStartEditing();
@@ -1398,6 +1478,8 @@ public class BrowserToolbar extends GeckoRelativeLayout
             return url;
         }
         mIsEditing = false;
+
+        updateChildrenForEditing();
 
         if (mStopEditingListener != null) {
             mStopEditingListener.onStopEditing();
@@ -1560,12 +1642,19 @@ public class BrowserToolbar extends GeckoRelativeLayout
         }
     }
 
-    public void updateBackButton(boolean enabled) {
-         Drawable drawable = mBack.getDrawable();
-         if (drawable != null)
-             drawable.setAlpha(enabled ? 255 : 77);
+    public void setButtonEnabled(ImageButton button, boolean enabled) {
+        final Drawable drawable = button.getDrawable();
+        if (drawable != null) {
+            // This alpha value has to be in sync with the one used
+            // in updateChildrenForEditing().
+            drawable.setAlpha(enabled ? 255 : 61);
+        }
 
-         mBack.setEnabled(enabled);
+        button.setEnabled(enabled);
+    }
+
+    public void updateBackButton(boolean enabled) {
+        setButtonEnabled(mBack, enabled);
     }
 
     public void updateForwardButton(final boolean enabled) {
@@ -1574,7 +1663,7 @@ public class BrowserToolbar extends GeckoRelativeLayout
 
         // Save the state on the forward button so that we can skip animations
         // when there's nothing to change
-        mForward.setEnabled(enabled);
+        setButtonEnabled(mForward, enabled);
 
         if (mForward.getVisibility() != View.VISIBLE)
             return;

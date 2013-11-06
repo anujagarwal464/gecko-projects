@@ -20,24 +20,28 @@ Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
 Cu.import("resource://gre/modules/PhoneNumberUtils.jsm");
 
 const DB_NAME = "contacts";
-const DB_VERSION = 14;
+const DB_VERSION = 18;
 const STORE_NAME = "contacts";
 const SAVED_GETALL_STORE_NAME = "getallcache";
 const CHUNK_SIZE = 20;
 const REVISION_STORE = "revision";
 const REVISION_KEY = "revision";
 
+function optionalDate(aValue) {
+  if (aValue) {
+    if (!(aValue instanceof Date)) {
+      return new Date(aValue);
+    }
+    return aValue;
+  }
+  return undefined;
+}
+
 function exportContact(aRecord) {
-  let contact = {};
-  contact.properties = aRecord.properties;
-
-  for (let field in aRecord.properties)
-    contact.properties[field] = aRecord.properties[field];
-
-  contact.updated = aRecord.updated;
-  contact.published = aRecord.published;
-  contact.id = aRecord.id;
-  return contact;
+  if (aRecord) {
+    delete aRecord.search;
+  }
+  return aRecord;
 }
 
 function ContactDispatcher(aContacts, aFullContacts, aCallback, aNewTxn, aClearDispatcher, aFailureCb) {
@@ -150,9 +154,7 @@ ContactDB.prototype = {
       for (let i = 0; i < contacts.length; i++) {
         let contact = {};
         contact.properties = contacts[i];
-        contact.id = idService.generateUUID().toString().replace('-', '', 'g')
-                                                        .replace('{', '')
-                                                        .replace('}', '');
+        contact.id = idService.generateUUID().toString().replace(/[{}-]/g, "");
         contact = this.makeImport(contact);
         this.updateRecordMetadata(contact);
         if (DEBUG) debug("import: " + JSON.stringify(contact));
@@ -165,8 +167,10 @@ ContactDB.prototype = {
       let objectStore = aDb.createObjectStore(STORE_NAME, {keyPath: "id"});
       objectStore.createIndex("familyName", "properties.familyName", { multiEntry: true });
       objectStore.createIndex("givenName",  "properties.givenName",  { multiEntry: true });
+      objectStore.createIndex("name",      "properties.name",        { multiEntry: true });
       objectStore.createIndex("familyNameLowerCase", "search.familyName", { multiEntry: true });
       objectStore.createIndex("givenNameLowerCase",  "search.givenName",  { multiEntry: true });
+      objectStore.createIndex("nameLowerCase",       "search.name",       { multiEntry: true });
       objectStore.createIndex("telLowerCase",        "search.tel",        { multiEntry: true });
       objectStore.createIndex("emailLowerCase",      "search.email",      { multiEntry: true });
       objectStore.createIndex("tel", "search.exactTel", { multiEntry: true });
@@ -401,11 +405,11 @@ ContactDB.prototype = {
           objectStore = aTransaction.objectStore(STORE_NAME);
         }
         let names = objectStore.indexNames;
-        let blackList = ["tel", "familyName", "givenName",  "familyNameLowerCase",
+        let whiteList = ["tel", "familyName", "givenName",  "familyNameLowerCase",
                          "givenNameLowerCase", "telLowerCase", "category", "email",
                          "emailLowerCase"];
         for (var i = 0; i < names.length; i++) {
-          if (blackList.indexOf(names[i]) < 0) {
+          if (whiteList.indexOf(names[i]) < 0) {
             objectStore.deleteIndex(names[i]);
           }
         }
@@ -544,6 +548,182 @@ ContactDB.prototype = {
             if (modified || modified2) {
               cursor.update(cursor.value);
             }
+            cursor.continue();
+          } else {
+            next();
+          }
+        };
+      },
+      function upgrade14to15() {
+        if (DEBUG) debug("Fix array properties saved as scalars");
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+        const ARRAY_PROPERTIES = ["photo", "adr", "email", "url", "impp", "tel",
+                                 "name", "honorificPrefix", "givenName",
+                                 "additionalName", "familyName", "honorificSuffix",
+                                 "nickname", "category", "org", "jobTitle",
+                                 "note", "key"];
+        const PROPERTIES_WITH_TYPE = ["adr", "email", "url", "impp", "tel"];
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          let changed = false;
+          if (cursor) {
+            let props = cursor.value.properties;
+            for (let prop of ARRAY_PROPERTIES) {
+              if (props[prop]) {
+                if (!Array.isArray(props[prop])) {
+                  cursor.value.properties[prop] = [props[prop]];
+                  changed = true;
+                }
+                if (PROPERTIES_WITH_TYPE.indexOf(prop) !== -1) {
+                  let subprop = cursor.value.properties[prop];
+                  for (let i = 0; i < subprop.length; ++i) {
+                    if (!Array.isArray(subprop[i].type)) {
+                      cursor.value.properties[prop][i].type = [subprop[i].type];
+                      changed = true;
+                    }
+                  }
+                }
+              }
+            }
+            if (changed) {
+              cursor.update(cursor.value);
+            }
+            cursor.continue();
+          } else {
+           next();
+          }
+        };
+      },
+      function upgrade15to16() {
+        if (DEBUG) debug("Fix Date properties");
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+        const DATE_PROPERTIES = ["bday", "anniversary"];
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          let changed = false;
+          if (cursor) {
+            let props = cursor.value.properties;
+            for (let prop of DATE_PROPERTIES) {
+              if (props[prop] && !(props[prop] instanceof Date)) {
+                cursor.value.properties[prop] = new Date(props[prop]);
+                changed = true;
+              }
+            }
+            if (changed) {
+              cursor.update(cursor.value);
+            }
+            cursor.continue();
+          } else {
+           next();
+          }
+        };
+      },
+      function upgrade16to17() {
+        if (DEBUG) debug("Fix array with null values");
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+        const ARRAY_PROPERTIES = ["photo", "adr", "email", "url", "impp", "tel",
+                                 "name", "honorificPrefix", "givenName",
+                                 "additionalName", "familyName", "honorificSuffix",
+                                 "nickname", "category", "org", "jobTitle",
+                                 "note", "key"];
+
+        const PROPERTIES_WITH_TYPE = ["adr", "email", "url", "impp", "tel"];
+
+        const DATE_PROPERTIES = ["bday", "anniversary"];
+
+        objectStore.openCursor().onsuccess = function(event) {
+          function filterInvalidValues(val) {
+            let shouldKeep = val != null; // null or undefined
+            if (!shouldKeep) {
+              changed = true;
+            }
+            return shouldKeep;
+          }
+
+          function filteredArray(array) {
+            return array.filter(filterInvalidValues);
+          }
+
+          let cursor = event.target.result;
+          let changed = false;
+          if (cursor) {
+            let props = cursor.value.properties;
+
+            for (let prop of ARRAY_PROPERTIES) {
+
+              // properties that were empty strings weren't converted to arrays
+              // in upgrade14to15
+              if (props[prop] != null && !Array.isArray(props[prop])) {
+                props[prop] = [props[prop]];
+                changed = true;
+              }
+
+              if (props[prop] && props[prop].length) {
+                props[prop] = filteredArray(props[prop]);
+
+                if (PROPERTIES_WITH_TYPE.indexOf(prop) !== -1) {
+                  let subprop = props[prop];
+
+                  for (let i = 0; i < subprop.length; ++i) {
+                    let curSubprop = subprop[i];
+                    // upgrade14to15 transformed type props into an array
+                    // without checking invalid values
+                    if (curSubprop.type) {
+                      curSubprop.type = filteredArray(curSubprop.type);
+                    }
+                  }
+                }
+              }
+            }
+
+            for (let prop of DATE_PROPERTIES) {
+              if (props[prop] != null && !(props[prop] instanceof Date)) {
+                // props[prop] is probably '' and wasn't converted
+                // in upgrade15to16
+                props[prop] = null;
+                changed = true;
+              }
+            }
+
+            if (changed) {
+              cursor.value.properties = props;
+              cursor.update(cursor.value);
+            }
+            cursor.continue();
+          } else {
+           next();
+          }
+        }
+      },
+      function upgrade17to18() {
+        if (DEBUG) {
+          debug("Adding the name index");
+        }
+
+        if (!objectStore) {
+          objectStore = aTransaction.objectStore(STORE_NAME);
+        }
+
+        objectStore.createIndex("name", "properties.name", { multiEntry: true });
+        objectStore.createIndex("nameLowerCase", "search.name", { multiEntry: true });
+
+        objectStore.openCursor().onsuccess = function(event) {
+          let cursor = event.target.result;
+          if (cursor) {
+            let value = cursor.value;
+            value.search.name = [];
+            if (value.properties.name) {
+              value.properties.name.forEach(function addNameIndex(name) {
+                value.search.name.push(name.toLowerCase());
+              });
+            }
+            cursor.update(value);
           } else {
             next();
           }
@@ -568,41 +748,29 @@ ContactDB.prototype = {
         return;
       }
     };
-    if (aNewVersion > steps.length) {
-      dump("Contacts DB upgrade error!");
+
+    function fail(why) {
+      why = why || "";
+      if (this.error) {
+        why += " (root cause: " + this.error.name + ")";
+      }
+
+      debug("Contacts DB upgrade error: " + why);
       aTransaction.abort();
     }
+
+    if (aNewVersion > steps.length) {
+      fail("No migration steps for the new version!");
+    }
+
     next();
   },
 
   makeImport: function makeImport(aContact) {
-    let contact = {};
-    contact.properties = {
-      name:            [],
-      honorificPrefix: [],
-      givenName:       [],
-      additionalName:  [],
-      familyName:      [],
-      honorificSuffix: [],
-      nickname:        [],
-      email:           [],
-      photo:           [],
-      url:             [],
-      category:        [],
-      adr:             [],
-      tel:             [],
-      org:             [],
-      jobTitle:        [],
-      bday:            null,
-      note:            [],
-      impp:            [],
-      anniversary:     null,
-      sex:             null,
-      genderIdentity:  null,
-      key:             [],
-    };
+    let contact = {properties: {}};
 
     contact.search = {
+      name:            [],
       givenName:       [],
       familyName:      [],
       email:           [],
@@ -687,7 +855,6 @@ ContactDB.prototype = {
         }
       }
     }
-    if (DEBUG) debug("contact:" + JSON.stringify(contact));
 
     contact.updated = aContact.updated;
     contact.published = aContact.published;
@@ -1062,6 +1229,23 @@ ContactDB.prototype = {
               substringResult[event.target.result[i].id] = event.target.result[i];
             }
           }.bind(this);
+        } else if (normalized[0] !== "+") {
+          // We might have an international prefix like '00'
+          let parsed = PhoneNumberUtils.parse(normalized);
+          if (parsed && parsed.internationalNumber &&
+              parsed.nationalNumber  &&
+              parsed.nationalNumber !== normalized &&
+              parsed.internationalNumber !== normalized) {
+            if (DEBUG) debug("Search with " + parsed.internationalNumber);
+            let prefixRequest = index.mozGetAll(parsed.internationalNumber, limit);
+
+            prefixRequest.onsuccess = function (event) {
+              if (DEBUG) debug("Request successful. Record count: " + event.target.result.length);
+              for (let i in event.target.result) {
+                substringResult[event.target.result[i].id] = event.target.result[i];
+              }
+            }.bind(this);
+          }
         }
 
         request = index.mozGetAll(normalized, limit);

@@ -328,6 +328,29 @@ BluetoothServiceChildProcess::IsScoConnected(BluetoothReplyRunnable* aRunnable)
   SendRequest(aRunnable, IsScoConnectedRequest());
 }
 
+#ifdef MOZ_B2G_RIL
+void
+BluetoothServiceChildProcess::AnswerWaitingCall(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, AnswerWaitingCallRequest());
+}
+
+void
+BluetoothServiceChildProcess::IgnoreWaitingCall(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, IgnoreWaitingCallRequest());
+}
+
+void
+BluetoothServiceChildProcess::ToggleCalls(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, ToggleCallsRequest());
+}
+#endif // MOZ_B2G_RIL
+
 void
 BluetoothServiceChildProcess::SendMetaData(const nsAString& aTitle,
                                            const nsAString& aArtist,

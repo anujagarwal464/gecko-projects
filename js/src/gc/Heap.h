@@ -684,7 +684,7 @@ struct ChunkBitmap
         GetGCThingMarkWordAndMask(cell, color, wordp, maskp);
     }
 
-    MOZ_ALWAYS_INLINE bool isMarked(const Cell *cell, uint32_t color) {
+    MOZ_ALWAYS_INLINE MOZ_TSAN_BLACKLIST bool isMarked(const Cell *cell, uint32_t color) {
         uintptr_t *word, mask;
         getMarkWordAndMask(cell, color, &word, &mask);
         return *word & mask;
@@ -1049,7 +1049,7 @@ Cell::isTenured() const
 {
 #ifdef JSGC_GENERATIONAL
     JS::shadow::Runtime *rt = js::gc::GetGCThingRuntime(this);
-    return uintptr_t(this) < rt->gcNurseryStart_ || uintptr_t(this) >= rt->gcNurseryEnd_;
+    return !IsInsideNursery(rt, this);
 #endif
     return true;
 }

@@ -21,6 +21,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
   "resource://gre/modules/devtools/Loader.jsm");
@@ -108,7 +109,9 @@ VariablesView.prototype = {
    */
   set rawObject(aObject) {
     this.empty();
-    this.addScope().addItem().populate(aObject, { sorted: true });
+    this.addScope()
+        .addItem("", { enumerable: true })
+        .populate(aObject, { sorted: true });
   },
 
   /**
@@ -890,6 +893,40 @@ VariablesView.prototype = {
   },
 
   /**
+   * Gets if all values should be aligned together.
+   * @return boolean
+   */
+  get alignedValues() {
+    return this._alignedValues;
+  },
+
+  /**
+   * Sets if all values should be aligned together.
+   * @param boolean aFlag
+   */
+  set alignedValues(aFlag) {
+    this._alignedValues = aFlag;
+    if (aFlag) {
+      this._parent.setAttribute("aligned-values", "");
+    } else {
+      this._parent.removeAttribute("aligned-values");
+    }
+  },
+
+  /**
+   * Sets if action buttons (like delete) should be placed at the beginning or
+   * end of a line.
+   * @param boolean aFlag
+   */
+  set actionsFirst(aFlag) {
+    if (aFlag) {
+      this._parent.setAttribute("actions-first", "");
+    } else {
+      this._parent.removeAttribute("actions-first");
+    }
+  },
+
+  /**
    * Gets the parent node holding this view.
    * @return nsIDOMNode
    */
@@ -1119,14 +1156,6 @@ function Scope(aView, aName, aFlags = {}) {
   this.deleteButtonTooltip = aView.deleteButtonTooltip;
   this.contextMenuId = aView.contextMenuId;
   this.separatorStr = aView.separatorStr;
-
-  // Creating maps and arrays thousands of times for variables or properties
-  // with a large number of children fills up a lot of memory. Make sure
-  // these are instantiated only if needed.
-  XPCOMUtils.defineLazyGetter(this, "_store", () => new Map());
-  XPCOMUtils.defineLazyGetter(this, "_enumItems", () => []);
-  XPCOMUtils.defineLazyGetter(this, "_nonEnumItems", () => []);
-  XPCOMUtils.defineLazyGetter(this, "_batchItems", () => []);
 
   this._init(aName.trim(), aFlags);
 }
@@ -1649,7 +1678,8 @@ Scope.prototype = {
    * The click listener for this scope's title.
    */
   _onClick: function(e) {
-    if (e.target == this._inputNode ||
+    if (e.button != 0 ||
+        e.target == this._inputNode ||
         e.target == this._editNode ||
         e.target == this._deleteNode) {
       return;
@@ -1730,6 +1760,7 @@ Scope.prototype = {
     }
     let throbber = this._throbber = this.document.createElement("hbox");
     throbber.className = "variables-view-throbber";
+    throbber.setAttribute("optional-visibility", "");
     this._title.insertBefore(throbber, this._spacer);
   },
 
@@ -2036,6 +2067,14 @@ Scope.prototype = {
   _throbber: null
 };
 
+// Creating maps and arrays thousands of times for variables or properties
+// with a large number of children fills up a lot of memory. Make sure
+// these are instantiated only if needed.
+DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_store", Map);
+DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_enumItems", Array);
+DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_nonEnumItems", Array);
+DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_batchItems", Array);
+
 /**
  * A Variable is a Scope holding Property instances.
  * Iterable via "for (let [name, property] in instance) { }".
@@ -2318,6 +2357,7 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     valueLabel.setAttribute("crop", "center");
 
     let spacer = this._spacer = document.createElement("spacer");
+    spacer.setAttribute("optional-visibility", "");
     spacer.setAttribute("flex", "1");
 
     this._title.appendChild(separatorLabel);
@@ -2329,7 +2369,7 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     }
 
     // If no value will be displayed, we don't need the separator.
-    if (!descriptor.get && !descriptor.set && !descriptor.value) {
+    if (!descriptor.get && !descriptor.set && !("value" in descriptor)) {
       separatorLabel.hidden = true;
     }
 
@@ -2380,7 +2420,6 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     if (ownerView.delete) {
       let deleteNode = this._deleteNode = this.document.createElement("toolbarbutton");
       deleteNode.className = "plain variables-view-delete";
-      deleteNode.setAttribute("ordinal", 2);
       deleteNode.addEventListener("click", this._onDelete.bind(this), false);
       this._title.appendChild(deleteNode);
     }
@@ -2395,24 +2434,28 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     if (!descriptor.writable && !ownerView.getter && !ownerView.setter) {
       let nonWritableIcon = this.document.createElement("hbox");
       nonWritableIcon.className = "variable-or-property-non-writable-icon";
+      nonWritableIcon.setAttribute("optional-visibility", "");
       this._title.appendChild(nonWritableIcon);
     }
     if (descriptor.value && typeof descriptor.value == "object") {
       if (descriptor.value.frozen) {
         let frozenLabel = this.document.createElement("label");
         frozenLabel.className = "plain variable-or-property-frozen-label";
+        frozenLabel.setAttribute("optional-visibility", "");
         frozenLabel.setAttribute("value", "F");
         this._title.appendChild(frozenLabel);
       }
       if (descriptor.value.sealed) {
         let sealedLabel = this.document.createElement("label");
         sealedLabel.className = "plain variable-or-property-sealed-label";
+        sealedLabel.setAttribute("optional-visibility", "");
         sealedLabel.setAttribute("value", "S");
         this._title.appendChild(sealedLabel);
       }
       if (!descriptor.value.extensible) {
         let nonExtensibleLabel = this.document.createElement("label");
         nonExtensibleLabel.className = "plain variable-or-property-non-extensible-label";
+        nonExtensibleLabel.setAttribute("optional-visibility", "");
         nonExtensibleLabel.setAttribute("value", "N");
         this._title.appendChild(nonExtensibleLabel);
       }
@@ -2553,7 +2596,9 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     let input = this.document.createElement("textbox");
     input.className = "plain " + aClassName;
     input.setAttribute("value", initialString);
-    input.setAttribute("flex", "1");
+    if (!this._variablesView.alignedValues) {
+      input.setAttribute("flex", "1");
+    }
 
     // Replace the specified label with a textbox input element.
     aLabel.parentNode.replaceChild(input, aLabel);
@@ -2776,6 +2821,10 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
    * The click listener for the edit button.
    */
   _onEdit: function(e) {
+    if (e.button != 0) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     this._activateValueInput();
@@ -2785,6 +2834,10 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
    * The click listener for the delete button.
    */
   _onDelete: function(e) {
+    if ("button" in e && e.button != 0) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 

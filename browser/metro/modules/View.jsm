@@ -8,6 +8,7 @@ this.EXPORTED_SYMBOLS = ["View"];
 Components.utils.import("resource://gre/modules/PlacesUtils.jsm");
 Components.utils.import("resource:///modules/colorUtils.jsm");
 Components.utils.import("resource://gre/modules/Services.jsm");
+Components.utils.import("resource://gre/modules/Task.jsm");
 
 // --------------------------------
 // module helpers
@@ -31,7 +32,7 @@ function View(aSet) {
     observe: (aSubject, aTopic, aData) => this._adjustDOMforViewState(aData)
   };
   Services.obs.addObserver(this.viewStateObserver, "metro_viewstate_changed", false);
-
+  ColorUtils.init();
   this._adjustDOMforViewState();
 }
 
@@ -41,19 +42,28 @@ View.prototype = {
   },
 
   _adjustDOMforViewState: function _adjustDOMforViewState(aState) {
-    if (this._set) {
-      if (undefined == aState)
-        aState = this._set.getAttribute("viewstate");
-
-      this._set.setAttribute("suppressonselect", (aState == "snapped"));
-
-      if (aState == "portrait") {
-        this._set.setAttribute("vertical", true);
-      } else {
-        this._set.removeAttribute("vertical");
-      }
-
-      this._set.arrangeItems();
+    let grid = this._set;
+    if (!grid) {
+      return;
+    }
+    if (!aState) {
+      aState = grid.getAttribute("viewstate");
+    }
+    switch (aState) {
+      case "snapped":
+        grid.setAttribute("nocontext", true);
+        grid.selectNone();
+        break;
+      case "portrait":
+        grid.removeAttribute("nocontext");
+        grid.setAttribute("vertical", true);
+        break;
+      default:
+        grid.removeAttribute("nocontext");
+        grid.removeAttribute("vertical");
+    }
+    if ("arrangeItems" in grid) {
+      grid.arrangeItems();
     }
   },
 
@@ -78,7 +88,13 @@ View.prototype = {
     aItem.iconSrc = aIconUri.spec;
     let faviconURL = (PlacesUtils.favicons.getFaviconLinkForIcon(aIconUri)).spec;
     let xpFaviconURI = makeURI(faviconURL.replace("moz-anno:favicon:",""));
-    let successAction = function(foreground, background) {
+
+    Task.spawn(function() {
+      let colorInfo = yield ColorUtils.getForegroundAndBackgroundIconColors(xpFaviconURI);
+      if (!(colorInfo && colorInfo.background && colorInfo.foreground)) {
+        return;
+      }
+      let { background, foreground } = colorInfo;
       aItem.style.color = foreground; //color text
       aItem.setAttribute("customColor", background);
       let matteColor =  0xffffff; // white
@@ -87,13 +103,11 @@ View.prototype = {
       // get the rgb value that represents this color at given opacity over a white matte
       let tintColor = ColorUtils.addRgbColors(matteColor, ColorUtils.createDecimalColorWord(r,g,b,alpha));
       aItem.setAttribute("tintColor", ColorUtils.convertDecimalToRgbColor(tintColor));
-
-      if (aItem.refresh) {
-        aItem.refresh();
+      // when bound, use the setter to propogate the color change through the tile
+      if ('color' in aItem) {
+        aItem.color = background;
       }
-    };
-    let failureAction = function() {};
-    ColorUtils.getForegroundAndBackgroundIconColors(xpFaviconURI, successAction, failureAction);
+    });
   }
 
 };

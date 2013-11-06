@@ -29,6 +29,10 @@ GetUserMediaLog()
 
 #include "MediaEngineWebRTC.h"
 #include "ImageContainer.h"
+#include "nsIComponentRegistrar.h"
+#include "MediaEngineTabVideoSource.h"
+#include "nsITabSource.h"
+
 #ifdef MOZ_WIDGET_ANDROID
 #include "AndroidBridge.h"
 #endif
@@ -37,6 +41,25 @@ GetUserMediaLog()
 #define LOG(args) PR_LOG(GetUserMediaLog(), PR_LOG_DEBUG, args)
 
 namespace mozilla {
+#ifndef MOZ_B2G_CAMERA
+MediaEngineWebRTC::MediaEngineWebRTC()
+  : mMutex("mozilla::MediaEngineWebRTC")
+  , mVideoEngine(nullptr)
+  , mVoiceEngine(nullptr)
+  , mVideoEngineInit(false)
+  , mAudioEngineInit(false)
+  , mHasTabVideoSource(false)
+{
+  nsCOMPtr<nsIComponentRegistrar> compMgr;
+  NS_GetComponentRegistrar(getter_AddRefs(compMgr));
+  if (compMgr) {
+    compMgr->IsContractIDRegistered(NS_TABSOURCESERVICE_CONTRACTID, &mHasTabVideoSource);
+  }
+  mLoadMonitor = new LoadMonitor();
+  mLoadMonitor->Init(mLoadMonitor);
+}
+#endif
+
 
 void
 MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources)
@@ -99,6 +122,9 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
     return;
   }
 #endif
+
+  if (mHasTabVideoSource)
+    aVSources->AppendElement(new MediaEngineTabVideoSource());
 
   if (!mVideoEngine) {
     if (!(mVideoEngine = webrtc::VideoEngine::Create())) {
@@ -214,8 +240,8 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
 void
 MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources)
 {
-  webrtc::VoEBase* ptrVoEBase = NULL;
-  webrtc::VoEHardware* ptrVoEHw = NULL;
+  webrtc::VoEBase* ptrVoEBase = nullptr;
+  webrtc::VoEHardware* ptrVoEHw = nullptr;
   // We spawn threads to handle gUM runnables, so we must protect the member vars
   MutexAutoLock lock(mMutex);
 
@@ -226,7 +252,7 @@ MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSourc
   JavaVM *jvm = mozilla::AndroidBridge::Bridge()->GetVM();
 
   JNIEnv *env;
-  jvm->AttachCurrentThread(&env, NULL);
+  jvm->AttachCurrentThread(&env, nullptr);
 
   if (webrtc::VoiceEngine::SetAndroidObjects(jvm, (void*)context) != 0) {
     LOG(("VoiceEngine:SetAndroidObjects Failed"));
@@ -333,8 +359,10 @@ MediaEngineWebRTC::Shutdown()
     webrtc::VoiceEngine::Delete(mVoiceEngine);
   }
 
-  mVideoEngine = NULL;
-  mVoiceEngine = NULL;
+  mVideoEngine = nullptr;
+  mVoiceEngine = nullptr;
+
+  mLoadMonitor->Shutdown();
 }
 
 }

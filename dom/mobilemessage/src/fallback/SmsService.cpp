@@ -6,13 +6,19 @@
 #include "SmsMessage.h"
 #include "SmsSegmentInfo.h"
 #include "SmsService.h"
-#include "jsapi.h"
 
 namespace mozilla {
 namespace dom {
 namespace mobilemessage {
 
 NS_IMPL_ISUPPORTS1(SmsService, nsISmsService)
+
+NS_IMETHODIMP
+SmsService::GetSmsDefaultServiceId(uint32_t* aServiceId)
+{
+  NS_ERROR("We should not be here!");
+  return NS_ERROR_FAILURE;
+}
 
 NS_IMETHODIMP
 SmsService::HasSupport(bool* aHasSupport)
@@ -30,7 +36,8 @@ SmsService::GetSegmentInfoForText(const nsAString& aText,
 }
 
 NS_IMETHODIMP
-SmsService::Send(const nsAString& aNumber,
+SmsService::Send(uint32_t         aServiceId,
+                 const nsAString& aNumber,
                  const nsAString& aMessage,
                  const bool       aSilent,
                  nsIMobileMessageCallback* aRequest)
@@ -59,6 +66,14 @@ SmsService::RemoveSilentNumber(const nsAString& aNumber)
 {
   NS_ERROR("We should not be here!");
   return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+SmsService::GetSmscAddress(uint32_t aServiceId,
+                           nsIMobileMessageCallback *aRequest)
+{
+  NS_ERROR("We should not be here!");
+  return NS_OK;
 }
 
 } // namespace mobilemessage

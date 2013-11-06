@@ -8,7 +8,6 @@
 
 #include "mozilla/FloatingPoint.h"
 
-#include "jsapi.h"
 #include "jsarray.h"
 #include "jsatom.h"
 #include "jscntxt.h"
@@ -886,7 +885,7 @@ js_InitJSONClass(JSContext *cx, HandleObject obj)
     if (!JS_DefineFunctions(cx, JSON, json_static_methods))
         return nullptr;
 
-    MarkStandardClassInitializedNoProto(global, &JSONClass);
+    global->markStandardClassInitializedNoProto(&JSONClass);
 
     return JSON;
 }

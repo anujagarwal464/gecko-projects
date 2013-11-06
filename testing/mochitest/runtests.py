@@ -288,6 +288,8 @@ class MochitestUtilsMixin(object):
         logFile -- logs test run to an absolute path
         totalChunks -- how many chunks to split tests into
         thisChunk -- which chunk to run
+        startAt -- name of test to start at
+        endAt -- name of test to end at
         timeout -- per-test timeout in seconds
         repeat -- How many times to repeat the test, ie: repeat=1 will run the test twice.
     """
@@ -314,6 +316,10 @@ class MochitestUtilsMixin(object):
         self.urlOpts.append("thisChunk=%d" % options.thisChunk)
       if options.chunkByDir:
         self.urlOpts.append("chunkByDir=%d" % options.chunkByDir)
+      if options.startAt:
+        self.urlOpts.append("startAt=%s" % options.startAt)
+      if options.endAt:
+        self.urlOpts.append("endAt=%s" % options.endAt)
       if options.shuffle:
         self.urlOpts.append("shuffle=1")
       if "MOZ_HIDE_RESULTS_TABLE" in env and env["MOZ_HIDE_RESULTS_TABLE"] == "1":
@@ -336,6 +342,8 @@ class MochitestUtilsMixin(object):
         self.urlOpts.append("failureFile=%s" % self.getFullPath(options.failureFile))
       if options.runSlower:
         self.urlOpts.append("runSlower=true")
+      if options.debugOnFailure:
+        self.urlOpts.append("debugOnFailure=true")
 
   def buildTestPath(self, options):
     """ Build the url path to the specific test harness and test file or directory
@@ -364,7 +372,7 @@ class MochitestUtilsMixin(object):
     testHost = "http://mochi.test:8888"
     testURL = ("/").join([testHost, self.TEST_PATH, options.testPath])
     if os.path.isfile(os.path.join(self.oldcwd, os.path.dirname(__file__), self.TEST_PATH, options.testPath)) and options.repeat > 0:
-       testURL = ("/").join([testHost, self.PLAIN_LOOP_PATH])
+       testURL = ("/").join([testHost, self.TEST_PATH, os.path.dirname(options.testPath)])
     if options.chrome or options.a11y:
        testURL = ("/").join([testHost, self.CHROME_PATH])
     elif options.browserChrome:
@@ -564,6 +572,7 @@ class Mochitest(MochitestUtilsMixin):
     """ create the profile and add optional chrome bits and files if requested """
     if options.browserChrome and options.timeout:
       options.extraPrefs.append("testing.browserTestHarness.timeout=%d" % options.timeout)
+    options.extraPrefs.append("browser.tabs.remote=%s" % ('true' if options.e10s else 'false'))
 
     # get extensions to install
     extensions = self.getExtensionsToInstall(options)
@@ -899,9 +908,11 @@ class Mochitest(MochitestUtilsMixin):
       self.handleTimeout(timeout, proc, utilityPath, debuggerInfo, browserProcessId)
 
     # record post-test information
-    if not status:
+    if status:
+      log.info("TEST-UNEXPECTED-FAIL | %s | application terminated with exit code %s", self.lastTestSeen, status)
+    else:
       self.lastTestSeen = 'Main app process exited normally'
-    log.info("INFO | runtests.py | exit %s", status)
+
     log.info("INFO | runtests.py | Application ran for: %s", str(datetime.now() - startTime))
 
     # Do a final check for zombie child processes.
@@ -972,6 +983,9 @@ class Mochitest(MochitestUtilsMixin):
     if options.immersiveMode:
       options.browserArgs.extend(('-firefoxpath', options.app))
       options.app = self.immersiveHelperPath
+
+    if options.jsdebugger:
+      options.browserArgs.extend(['-jsdebugger'])
 
     # Remove the leak detection file so it can't "leak" to the tests run.
     # The file is not there if leak logging was not enabled in the application build.

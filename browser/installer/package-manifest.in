@@ -175,19 +175,11 @@
 @BINPATH@/components/dom_apps.xpt
 @BINPATH@/components/dom_base.xpt
 @BINPATH@/components/dom_system.xpt
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/dom_voicemail.xpt
-@BINPATH@/components/dom_wifi.xpt
-@BINPATH@/components/dom_system_gonk.xpt
-@BINPATH@/components/dom_icc.xpt
-@BINPATH@/components/dom_wappush.xpt
-#endif
 #ifdef MOZ_B2G_BT
 @BINPATH@/components/dom_bluetooth.xpt
 #endif
 @BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
-@BINPATH@/components/dom_contacts.xpt
 @BINPATH@/components/dom_alarm.xpt
 @BINPATH@/components/dom_core.xpt
 @BINPATH@/components/dom_css.xpt
@@ -305,6 +297,7 @@
 @BINPATH@/components/shistory.xpt
 @BINPATH@/components/spellchecker.xpt
 @BINPATH@/components/storage.xpt
+@BINPATH@/components/toolkit_finalizationwitness.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
 @BINPATH@/components/toolkitremote.xpt
@@ -361,6 +354,8 @@
 @BINPATH@/browser/components/DownloadsStartup.js
 @BINPATH@/browser/components/DownloadsUI.js
 @BINPATH@/browser/components/BrowserPlaces.manifest
+@BINPATH@/browser/components/devtools-clhandler.manifest
+@BINPATH@/browser/components/devtools-clhandler.js
 @BINPATH@/components/Downloads.manifest
 @BINPATH@/components/DownloadLegacy.js
 @BINPATH@/components/BrowserPageThumbs.manifest
@@ -446,19 +441,6 @@
 @BINPATH@/components/contentSecurityPolicy.js
 @BINPATH@/components/contentAreaDropListener.manifest
 @BINPATH@/components/contentAreaDropListener.js
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/RadioInterfaceLayer.manifest
-@BINPATH@/components/RadioInterfaceLayer.js
-@BINPATH@/components/MmsService.manifest
-@BINPATH@/components/MmsService.js
-@BINPATH@/components/RILContentHelper.js
-@BINPATH@/components/MobileMessageDatabaseService.manifest
-@BINPATH@/components/MobileMessageDatabaseService.js
-@BINPATH@/components/WifiWorker.js
-@BINPATH@/components/WifiWorker.manifest
-@BINPATH@/components/DOMWifiManager.js
-@BINPATH@/components/DOMWifiManager.manifest
-#endif
 @BINPATH@/browser/components/BrowserProfileMigrators.manifest
 @BINPATH@/browser/components/ProfileMigrator.js
 @BINPATH@/browser/components/ChromeProfileMigrator.js
@@ -527,6 +509,8 @@
 @BINPATH@/components/ContactManager.manifest
 @BINPATH@/components/PhoneNumberService.js
 @BINPATH@/components/PhoneNumberService.manifest
+@BINPATH@/components/NotificationStorage.js
+@BINPATH@/components/NotificationStorage.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/Push.js
@@ -536,9 +520,6 @@
 @BINPATH@/components/TCPServerSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
 @BINPATH@/components/TCPSocket.manifest
-
-@BINPATH@/components/AppProtocolHandler.js
-@BINPATH@/components/AppProtocolHandler.manifest
 
 @BINPATH@/components/Payment.js
 @BINPATH@/components/PaymentFlowInfo.js
@@ -592,8 +573,10 @@
 @BINPATH@/browser/chrome/browser.manifest
 @BINPATH@/browser/chrome/pdfjs.manifest
 @BINPATH@/browser/chrome/pdfjs/*
+#ifdef NIGHTLY_BUILD
 @BINPATH@/browser/chrome/shumway.manifest
 @BINPATH@/browser/chrome/shumway/*
+#endif
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/icon.png
 @BINPATH@/chrome/toolkit@JAREXT@
@@ -715,6 +698,11 @@
 @BINPATH@/components/pipnss.xpt
 @BINPATH@/components/pippki.xpt
 
+; For content sandboxing
+#if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
+@BINPATH@/@DLL_PREFIX@sandboxbroker@DLL_SUFFIX@
+#endif
+
 ; for Solaris SPARC
 #ifdef SOLARIS
 bin/libfreebl_32fpu_3.so
@@ -786,6 +774,7 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/webapprt/modules/WebappRT.jsm
 @BINPATH@/webapprt/modules/WebappsHandler.jsm
 @BINPATH@/webapprt/modules/RemoteDebugger.jsm
+@BINPATH@/webapprt/modules/WebRTCHandler.jsm
 #endif
 
 #ifdef MOZ_METRO

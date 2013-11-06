@@ -136,7 +136,7 @@ MaybeCheckEvalFreeVariables(ExclusiveContext *cxArg, HandleScript evalCaller, Ha
     return true;
 }
 
-inline bool
+static inline bool
 CanLazilyParse(ExclusiveContext *cx, const CompileOptions &options)
 {
     return options.canLazilyParse &&
@@ -385,10 +385,10 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
     }
 
     /*
-     * Nowadays the threaded interpreter needs a stop instruction, so we
+     * Nowadays the threaded interpreter needs a last return instruction, so we
      * do have to emit that here.
      */
-    if (Emit1(cx, &bce, JSOP_STOP) < 0)
+    if (Emit1(cx, &bce, JSOP_RETRVAL) < 0)
         return nullptr;
 
     if (!JSScript::fullyInitFromEmitter(cx, script, &bce))
@@ -454,12 +454,17 @@ frontend::CompileLazyFunction(JSContext *cx, LazyScript *lazy, const jschar *cha
         script->directlyInsideEval = true;
     if (lazy->usesArgumentsAndApply())
         script->usesArgumentsAndApply = true;
+    if (lazy->hasBeenCloned())
+        script->hasBeenCloned = true;
 
     BytecodeEmitter bce(/* parent = */ nullptr, &parser, pn->pn_funbox, script, options.forEval,
                         /* evalCaller = */ NullPtr(), /* hasGlobalScope = */ true,
                         options.lineno, BytecodeEmitter::LazyFunction);
     if (!bce.init())
         return false;
+
+    if (lazy->treatAsRunOnce())
+        bce.lazyRunOnceLambda = true;
 
     return EmitFunctionScript(cx, &bce, pn->pn_body);
 }

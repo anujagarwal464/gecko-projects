@@ -110,33 +110,42 @@ JSCompartment::sweepCallsiteClones()
 }
 
 JSFunction *
-js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
+js::ExistingCloneFunctionAtCallsite(JSCompartment *comp, JSFunction *fun,
+                                    JSScript *script, jsbytecode *pc)
 {
-    JS_ASSERT(cx->typeInferenceEnabled());
+    JS_ASSERT(comp->zone()->types.inferenceEnabled);
     JS_ASSERT(fun->nonLazyScript()->shouldCloneAtCallsite);
     JS_ASSERT(!fun->nonLazyScript()->enclosingStaticScope());
     JS_ASSERT(types::UseNewTypeForClone(fun));
 
+    /*
+     * If we start allocating function objects in the nursery, then the callsite
+     * clone table will need a postbarrier.
+     */
+    JS_ASSERT(fun->isTenured());
+
     typedef CallsiteCloneKey Key;
     typedef CallsiteCloneTable Table;
 
-    Table &table = cx->compartment()->callsiteClones;
-    if (!table.initialized() && !table.init())
+    Table &table = comp->callsiteClones;
+    if (!table.initialized())
         return nullptr;
 
-    uint32_t offset = pc - script->code;
-    void* originalScript = script;
-    void* originalFun = fun;
-    SkipRoot skipScript(cx, &originalScript);
-    SkipRoot skipFun(cx, &originalFun);
-
-    Table::AddPtr p = table.lookupForAdd(Key(fun, script, offset));
-    SkipRoot skipHash(cx, &p); /* Prevent the hash from being poisoned. */
+    Table::Ptr p = table.lookup(Key(fun, script, pc - script->code));
     if (p)
         return p->value;
 
+    return nullptr;
+}
+
+JSFunction *
+js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
+{
+    if (JSFunction *clone = ExistingCloneFunctionAtCallsite(cx->compartment(), fun, script, pc))
+        return clone;
+
     RootedObject parent(cx, fun->environment());
-    RootedFunction clone(cx, CloneFunctionObject(cx, fun, parent));
+    JSFunction *clone = CloneFunctionObject(cx, fun, parent);
     if (!clone)
         return nullptr;
 
@@ -148,15 +157,14 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     clone->nonLazyScript()->isCallsiteClone = true;
     clone->nonLazyScript()->setOriginalFunctionObject(fun);
 
-    Key key(fun, script, offset);
+    typedef CallsiteCloneKey Key;
+    typedef CallsiteCloneTable Table;
 
-    /* Recalculate the hash if script or fun have been moved. */
-    if (script != originalScript || fun != originalFun) {
-        p = table.lookupForAdd(key);
-        JS_ASSERT(!p);
-    }
+    Table &table = cx->compartment()->callsiteClones;
+    if (!table.initialized() && !table.init())
+        return nullptr;
 
-    if (!table.relookupOrAdd(p, key, clone.get()))
+    if (!table.putNew(Key(fun, script, pc - script->code), clone))
         return nullptr;
 
     return clone;
@@ -349,6 +357,11 @@ PopulateReportBlame(JSContext *cx, JSErrorReport *report)
 void
 js_ReportOutOfMemory(ThreadSafeContext *cxArg)
 {
+    if (cxArg->isForkJoinSlice()) {
+        cxArg->asForkJoinSlice()->setPendingAbortFatal(ParallelBailoutOutOfMemory);
+        return;
+    }
+
     if (!cxArg->isJSContext())
         return;
     JSContext *cx = cxArg->asJSContext();
@@ -418,7 +431,15 @@ js_ReportOverRecursed(ThreadSafeContext *cx)
 void
 js_ReportAllocationOverflow(ThreadSafeContext *cxArg)
 {
-    if (!cxArg || !cxArg->isJSContext())
+    if (!cxArg)
+        return;
+
+    if (cxArg->isForkJoinSlice()) {
+        cxArg->asForkJoinSlice()->setPendingAbortFatal(ParallelBailoutOutOfMemory);
+        return;
+    }
+
+    if (!cxArg->isJSContext())
         return;
     JSContext *cx = cxArg->asJSContext();
 
@@ -444,18 +465,18 @@ checkReportFlags(JSContext *cx, unsigned *flags)
         JSScript *script = cx->currentScript();
         if (script && script->strict)
             *flags &= ~JSREPORT_WARNING;
-        else if (cx->hasExtraWarningsOption())
+        else if (cx->options().extraWarnings())
             *flags |= JSREPORT_WARNING;
         else
             return true;
     } else if (JSREPORT_IS_STRICT(*flags)) {
         /* Warning/error only when JSOPTION_STRICT is set. */
-        if (!cx->hasExtraWarningsOption())
+        if (!cx->options().extraWarnings())
             return true;
     }
 
     /* Warnings become errors when JSOPTION_WERROR is set. */
-    if (JSREPORT_IS_WARNING(*flags) && cx->hasWErrorOption())
+    if (JSREPORT_IS_WARNING(*flags) && cx->options().werror())
         *flags &= ~JSREPORT_WARNING;
 
     return false;
@@ -1044,7 +1065,7 @@ JSContext::JSContext(JSRuntime *rt)
   : ExclusiveContext(rt, &rt->mainThread, Context_JS),
     throwing(false),
     exception(UndefinedValue()),
-    options_(0),
+    options_(),
     reportGranularity(JS_DEFAULT_JITREPORT_GRANULARITY),
     resolvingList(nullptr),
     generatingError(false),

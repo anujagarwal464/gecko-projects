@@ -149,6 +149,17 @@ public:
   virtual void
   IsScoConnected(BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
+#ifdef MOZ_B2G_RIL
+  virtual void
+  AnswerWaitingCall(BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
+
+  virtual void
+  IgnoreWaitingCall(BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
+
+  virtual void
+  ToggleCalls(BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
+#endif
+
   virtual void
   SendMetaData(const nsAString& aTitle,
                const nsAString& aArtist,

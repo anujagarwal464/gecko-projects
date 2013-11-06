@@ -53,8 +53,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "BrowserNewTabPreloader",
 XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
                                   "resource://pdf.js/PdfJs.jsm");
 
+#ifdef NIGHTLY_BUILD
 XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
                                   "resource://shumway/ShumwayUtils.jsm");
+#endif
 
 XPCOMUtils.defineLazyModuleGetter(this, "webrtcUI",
                                   "resource:///modules/webrtcUI.jsm");
@@ -318,9 +320,8 @@ BrowserGlue.prototype = {
 
         reporter.onInit().then(function record() {
           try {
-            let name = subject.QueryInterface(Ci.nsISearchEngine).name;
-            reporter.getProvider("org.mozilla.searches").recordSearch(name,
-                                                                      "urlbar");
+            let engine = subject.QueryInterface(Ci.nsISearchEngine);
+            reporter.getProvider("org.mozilla.searches").recordSearch(engine, "urlbar");
           } catch (ex) {
             Cu.reportError(ex);
           }
@@ -469,9 +470,12 @@ BrowserGlue.prototype = {
     BrowserNewTabPreloader.init();
     SignInToWebsiteUX.init();
     PdfJs.init();
+#ifdef NIGHTLY_BUILD
     ShumwayUtils.init();
+#endif
     webrtcUI.init();
     AboutHome.init();
+    SessionStore.init();
 
     if (Services.prefs.getBoolPref("browser.tabs.remote"))
       ContentClick.init();
@@ -612,7 +616,6 @@ BrowserGlue.prototype = {
     }
 #endif
 
-    SessionStore.init(aWindow);
     this._trackSlowStartup();
 
     // Offer to reset a user's profile if it hasn't been used for 60 days.
@@ -1284,15 +1287,47 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     const UI_VERSION = 14;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
+
+    let wasCustomizedAndOnAustralis = Services.prefs.prefHasUserValue("browser.uiCustomization.state");
     let currentUIVersion = 0;
     try {
       currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
     } catch(ex) {}
-    if (currentUIVersion >= UI_VERSION)
+    if (!wasCustomizedAndOnAustralis && currentUIVersion >= UI_VERSION)
       return;
 
     this._rdf = Cc["@mozilla.org/rdf/rdf-service;1"].getService(Ci.nsIRDFService);
     this._dataSource = this._rdf.GetDataSource("rdf:local-store");
+
+    // No version check for this as this code should run until we have Australis everywhere:
+    if (wasCustomizedAndOnAustralis) {
+      // This profile's been on australis! If it's missing the back/fwd button
+      // or go/stop/reload button, then put them back:
+      let currentsetResource = this._rdf.GetResource("currentset");
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let currentset = this._getPersist(toolbarResource, currentsetResource);
+      if (currentset.indexOf("unified-back-forward-button") == -1) {
+        currentset = currentset.replace("urlbar-container",
+                                        "unified-back-forward-button,urlbar-container");
+      }
+      if (currentset.indexOf("reload-button") == -1) {
+        currentset = currentset.replace("urlbar-container", "urlbar-container,reload-button");
+      }
+      if (currentset.indexOf("stop-button") == -1) {
+        currentset = currentset.replace("reload-button", "reload-button,stop-button");
+      }
+      this._setPersist(toolbarResource, currentsetResource, currentset);
+      Services.prefs.clearUserPref("browser.uiCustomization.state");
+
+      // If we don't have anything else to do, we can bail here:
+      if (currentUIVersion >= UI_VERSION) {
+        delete this._rdf;
+        delete this._dataSource;
+        return;
+      }
+    }
+
+
     this._dirty = false;
 
     if (currentUIVersion < 2) {
@@ -1420,9 +1455,6 @@ BrowserGlue.prototype = {
         }
         this._setPersist(toolbarResource, currentsetResource, currentset);
       }
-
-      Services.prefs.clearUserPref("browser.download.useToolkitUI");
-      Services.prefs.clearUserPref("browser.library.useNewDownloadsView");
     }
 
 #ifdef XP_WIN

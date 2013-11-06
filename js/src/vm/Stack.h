@@ -27,7 +27,6 @@ class StackFrame;
 class FrameRegs;
 
 class InvokeFrameGuard;
-class FrameGuard;
 class ExecuteFrameGuard;
 class GeneratorFrameGuard;
 
@@ -84,10 +83,37 @@ namespace jit {
     class BaselineFrame;
 }
 
-/* Pointer to either a StackFrame or a baseline JIT frame. */
+/*
+ * Pointer to either a ScriptFrameIter::Data, a StackFrame, or a baseline JIT
+ * frame.
+ *
+ * The Debugger may cache ScriptFrameIter::Data as a bookmark to reconstruct a
+ * ScriptFrameIter without doing a full stack walk.
+ *
+ * There is no way to directly create such an AbstractFramePtr. To do so, the
+ * user must call ScriptFrameIter::copyDataAsAbstractFramePtr().
+ *
+ * ScriptFrameIter::abstractFramePtr() will never return an AbstractFramePtr
+ * that is in fact a ScriptFrameIter::Data.
+ *
+ * To recover a ScriptFrameIter settled at the location pointed to by an
+ * AbstractFramePtr, use the THIS_FRAME_ITER macro in Debugger.cpp. As an
+ * aside, no asScriptFrameIterData() is provided because C++ is stupid and
+ * cannot forward declare inner classes.
+ */
+
 class AbstractFramePtr
 {
+    friend class ScriptFrameIter;
+
     uintptr_t ptr_;
+
+    enum {
+        Tag_ScriptFrameIterData = 0x0,
+        Tag_StackFrame = 0x1,
+        Tag_BaselineFrame = 0x2,
+        TagMask = 0x3
+    };
 
   public:
     AbstractFramePtr()
@@ -95,15 +121,15 @@ class AbstractFramePtr
     {}
 
     AbstractFramePtr(StackFrame *fp)
-        : ptr_(fp ? uintptr_t(fp) | 0x1 : 0)
+      : ptr_(fp ? uintptr_t(fp) | Tag_StackFrame : 0)
     {
-        JS_ASSERT((uintptr_t(fp) & 1) == 0);
+        MOZ_ASSERT(asStackFrame() == fp);
     }
 
     AbstractFramePtr(jit::BaselineFrame *fp)
-      : ptr_(uintptr_t(fp))
+      : ptr_(fp ? uintptr_t(fp) | Tag_BaselineFrame : 0)
     {
-        JS_ASSERT((uintptr_t(fp) & 1) == 0);
+        MOZ_ASSERT(asBaselineFrame() == fp);
     }
 
     explicit AbstractFramePtr(JSAbstractFramePtr frame)
@@ -111,21 +137,30 @@ class AbstractFramePtr
     {
     }
 
+    static AbstractFramePtr FromRaw(void *raw) {
+        AbstractFramePtr frame;
+        frame.ptr_ = uintptr_t(raw);
+        return frame;
+    }
+
+    bool isScriptFrameIterData() const {
+        return !!ptr_ && (ptr_ & TagMask) == Tag_ScriptFrameIterData;
+    }
     bool isStackFrame() const {
-        return ptr_ & 0x1;
+        return ptr_ & Tag_StackFrame;
     }
     StackFrame *asStackFrame() const {
         JS_ASSERT(isStackFrame());
-        StackFrame *res = (StackFrame *)(ptr_ & ~0x1);
+        StackFrame *res = (StackFrame *)(ptr_ & ~TagMask);
         JS_ASSERT(res);
         return res;
     }
     bool isBaselineFrame() const {
-        return ptr_ && !isStackFrame();
+        return ptr_ & Tag_BaselineFrame;
     }
     jit::BaselineFrame *asBaselineFrame() const {
         JS_ASSERT(isBaselineFrame());
-        jit::BaselineFrame *res = (jit::BaselineFrame *)ptr_;
+        jit::BaselineFrame *res = (jit::BaselineFrame *)(ptr_ & ~TagMask);
         JS_ASSERT(res);
         return res;
     }
@@ -172,6 +207,7 @@ class AbstractFramePtr
 
     inline Value *argv() const;
 
+    inline bool hasArgs() const;
     inline bool hasArgsObj() const;
     inline ArgumentsObject &argsObj() const;
     inline void initArgsObj(ArgumentsObject &argsobj) const;
@@ -929,42 +965,6 @@ class StackFrame
     }
 
   public:
-    static size_t offsetOfFlags() {
-        return offsetof(StackFrame, flags_);
-    }
-
-    static size_t offsetOfExec() {
-        return offsetof(StackFrame, exec);
-    }
-
-    static size_t offsetOfNumActual() {
-        return offsetof(StackFrame, u.nactual);
-    }
-
-    static size_t offsetOfScopeChain() {
-        return offsetof(StackFrame, scopeChain_);
-    }
-
-    static size_t offsetOfArgumentsObject() {
-        return offsetof(StackFrame, argsObj_);
-    }
-
-    static ptrdiff_t offsetOfThis(JSFunction *fun) {
-        return fun == nullptr
-               ? -1 * ptrdiff_t(sizeof(Value))
-               : -(fun->nargs + 1) * ptrdiff_t(sizeof(Value));
-    }
-
-    static ptrdiff_t offsetOfFormalArg(JSFunction *fun, unsigned i) {
-        JS_ASSERT(i < fun->nargs);
-        return (-(int)fun->nargs + i) * sizeof(Value);
-    }
-
-    static size_t offsetOfFixed(unsigned i) {
-        return sizeof(StackFrame) + i * sizeof(Value);
-    }
-
-  public:
     void mark(JSTracer *trc);
     void markValues(JSTracer *trc, Value *sp);
 
@@ -1060,7 +1060,6 @@ class FrameRegs
 
 class InterpreterStack
 {
-    friend class FrameGuard;
     friend class InterpreterActivation;
 
     static const size_t DEFAULT_CHUNK_SIZE = 4 * 1024;
@@ -1095,11 +1094,10 @@ class InterpreterStack
     // For execution of eval or global code.
     StackFrame *pushExecuteFrame(JSContext *cx, HandleScript script, const Value &thisv,
                                  HandleObject scopeChain, ExecuteType type,
-                                 AbstractFramePtr evalInFrame, FrameGuard *fg);
+                                 AbstractFramePtr evalInFrame);
 
     // Called to invoke a function.
-    StackFrame *pushInvokeFrame(JSContext *cx, const CallArgs &args, InitialFrameFlags initial,
-                                FrameGuard *fg);
+    StackFrame *pushInvokeFrame(JSContext *cx, const CallArgs &args, InitialFrameFlags initial);
 
     // The interpreter can push light-weight, "inline" frames without entering a
     // new InterpreterActivation or recursively calling Interpret.
@@ -1134,31 +1132,6 @@ class InvokeArgs : public JS::CallArgs
     }
 };
 
-class RunState;
-
-class FrameGuard
-{
-    friend class InterpreterStack;
-    RunState &state_;
-    FrameRegs &regs_;
-    InterpreterStack *stack_;
-    StackFrame *fp_;
-
-    void setPushed(InterpreterStack &stack, StackFrame *fp) {
-        stack_ = &stack;
-        fp_ = fp;
-    }
-
-  public:
-    FrameGuard(RunState &state, FrameRegs &regs);
-    ~FrameGuard();
-
-    StackFrame *fp() const {
-        JS_ASSERT(fp_);
-        return fp_;
-    }
-};
-
 template <>
 struct DefaultHasher<AbstractFramePtr> {
     typedef AbstractFramePtr Lookup;
@@ -1175,6 +1148,7 @@ struct DefaultHasher<AbstractFramePtr> {
 /*****************************************************************************/
 
 class InterpreterActivation;
+class ForkJoinActivation;
 
 namespace jit {
     class JitActivation;
@@ -1193,7 +1167,7 @@ class Activation
     // set).
     size_t savedFrameChain_;
 
-    enum Kind { Interpreter, Jit };
+    enum Kind { Interpreter, Jit, ForkJoin };
     Kind kind_;
 
     inline Activation(JSContext *cx, Kind kind_);
@@ -1216,6 +1190,9 @@ class Activation
     bool isJit() const {
         return kind_ == Jit;
     }
+    bool isForkJoin() const {
+        return kind_ == ForkJoin;
+    }
 
     InterpreterActivation *asInterpreter() const {
         JS_ASSERT(isInterpreter());
@@ -1224,6 +1201,10 @@ class Activation
     jit::JitActivation *asJit() const {
         JS_ASSERT(isJit());
         return (jit::JitActivation *)this;
+    }
+    ForkJoinActivation *asForkJoin() const {
+        JS_ASSERT(isForkJoin());
+        return (ForkJoinActivation *)this;
     }
 
     void saveFrameChain() {
@@ -1242,28 +1223,34 @@ class Activation
     void operator=(const Activation &other) MOZ_DELETE;
 };
 
-// The value to assign to InterpreterActivation's *switchMask_ to enable
-// interrupts. This value is greater than the greatest opcode, and is chosen
-// such that the bitwise or of this value with any opcode is this value.
+// This variable holds a special opcode value which is greater than all normal
+// opcodes, and is chosen such that the bitwise or of this value with any
+// opcode is this value.
 static const jsbytecode EnableInterruptsPseudoOpcode = -1;
 
+static_assert(EnableInterruptsPseudoOpcode >= JSOP_LIMIT,
+              "EnableInterruptsPseudoOpcode must be greater than any opcode");
+static_assert(EnableInterruptsPseudoOpcode == jsbytecode(-1),
+              "EnableInterruptsPseudoOpcode must be the maximum jsbytecode value");
+
 class InterpreterFrameIterator;
+class RunState;
 
 class InterpreterActivation : public Activation
 {
     friend class js::InterpreterFrameIterator;
 
-    StackFrame *const entry_; // Entry frame for this activation.
-    FrameRegs &regs_;
-    jsbytecode *const switchMask_; // For debugger interrupts, see js::Interpret.
+    RunState &state_;
+    FrameRegs regs_;
+    StackFrame *entryFrame_;
+    size_t opMask_; // For debugger interrupts, see js::Interpret.
 
 #ifdef DEBUG
     size_t oldFrameCount_;
 #endif
 
   public:
-    inline InterpreterActivation(JSContext *cx, StackFrame *entry, FrameRegs &regs,
-                                 jsbytecode *const switchMask);
+    inline InterpreterActivation(RunState &state, JSContext *cx, StackFrame *entryFrame);
     inline ~InterpreterActivation();
 
     inline bool pushInlineFrame(const CallArgs &args, HandleScript script,
@@ -1273,8 +1260,14 @@ class InterpreterActivation : public Activation
     StackFrame *current() const {
         return regs_.fp();
     }
-    FrameRegs &regs() const {
+    FrameRegs &regs() {
         return regs_;
+    }
+    StackFrame *entryFrame() const {
+        return entryFrame_;
+    }
+    size_t opMask() const {
+        return opMask_;
     }
 
     // If this js::Interpret frame is running |script|, enable interrupts.
@@ -1283,7 +1276,10 @@ class InterpreterActivation : public Activation
             enableInterruptsUnconditionally();
     }
     void enableInterruptsUnconditionally() {
-        *switchMask_ = EnableInterruptsPseudoOpcode;
+        opMask_ = EnableInterruptsPseudoOpcode;
+    }
+    void clearInterruptsMask() {
+        opMask_ = 0;
     }
 };
 
@@ -1409,8 +1405,8 @@ class InterpreterFrameIterator
     {
         if (activation) {
             fp_ = activation->current();
-            pc_ = activation->regs_.pc;
-            sp_ = activation->regs_.sp;
+            pc_ = activation->regs().pc;
+            sp_ = activation->regs().sp;
         }
     }
 
@@ -1506,11 +1502,13 @@ class ScriptFrameIter
     ScriptFrameIter(JSContext *cx, ContextOption, SavedOption);
     ScriptFrameIter(const ScriptFrameIter &iter);
     ScriptFrameIter(const Data &data);
+    ScriptFrameIter(AbstractFramePtr frame);
 
     bool done() const { return data_.state_ == DONE; }
     ScriptFrameIter &operator++();
 
     Data *copyData() const;
+    AbstractFramePtr copyDataAsAbstractFramePtr() const;
 
     JSCompartment *compartment() const;
 

@@ -63,16 +63,16 @@ static float gFlingStoppedThreshold = 0.01f;
  * On touch end we calculate the average velocity in order to compensate
  * touch/mouse drivers misbehaviour.
  */
-static int gMaxVelocityQueueSize = 5;
+static uint32_t gMaxVelocityQueueSize = 5;
 
 static void ReadAxisPrefs()
 {
-  Preferences::AddFloatVarCache(&gMaxEventAcceleration, "gfx.axis.max_event_acceleration", gMaxEventAcceleration);
-  Preferences::AddFloatVarCache(&gFlingFriction, "gfx.axis.fling_friction", gFlingFriction);
-  Preferences::AddFloatVarCache(&gVelocityThreshold, "gfx.axis.velocity_threshold", gVelocityThreshold);
-  Preferences::AddFloatVarCache(&gAccelerationMultiplier, "gfx.axis.acceleration_multiplier", gAccelerationMultiplier);
-  Preferences::AddFloatVarCache(&gFlingStoppedThreshold, "gfx.axis.fling_stopped_threshold", gFlingStoppedThreshold);
-  Preferences::AddIntVarCache(&gMaxVelocityQueueSize, "gfx.axis.max_velocity_queue_size", gMaxVelocityQueueSize);
+  Preferences::AddFloatVarCache(&gMaxEventAcceleration, "apz.max_event_acceleration", gMaxEventAcceleration);
+  Preferences::AddFloatVarCache(&gFlingFriction, "apz.fling_friction", gFlingFriction);
+  Preferences::AddFloatVarCache(&gVelocityThreshold, "apz.velocity_threshold", gVelocityThreshold);
+  Preferences::AddFloatVarCache(&gAccelerationMultiplier, "apz.acceleration_multiplier", gAccelerationMultiplier);
+  Preferences::AddFloatVarCache(&gFlingStoppedThreshold, "apz.fling_stopped_threshold", gFlingStoppedThreshold);
+  Preferences::AddUintVarCache(&gMaxVelocityQueueSize, "apz.max_velocity_queue_size", gMaxVelocityQueueSize);
 }
 
 class ReadAxisPref MOZ_FINAL : public nsRunnable {
@@ -271,34 +271,25 @@ float Axis::DisplacementWillOverscrollAmount(float aDisplacement) {
   }
 }
 
-Axis::Overscroll Axis::ScaleWillOverscroll(ScreenToScreenScale aScale, float aFocus) {
-  float originAfterScale = (GetOrigin() + aFocus) * aScale.scale - aFocus;
+float Axis::ScaleWillOverscrollAmount(float aScale, float aFocus) {
+  float originAfterScale = (GetOrigin() + aFocus) - (aFocus / aScale);
 
   bool both = ScaleWillOverscrollBothSides(aScale);
-  bool minus = originAfterScale < GetPageStart() * aScale.scale;
-  bool plus = (originAfterScale + GetCompositionLength()) > GetPageEnd() * aScale.scale;
+  bool minus = originAfterScale < GetPageStart();
+  bool plus = (originAfterScale + (GetCompositionLength() / aScale)) > GetPageEnd();
 
   if ((minus && plus) || both) {
-    return OVERSCROLL_BOTH;
+    // If we ever reach here it's a bug in the client code.
+    MOZ_ASSERT(false, "In an OVERSCROLL_BOTH condition in ScaleWillOverscrollAmount");
+    return 0;
   }
   if (minus) {
-    return OVERSCROLL_MINUS;
+    return originAfterScale - GetPageStart();
   }
   if (plus) {
-    return OVERSCROLL_PLUS;
+    return originAfterScale + (GetCompositionLength() / aScale) - GetPageEnd();
   }
-  return OVERSCROLL_NONE;
-}
-
-float Axis::ScaleWillOverscrollAmount(ScreenToScreenScale aScale, float aFocus) {
-  float originAfterScale = (GetOrigin() + aFocus) * aScale.scale - aFocus;
-  switch (ScaleWillOverscroll(aScale, aFocus)) {
-  case OVERSCROLL_MINUS: return originAfterScale - GetPageStart() * aScale.scale;
-  case OVERSCROLL_PLUS: return (originAfterScale + GetCompositionLength()) -
-                               NS_lround(GetPageEnd() * aScale.scale);
-  // Don't handle OVERSCROLL_BOTH. Client code is expected to deal with it.
-  default: return 0;
-  }
+  return 0;
 }
 
 float Axis::GetVelocity() {
@@ -338,15 +329,13 @@ float Axis::GetPageLength() {
   return GetRectLength(pageRect);
 }
 
-bool Axis::ScaleWillOverscrollBothSides(ScreenToScreenScale aScale) {
+bool Axis::ScaleWillOverscrollBothSides(float aScale) {
   const FrameMetrics& metrics = mAsyncPanZoomController->GetFrameMetrics();
 
-  CSSRect cssContentRect = metrics.mScrollableRect;
+  CSSToScreenScale scale(metrics.mZoom.scale * aScale);
+  CSSRect cssCompositionBounds = metrics.mCompositionBounds / scale;
 
-  CSSToScreenScale scale = metrics.mZoom * aScale;
-  CSSIntRect cssCompositionBounds = RoundedIn(metrics.mCompositionBounds / scale);
-
-  return GetRectLength(cssContentRect) < GetRectLength(CSSRect(cssCompositionBounds));
+  return GetRectLength(metrics.mScrollableRect) < GetRectLength(cssCompositionBounds);
 }
 
 AxisX::AxisX(AsyncPanZoomController* aAsyncPanZoomController)

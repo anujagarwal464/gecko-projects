@@ -22,6 +22,7 @@
 
 #ifdef XP_MACOSX
 #include "mozilla/gfx/QuartzSupport.h"
+#include "MacIOSurfaceImage.h"
 #endif
 
 #ifdef XP_WIN
@@ -74,6 +75,12 @@ ImageFactory::CreateImage(const ImageFormat *aFormats,
     img = new SharedTextureImage();
     return img.forget();
   }
+#ifdef XP_MACOSX
+  if (FormatInList(aFormats, aNumFormats, MAC_IOSURFACE)) {
+    img = new MacIOSurfaceImage();
+    return img.forget();
+  }
+#endif
 #ifdef XP_WIN
   if (FormatInList(aFormats, aNumFormats, D3D9_RGB32_TEXTURE)) {
     img = new D3D9SurfaceImage();
@@ -186,9 +193,8 @@ ImageContainer::ClearCurrentImage()
 void
 ImageContainer::SetCurrentImage(Image *aImage)
 {
-  if (IsAsync() && !aImage) {
-    // Let ImageClient to release all TextureClients.
-    ImageBridgeChild::FlushImage(mImageClient, this);
+  if (!aImage) {
+    ClearAllImages();
     return;
   }
 
@@ -197,6 +203,27 @@ ImageContainer::SetCurrentImage(Image *aImage)
     ImageBridgeChild::DispatchImageClientUpdate(mImageClient, this);
   }
   SetCurrentImageInternal(aImage);
+}
+
+ void
+ImageContainer::ClearAllImages()
+{
+  if (IsAsync()) {
+    // Let ImageClient release all TextureClients.
+    ImageBridgeChild::FlushAllImages(mImageClient, this, false);
+    return;
+  }
+  ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+  SetCurrentImageInternal(nullptr);
+}
+
+void
+ImageContainer::ClearAllImagesExceptFront()
+{
+  if (IsAsync()) {
+    // Let ImageClient release all TextureClients except front one.
+    ImageBridgeChild::FlushAllImages(mImageClient, this, true);
+  }
 }
 
 void

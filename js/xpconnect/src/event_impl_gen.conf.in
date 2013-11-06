@@ -17,13 +17,16 @@ simple_events = [
     'PopStateEvent',
     'HashChangeEvent',
     'CloseEvent',
-    'MozContactChangeEvent',
     'DeviceOrientationEvent',
     'MozApplicationEvent',
     'SmartCardEvent',
     'StyleRuleChangeEvent',
     'StyleSheetChangeEvent',
     'StyleSheetApplicableStateChangeEvent',
+#ifdef MOZ_WIDGET_GONK
+    'MozWifiStatusChangeEvent',
+    'MozWifiConnectionInfoEvent',
+#endif
 #ifdef MOZ_B2G_BT
     'BluetoothDeviceEvent',
     'BluetoothStatusChangedEvent',
@@ -31,11 +34,8 @@ simple_events = [
 #ifdef MOZ_B2G_RIL
     'CFStateChangeEvent',
     'DataErrorEvent',
-    'IccCardLockErrorEvent',
     'MozEmergencyCbModeEvent',
     'MozOtaStatusEvent',
-    'MozWifiStatusChangeEvent',
-    'MozWifiConnectionInfoEvent',
     'MozCellBroadcastEvent',
     'MozVoicemailEvent',
     'USSDReceivedEvent',
@@ -74,5 +74,6 @@ xpidl_to_native = [
     ['nsIDOMDocument', 'nsIDocument', 'nsIDocument'],
     ['nsIDOMElement', 'mozilla::dom::Element', 'mozilla::dom::Element'],
     ['nsIDOMCSSStyleSheet', 'nsCSSStyleSheet', 'nsIStyleSheet'],
+    ['nsIDOMWindow', 'nsGlobalWindow', 'nsIDOMEventTarget']
   ]
 

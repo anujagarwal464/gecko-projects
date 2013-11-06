@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "prio.h"
-#include "prtypes.h"
 #include "pldhash.h"
 #include "nsXPCOMStrings.h"
 #include "mozilla/MemoryReporting.h"
@@ -88,6 +87,10 @@ private:
 };
 
 static const char sStartupCacheName[] = "startupCache." SC_WORDSIZE "." SC_ENDIAN;
+#if defined(XP_WIN) && defined(MOZ_METRO)
+static const char sMetroStartupCacheName[] = "metroStartupCache." SC_WORDSIZE "." SC_ENDIAN;
+#endif
+
 static NS_DEFINE_CID(kZipReaderCID, NS_ZIPREADER_CID);
 
 StartupCache*
@@ -202,7 +205,14 @@ StartupCache::Init()
     if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS)
       return rv;
 
-    rv = file->AppendNative(NS_LITERAL_CSTRING(sStartupCacheName));
+#if defined(XP_WIN) && defined(MOZ_METRO)
+    if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
+      rv = file->AppendNative(NS_LITERAL_CSTRING(sMetroStartupCacheName));
+    } else
+#endif
+    {
+      rv = file->AppendNative(NS_LITERAL_CSTRING(sStartupCacheName));
+    }
 
     NS_ENSURE_SUCCESS(rv, rv);
 

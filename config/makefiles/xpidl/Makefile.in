@@ -4,7 +4,6 @@
 
 SUPPRESS_DEFAULT_RULES := 1
 STANDALONE_MAKEFILE := 1
-NO_MAKEFILE_RULE := 1
 
 include $(topsrcdir)/config/rules.mk
 
@@ -56,6 +55,8 @@ xpidl_modules := @xpidl_modules@
 
 linked_xpt_files := $(addprefix $(idl_xpt_dir)/,$(addsuffix .xpt,$(xpidl_modules)))
 depends_files := $(foreach root,$(xpidl_modules),$(idl_deps_dir)/$(root).pp)
+
+GARBAGE += $(linked_xpt_files) $(depends_files)
 
 xpidl:: $(linked_xpt_files)
 

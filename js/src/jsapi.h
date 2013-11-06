@@ -224,6 +224,12 @@ class AutoArrayRooter : private AutoGCRooter {
 template<class T>
 class AutoVectorRooter : protected AutoGCRooter
 {
+    typedef js::Vector<T, 8> VectorImpl;
+    VectorImpl vector;
+
+    /* Prevent overwriting of inline elements in vector. */
+    js::SkipRoot vectorRoot;
+
   public:
     explicit AutoVectorRooter(JSContext *cx, ptrdiff_t tag
                               MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
@@ -240,6 +246,7 @@ class AutoVectorRooter : protected AutoGCRooter
     }
 
     typedef T ElementType;
+    typedef typename VectorImpl::Range Range;
 
     size_t length() const { return vector.length(); }
     bool empty() const { return vector.empty(); }
@@ -299,6 +306,8 @@ class AutoVectorRooter : protected AutoGCRooter
     const T *end() const { return vector.end(); }
     T *end() { return vector.end(); }
 
+    Range all() { return vector.all(); }
+
     const T &back() const { return vector.back(); }
 
     friend void AutoGCRooter::trace(JSTracer *trc);
@@ -309,12 +318,6 @@ class AutoVectorRooter : protected AutoGCRooter
         for (size_t i = oldLength; i < vector.length(); ++i, ++t)
             memset(t, 0, sizeof(T));
     }
-
-    typedef js::Vector<T, 8> VectorImpl;
-    VectorImpl vector;
-
-    /* Prevent overwriting of inline elements in vector. */
-    js::SkipRoot vectorRoot;
 
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
@@ -335,6 +338,7 @@ class AutoHashMapRooter : protected AutoGCRooter
 
     typedef Key KeyType;
     typedef Value ValueType;
+    typedef typename HashMapImpl::Entry Entry;
     typedef typename HashMapImpl::Lookup Lookup;
     typedef typename HashMapImpl::Ptr Ptr;
     typedef typename HashMapImpl::AddPtr AddPtr;
@@ -847,7 +851,7 @@ static JS_ALWAYS_INLINE jsval
 JS_NumberValue(double d)
 {
     int32_t i;
-    d = JS_CANONICALIZE_NAN(d);
+    d = JS::CanonicalizeNaN(d);
     if (mozilla::DoubleIsInt32(d, &i))
         return INT_TO_JSVAL(i);
     return DOUBLE_TO_JSVAL(d);
@@ -988,8 +992,8 @@ JS_GetEmptyString(JSRuntime *rt);
  *   b      bool            Boolean
  *   c      uint16_t/jschar ECMA uint16_t, Unicode char
  *   i      int32_t         ECMA int32_t
+ *   j      int32_t         ECMA int32_t (used to be different)
  *   u      uint32_t        ECMA uint32_t
- *   j      int32_t         Rounded int32_t (coordinate)
  *   d      double          IEEE double
  *   I      double          Integral IEEE double
  *   S      JSString *      Unicode string, accessed by a JSString pointer
@@ -1040,9 +1044,6 @@ JS_ValueToString(JSContext *cx, jsval v);
 
 extern JS_PUBLIC_API(JSString *)
 JS_ValueToSource(JSContext *cx, jsval v);
-
-extern JS_PUBLIC_API(bool)
-JS_ValueToNumber(JSContext *cx, jsval v, double *dp);
 
 namespace js {
 /*
@@ -1106,37 +1107,17 @@ JS_DoubleToInt32(double d);
 extern JS_PUBLIC_API(uint32_t)
 JS_DoubleToUint32(double d);
 
-/*
- * Convert a value to a number, then to an int32_t, according to the ECMA rules
- * for ToInt32.
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToECMAInt32(JSContext *cx, jsval v, int32_t *ip);
-
-/*
- * Convert a value to a number, then to an int64_t, according to the WebIDL
- * rules for ToInt64: http://dev.w3.org/2006/webapi/WebIDL/#es-long-long
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToInt64(JSContext *cx, jsval v, int64_t *ip);
-
-/*
- * Convert a value to a number, then to an uint64_t, according to the WebIDL
- * rules for ToUint64: http://dev.w3.org/2006/webapi/WebIDL/#es-unsigned-long-long
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToUint64(JSContext *cx, jsval v, uint64_t *ip);
 
 namespace js {
-/* DO NOT CALL THIS.  Use JS::ToInt16. */
+/* DO NOT CALL THIS. Use JS::ToUint16. */
 extern JS_PUBLIC_API(bool)
 ToUint16Slow(JSContext *cx, JS::Handle<JS::Value> v, uint16_t *out);
 
-/* DO NOT CALL THIS.  Use JS::ToInt32. */
+/* DO NOT CALL THIS. Use JS::ToInt32. */
 extern JS_PUBLIC_API(bool)
 ToInt32Slow(JSContext *cx, JS::Handle<JS::Value> v, int32_t *out);
 
-/* DO NOT CALL THIS.  Use JS::ToUint32. */
+/* DO NOT CALL THIS. Use JS::ToUint32. */
 extern JS_PUBLIC_API(bool)
 ToUint32Slow(JSContext *cx, JS::Handle<JS::Value> v, uint32_t *out);
 
@@ -1221,27 +1202,6 @@ ToUint64(JSContext *cx, JS::Handle<JS::Value> v, uint64_t *out)
 
 
 } /* namespace JS */
-
-/*
- * Convert a value to a number, then to a uint32_t, according to the ECMA rules
- * for ToUint32.
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToECMAUint32(JSContext *cx, jsval v, uint32_t *ip);
-
-/*
- * Convert a value to a number, then to an int32_t if it fits by rounding to
- * nearest; but failing with an error report if the double is out of range
- * or unordered.
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToInt32(JSContext *cx, jsval v, int32_t *ip);
-
-/*
- * ECMA ToUint16, for mapping a jsval to a Unicode point.
- */
-extern JS_PUBLIC_API(bool)
-JS_ValueToUint16(JSContext *cx, jsval v, uint16_t *ip);
 
 extern JS_PUBLIC_API(bool)
 JS_ValueToBoolean(JSContext *cx, jsval v, bool *bp);
@@ -1467,80 +1427,195 @@ JS_VersionToString(JSVersion version);
 extern JS_PUBLIC_API(JSVersion)
 JS_StringToVersion(const char *string);
 
-/*
- * JS options are orthogonal to version, and may be freely composed with one
- * another as well as with version.
- *
- * JSOPTION_VAROBJFIX is recommended -- see the comments associated with the
- * prototypes for JS_ExecuteScript, JS_EvaluateScript, etc.
- */
-#define JSOPTION_EXTRA_WARNINGS JS_BIT(0)       /* warn on dubious practices */
-#define JSOPTION_WERROR         JS_BIT(1)       /* convert warning to error */
-#define JSOPTION_VAROBJFIX      JS_BIT(2)       /* make JS_EvaluateScript use
-                                                   the last object on its 'obj'
-                                                   param's scope chain as the
-                                                   ECMA 'variables object' */
-#define JSOPTION_PRIVATE_IS_NSISUPPORTS \
-                                JS_BIT(3)       /* context private data points
-                                                   to an nsISupports subclass */
-#define JSOPTION_COMPILE_N_GO   JS_BIT(4)       /* caller of JS_Compile*Script
-                                                   promises to execute compiled
-                                                   script once only; enables
-                                                   compile-time scope chain
-                                                   resolution of consts. */
+namespace JS {
 
-/* JS_BIT(5) is currently unused. */
+class JS_PUBLIC_API(ContextOptions) {
+  public:
+    ContextOptions()
+      : extraWarnings_(false),
+        werror_(false),
+        varObjFix_(false),
+        privateIsNSISupports_(false),
+        compileAndGo_(false),
+        dontReportUncaught_(false),
+        noDefaultCompartmentObject_(false),
+        noScriptRval_(false),
+        baseline_(false),
+        typeInference_(false),
+        strictMode_(false),
+        ion_(false),
+        asmJS_(false)
+    {
+    }
 
-/* JS_BIT(6) is currently unused. */
+    bool extraWarnings() const { return extraWarnings_; }
+    ContextOptions &setExtraWarnings(bool flag) {
+        extraWarnings_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleExtraWarnings() {
+        extraWarnings_ = !extraWarnings_;
+        return *this;
+    }
 
-/* JS_BIT(7) is currently unused. */
+    bool werror() const { return werror_; }
+    ContextOptions &setWerror(bool flag) {
+        werror_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleWerror() {
+        werror_ = !werror_;
+        return *this;
+    }
 
-#define JSOPTION_DONT_REPORT_UNCAUGHT                                   \
-                                JS_BIT(8)       /* When returning from the
-                                                   outermost API call, prevent
-                                                   uncaught exceptions from
-                                                   being converted to error
-                                                   reports */
+    bool varObjFix() const { return varObjFix_; }
+    ContextOptions &setVarObjFix(bool flag) {
+        varObjFix_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleVarObjFix() {
+        varObjFix_ = !varObjFix_;
+        return *this;
+    }
 
-/* JS_BIT(9) is currently unused. */
+    bool privateIsNSISupports() const { return privateIsNSISupports_; }
+    ContextOptions &setPrivateIsNSISupports(bool flag) {
+        privateIsNSISupports_ = flag;
+        return *this;
+    }
+    ContextOptions &togglePrivateIsNSISupports() {
+        privateIsNSISupports_ = !privateIsNSISupports_;
+        return *this;
+    }
 
-/* JS_BIT(10) is currently unused. */
+    bool compileAndGo() const { return compileAndGo_; }
+    ContextOptions &setCompileAndGo(bool flag) {
+        compileAndGo_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleCompileAndGo() {
+        compileAndGo_ = !compileAndGo_;
+        return *this;
+    }
 
-#define JSOPTION_NO_DEFAULT_COMPARTMENT_OBJECT JS_BIT(11)     /* This JSContext does not use a
-                                                                 default compartment object. Such
-                                                                 an object will not be set implicitly,
-                                                                 and attempts to get or set it will
-                                                                 assert. */
+    bool dontReportUncaught() const { return dontReportUncaught_; }
+    ContextOptions &setDontReportUncaught(bool flag) {
+        dontReportUncaught_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleDontReportUncaught() {
+        dontReportUncaught_ = !dontReportUncaught_;
+        return *this;
+    }
 
-#define JSOPTION_NO_SCRIPT_RVAL JS_BIT(12)      /* A promise to the compiler
-                                                   that a null rval out-param
-                                                   will be passed to each call
-                                                   to JS_ExecuteScript. */
+    bool noDefaultCompartmentObject() const { return noDefaultCompartmentObject_; }
+    ContextOptions &setNoDefaultCompartmentObject(bool flag) {
+        noDefaultCompartmentObject_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleNoDefaultCompartmentObject() {
+        noDefaultCompartmentObject_ = !noDefaultCompartmentObject_;
+        return *this;
+    }
 
-/* JS_BIT(13) is currently unused. */
+    bool noScriptRval() const { return noScriptRval_; }
+    ContextOptions &setNoScriptRval(bool flag) {
+        noScriptRval_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleNoScriptRval() {
+        noScriptRval_ = !noScriptRval_;
+        return *this;
+    }
 
-#define JSOPTION_BASELINE       JS_BIT(14)      /* Baseline compiler. */
+    bool baseline() const { return baseline_; }
+    ContextOptions &setBaseline(bool flag) {
+        baseline_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleBaseline() {
+        baseline_ = !baseline_;
+        return *this;
+    }
 
-#define JSOPTION_TYPE_INFERENCE JS_BIT(16)      /* Perform type inference. */
-#define JSOPTION_STRICT_MODE    JS_BIT(17)      /* Provides a way to force
-                                                   strict mode for all code
-                                                   without requiring
-                                                   "use strict" annotations. */
+    bool typeInference() const { return typeInference_; }
+    ContextOptions &setTypeInference(bool flag) {
+        typeInference_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleTypeInference() {
+        typeInference_ = !typeInference_;
+        return *this;
+    }
 
-#define JSOPTION_ION            JS_BIT(18)      /* IonMonkey */
+    bool strictMode() const { return strictMode_; }
+    ContextOptions &setStrictMode(bool flag) {
+        strictMode_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleStrictMode() {
+        strictMode_ = !strictMode_;
+        return *this;
+    }
 
-#define JSOPTION_ASMJS          JS_BIT(19)      /* optimizingasm.js compiler */
+    bool ion() const { return ion_; }
+    ContextOptions &setIon(bool flag) {
+        ion_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleIon() {
+        ion_ = !ion_;
+        return *this;
+    }
 
-#define JSOPTION_MASK           JS_BITMASK(20)
+    bool asmJS() const { return asmJS_; }
+    ContextOptions &setAsmJS(bool flag) {
+        asmJS_ = flag;
+        return *this;
+    }
+    ContextOptions &toggleAsmJS() {
+        asmJS_ = !asmJS_;
+        return *this;
+    }
 
-extern JS_PUBLIC_API(uint32_t)
-JS_GetOptions(JSContext *cx);
+  private:
+    bool extraWarnings_ : 1;
+    bool werror_ : 1;
+    bool varObjFix_ : 1;
+    bool privateIsNSISupports_ : 1;
+    bool compileAndGo_ : 1;
+    bool dontReportUncaught_ : 1;
+    bool noDefaultCompartmentObject_ : 1;
+    bool noScriptRval_ : 1;
+    bool baseline_ : 1;
+    bool typeInference_ : 1;
+    bool strictMode_ : 1;
+    bool ion_ : 1;
+    bool asmJS_ : 1;
+};
 
-extern JS_PUBLIC_API(uint32_t)
-JS_SetOptions(JSContext *cx, uint32_t options);
+JS_PUBLIC_API(ContextOptions &)
+ContextOptionsRef(JSContext *cx);
 
-extern JS_PUBLIC_API(uint32_t)
-JS_ToggleOptions(JSContext *cx, uint32_t options);
+class JS_PUBLIC_API(AutoSaveContextOptions) {
+  public:
+    AutoSaveContextOptions(JSContext *cx)
+      : cx_(cx),
+        oldOptions_(ContextOptionsRef(cx_))
+    {
+    }
+
+    ~AutoSaveContextOptions()
+    {
+        ContextOptionsRef(cx_) = oldOptions_;
+    }
+
+  private:
+    JSContext *cx_;
+    JS::ContextOptions oldOptions_;
+};
+
+} /* namespace JS */
 
 extern JS_PUBLIC_API(void)
 JS_SetJitHardening(JSRuntime *rt, bool enabled);
@@ -1567,23 +1642,16 @@ extern JS_PUBLIC_API(void *)
 JS_GetCompartmentPrivate(JSCompartment *compartment);
 
 extern JS_PUBLIC_API(bool)
-JS_WrapObject(JSContext *cx, JSObject **objp);
+JS_WrapObject(JSContext *cx, JS::MutableHandleObject objp);
 
 extern JS_PUBLIC_API(bool)
-JS_WrapValue(JSContext *cx, jsval *vp);
+JS_WrapValue(JSContext *cx, JS::MutableHandleValue vp);
 
 extern JS_PUBLIC_API(bool)
 JS_WrapId(JSContext *cx, jsid *idp);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_TransplantObject(JSContext *cx, JS::Handle<JSObject*> origobj, JS::Handle<JSObject*> target);
-
-extern JS_FRIEND_API(JSObject *)
-js_TransplantObjectWithWrapper(JSContext *cx,
-                               JS::Handle<JSObject*> origobj,
-                               JS::Handle<JSObject*> origwrapper,
-                               JS::Handle<JSObject*> targetobj,
-                               JS::Handle<JSObject*> targetwrapper);
 
 extern JS_PUBLIC_API(bool)
 JS_RefreshCrossCompartmentWrappers(JSContext *cx, JSObject *ob);
@@ -1911,11 +1979,6 @@ JS_RemoveObjectRootRT(JSRuntime *rt, JSObject **rp);
 
 extern JS_PUBLIC_API(void)
 JS_RemoveScriptRootRT(JSRuntime *rt, JSScript **rp);
-
-/* TODO: remove these APIs */
-
-extern JS_FRIEND_API(void)
-js_RemoveRoot(JSRuntime *rt, void *rp);
 
 /*
  * C-compatible version of the Anchor class. It should be called after the last
@@ -2969,8 +3032,7 @@ JS_NewArrayBufferWithContents(JSContext *cx, void *contents);
  * be used until |*contents| is freed or has its ownership transferred.
  */
 extern JS_PUBLIC_API(bool)
-JS_StealArrayBufferContents(JSContext *cx, JSObject *obj, void **contents,
-                            uint8_t **data);
+JS_StealArrayBufferContents(JSContext *cx, JS::HandleObject obj, void **contents, uint8_t **data);
 
 /*
  * Allocate memory that may be eventually passed to
@@ -3010,15 +3072,6 @@ JS_NewPropertyIterator(JSContext *cx, JSObject *obj);
  */
 extern JS_PUBLIC_API(bool)
 JS_NextProperty(JSContext *cx, JSObject *iterobj, jsid *idp);
-
-/*
- * A JSNative that creates and returns a new iterator that iterates over the
- * elements of |this|, up to |this.length|, in index order. This can be used to
- * make any array-like object iterable. Just give the object an obj.iterator()
- * method using this JSNative as the implementation.
- */
-extern JS_PUBLIC_API(bool)
-JS_ArrayIterator(JSContext *cx, unsigned argc, jsval *vp);
 
 extern JS_PUBLIC_API(bool)
 JS_CheckAccess(JSContext *cx, JSObject *obj, jsid id, JSAccessMode mode,
@@ -3298,7 +3351,7 @@ class JS_PUBLIC_API(CompileOptions)
     }
     CompileOptions &setSourceMapURL(const jschar *s) { sourceMapURL = s; return *this; }
     CompileOptions &setColumn(unsigned c) { column = c; return *this; }
-    CompileOptions &setElement(Handle<JSObject*> e) { element = e; return *this; }
+    CompileOptions &setElement(Handle<JSObject*> e) { element.repoint(e); return *this; }
     CompileOptions &setCompileAndGo(bool cng) { compileAndGo = cng; return *this; }
     CompileOptions &setForEval(bool eval) { forEval = eval; return *this; }
     CompileOptions &setNoScriptRval(bool nsr) { noScriptRval = nsr; return *this; }
@@ -3396,11 +3449,9 @@ JS_DecompileFunctionBody(JSContext *cx, JSFunction *fun, unsigned indent);
  * non-ECMA explicit vs. implicit variable creation.
  *
  * Caveat embedders: unless you already depend on this buggy variables object
- * binding behavior, you should call JS_SetOptions(cx, JSOPTION_VAROBJFIX) or
- * JS_SetOptions(cx, JS_GetOptions(cx) | JSOPTION_VAROBJFIX) -- the latter if
- * someone may have set other options on cx already -- for each context in the
- * application, if you pass parented objects as the obj parameter, or may ever
- * pass such objects in the future.
+ * binding behavior, you should call ContextOptionsRef(cx).setVarObjFix(true)
+ * for each context in the application, if you pass parented objects as the obj
+ * parameter, or may ever pass such objects in the future.
  *
  * Why a runtime option?  The alternative is to add six or so new API entry
  * points with signatures matching the following six, and that doesn't seem
@@ -4252,7 +4303,9 @@ JS_SetParallelIonCompilationEnabled(JSContext *cx, bool enabled);
 
 #define JIT_COMPILER_OPTIONS(Register)                             \
   Register(BASELINE_USECOUNT_TRIGGER, "baseline.usecount.trigger") \
-  Register(ION_USECOUNT_TRIGGER, "ion.usecount.trigger")
+  Register(ION_USECOUNT_TRIGGER, "ion.usecount.trigger")           \
+  Register(ION_ENABLE, "ion.enable")                               \
+  Register(BASELINE_ENABLE, "baseline.enable")
 
 typedef enum JSJitCompilerOption {
 #define JIT_COMPILER_DECLARE(key, str) \
@@ -4312,5 +4365,59 @@ JS_DecodeScript(JSContext *cx, const void *data, uint32_t length,
 extern JS_PUBLIC_API(JSObject *)
 JS_DecodeInterpretedFunction(JSContext *cx, const void *data, uint32_t length,
                              JSPrincipals *principals, JSPrincipals *originPrincipals);
+
+namespace JS {
+
+/*
+ * This callback represents a request by the JS engine to open for reading the
+ * existing cache entry for the given global. If a cache entry exists, the
+ * callback shall return 'true' and return the size, base address and an opaque
+ * file handle as outparams. If the callback returns 'true', the JS engine
+ * guarantees a call to CloseAsmJSCacheEntryForReadOp, passing the same base
+ * address, size and handle.
+ */
+typedef bool
+(* OpenAsmJSCacheEntryForReadOp)(HandleObject global, size_t *size, const uint8_t **memory,
+                                 intptr_t *handle);
+typedef void
+(* CloseAsmJSCacheEntryForReadOp)(HandleObject global, size_t size, const uint8_t *memory,
+                                  intptr_t handle);
+
+/*
+ * This callback represents a request by the JS engine to open for writing a
+ * cache entry of the given size for the given global. If cache entry space is
+ * available, the callback shall return 'true' and return the base address and
+ * an opaque file handle as outparams. If the callback returns 'true', the JS
+ * engine guarantees a call to CloseAsmJSCacheEntryForWriteOp passing the same
+ * base address, size and handle.
+ */
+typedef bool
+(* OpenAsmJSCacheEntryForWriteOp)(HandleObject global, size_t size, uint8_t **memory,
+                                  intptr_t *handle);
+typedef void
+(* CloseAsmJSCacheEntryForWriteOp)(HandleObject global, size_t size, uint8_t *memory,
+                                   intptr_t handle);
+
+// Return the buildId (represented as a sequence of characters) associated with
+// the currently-executing build. If the JS engine is embedded such that a
+// single cache entry can be observed by different compiled versions of the JS
+// engine, it is critical that the buildId shall change for each new build of
+// the JS engine.
+typedef bool
+(* BuildIdOp)(mozilla::Vector<char> *buildId);
+
+struct AsmJSCacheOps
+{
+    OpenAsmJSCacheEntryForReadOp openEntryForRead;
+    CloseAsmJSCacheEntryForReadOp closeEntryForRead;
+    OpenAsmJSCacheEntryForWriteOp openEntryForWrite;
+    CloseAsmJSCacheEntryForWriteOp closeEntryForWrite;
+    BuildIdOp buildId;
+};
+
+extern JS_PUBLIC_API(void)
+SetAsmJSCacheOps(JSRuntime *rt, const AsmJSCacheOps *callbacks);
+
+} /* namespace JS */
 
 #endif /* jsapi_h */

@@ -9,7 +9,6 @@
 
 #include "mozilla/Attributes.h"
 
-#include "builtin/Module.h"
 #include "frontend/TokenStream.h"
 
 namespace js {
@@ -131,10 +130,10 @@ class UpvarCookie
     F(LET) \
     F(SEQ) \
     F(FORIN) \
+    F(FOROF) \
     F(FORHEAD) \
     F(ARGSBODY) \
     F(SPREAD) \
-    F(MODULE) \
     \
     /* Unary operators. */ \
     F(TYPEOF) \
@@ -252,8 +251,8 @@ enum ParseNodeKind
  *                          pn_val: constant value if lookup or table switch
  * PNK_WHILE    binary      pn_left: cond, pn_right: body
  * PNK_DOWHILE  binary      pn_left: body, pn_right: cond
- * PNK_FOR      binary      pn_left: either PNK_FORIN (for-in statement) or
- *                            PNK_FORHEAD (for(;;) statement)
+ * PNK_FOR      binary      pn_left: either PNK_FORIN (for-in statement),
+ *                            PNK_FOROF (for-of) or PNK_FORHEAD (for(;;))
  *                          pn_right: body
  * PNK_FORIN    ternary     pn_kid1:  PNK_VAR to left of 'in', or nullptr
  *                            its pn_xflags may have PNX_POPVAR
@@ -262,6 +261,13 @@ enum ParseNodeKind
  *                            to left of 'in'; if pn_kid1, then this
  *                            is a clone of pn_kid1->pn_head
  *                          pn_kid3: object expr to right of 'in'
+ * PNK_FOROF    ternary     pn_kid1:  PNK_VAR to left of 'of', or nullptr
+ *                            its pn_xflags may have PNX_POPVAR
+ *                            bit set
+ *                          pn_kid2: PNK_NAME or destructuring expr
+ *                            to left of 'of'; if pn_kid1, then this
+ *                            is a clone of pn_kid1->pn_head
+ *                          pn_kid3: expr to right of 'of'
  * PNK_FORHEAD  ternary     pn_kid1:  init expr before first ';' or nullptr
  *                          pn_kid2:  cond expr before second ';' or nullptr
  *                          pn_kid3:  update expr after second ';' or nullptr
@@ -423,7 +429,6 @@ class BreakStatement;
 class ContinueStatement;
 class ConditionalExpression;
 class PropertyAccess;
-class ModuleBox;
 
 class ParseNode
 {
@@ -518,7 +523,6 @@ class ParseNode
             union {
                 JSAtom      *atom;      /* lexical name or label atom */
                 ObjectBox   *objbox;    /* block or regexp object */
-                ModuleBox   *modulebox; /* module object */
                 FunctionBox *funbox;    /* function object */
             };
             union {
@@ -1420,9 +1424,7 @@ class ObjectBox
     JSObject *object;
 
     ObjectBox(JSObject *object, ObjectBox *traceLink);
-    bool isModuleBox() { return object->is<Module>(); }
     bool isFunctionBox() { return object->is<JSFunction>(); }
-    ModuleBox *asModuleBox();
     FunctionBox *asFunctionBox();
     void trace(JSTracer *trc);
 
@@ -1433,7 +1435,6 @@ class ObjectBox
     ObjectBox *emitLink;
 
     ObjectBox(JSFunction *function, ObjectBox *traceLink);
-    ObjectBox(Module *module, ObjectBox *traceLink);
 };
 
 enum ParseReportKind
@@ -1445,6 +1446,19 @@ enum ParseReportKind
 };
 
 enum FunctionSyntaxKind { Expression, Statement, Arrow };
+
+static inline ParseNode *
+FunctionArgsList(ParseNode *fn, unsigned *numFormals)
+{
+    JS_ASSERT(fn->isKind(PNK_FUNCTION));
+    ParseNode *argsBody = fn->pn_body;
+    JS_ASSERT(argsBody->isKind(PNK_ARGSBODY));
+    *numFormals = argsBody->pn_count;
+    if (*numFormals > 0 && argsBody->last()->isKind(PNK_STATEMENTLIST))
+        (*numFormals)--;
+    JS_ASSERT(argsBody->isArity(PN_LIST));
+    return argsBody->pn_head;
+}
 
 } /* namespace frontend */
 } /* namespace js */

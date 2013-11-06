@@ -359,6 +359,10 @@ class MDefinition : public MNode
         return trackedPc_;
     }
 
+    // Return the range of this value, *before* any bailout checks. Contrast
+    // this with the type() method, and the Range constructor which takes an
+    // MDefinition*, which describe the value *after* any bailout checks.
+    //
     // Warning: Range analysis is removing the bit-operations such as '| 0' at
     // the end of the transformations. Using this function to analyse any
     // operands after the truncate phase of the range analysis will lead to
@@ -438,6 +442,12 @@ class MDefinition : public MNode
     MIR_FLAG_LIST(FLAG_ACCESSOR)
 #undef FLAG_ACCESSOR
 
+    // Return the type of this value. This may be speculative, and enforced
+    // dynamically with the use of bailout checks. If all the bailout checks
+    // pass, the value will have this type.
+    //
+    // Unless this is an MUrsh, which, as a special case, may return a value
+    // in (INT32_MAX,UINT32_MAX] even when its type() is MIRType_Int32.
     MIRType type() const {
         return resultType_;
     }
@@ -548,7 +558,8 @@ class MDefinition : public MNode
     bool is##opcode() const {                                               \
         return op() == Op_##opcode;                                         \
     }                                                                       \
-    inline M##opcode *to##opcode();
+    inline M##opcode *to##opcode();                                         \
+    inline const M##opcode *to##opcode() const;
     MIR_OPCODE_LIST(OPCODE_CASTS)
 #   undef OPCODE_CASTS
 
@@ -950,6 +961,7 @@ class MConstant : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(Constant)
     static MConstant *New(const Value &v);
+    static MConstant *NewAsmJS(const Value &v, MIRType type);
 
     const js::Value &value() const {
         return value_;
@@ -1291,6 +1303,11 @@ class MTest
     bool operandMightEmulateUndefined() const {
         return operandMightEmulateUndefined_;
     }
+#ifdef DEBUG
+    bool isConsistentFloat32Use() const {
+        return true;
+    }
+#endif
 };
 
 // Returns from this function to the previous caller.
@@ -1821,6 +1838,13 @@ class MCall
         replaceOperand(NumNonArgumentOperands + index, def);
     }
 
+    static size_t IndexOfThis() {
+        return NumNonArgumentOperands;
+    }
+    static size_t IndexOfArgument(size_t index) {
+        return NumNonArgumentOperands + index + 1; // +1 to skip |this|.
+    }
+
     // For TI-informed monomorphic callsites.
     JSFunction *getSingleTarget() const {
         return target_;
@@ -1977,13 +2001,13 @@ class MGetDynamicName
     }
 };
 
-// Bailout if the input string contains 'arguments'
-class MFilterArguments
+// Bailout if the input string contains 'arguments' or 'eval'.
+class MFilterArgumentsOrEval
   : public MAryInstruction<1>,
     public StringPolicy<0>
 {
   protected:
-    MFilterArguments(MDefinition *string)
+    MFilterArgumentsOrEval(MDefinition *string)
     {
         setOperand(0, string);
         setGuard();
@@ -1991,11 +2015,10 @@ class MFilterArguments
     }
 
   public:
-    INSTRUCTION_HEADER(FilterArguments)
+    INSTRUCTION_HEADER(FilterArgumentsOrEval)
 
-    static MFilterArguments *
-    New(MDefinition *string) {
-        return new MFilterArguments(string);
+    static MFilterArgumentsOrEval *New(MDefinition *string) {
+        return new MFilterArgumentsOrEval(string);
     }
 
     MDefinition *getString() const {
@@ -2094,6 +2117,9 @@ class MCompare
         Compare_DoubleMaybeCoerceLHS,
         Compare_DoubleMaybeCoerceRHS,
 
+        // Float compared to Float
+        Compare_Float32,
+
         // String compared to String
         Compare_String,
 
@@ -2120,12 +2146,14 @@ class MCompare
     CompareType compareType_;
     JSOp jsop_;
     bool operandMightEmulateUndefined_;
+    bool operandsAreNeverNaN_;
 
     MCompare(MDefinition *left, MDefinition *right, JSOp jsop)
       : MBinaryInstruction(left, right),
         compareType_(Compare_Unknown),
         jsop_(jsop),
-        operandMightEmulateUndefined_(true)
+        operandMightEmulateUndefined_(true),
+        operandsAreNeverNaN_(false)
     {
         setResultType(MIRType_Boolean);
         setMovable();
@@ -2149,6 +2177,9 @@ class MCompare
                compareType() == Compare_DoubleMaybeCoerceLHS ||
                compareType() == Compare_DoubleMaybeCoerceRHS;
     }
+    bool isFloat32Comparison() const {
+        return compareType() == Compare_Float32;
+    }
     void setCompareType(CompareType type) {
         compareType_ = type;
     }
@@ -2166,6 +2197,9 @@ class MCompare
     bool operandMightEmulateUndefined() const {
         return operandMightEmulateUndefined_;
     }
+    bool operandsAreNeverNaN() const {
+        return operandsAreNeverNaN_;
+    }
     AliasSet getAliasSet() const {
         // Strict equality is never effectful.
         if (jsop_ == JSOP_STRICTEQ || jsop_ == JSOP_STRICTNE)
@@ -2177,6 +2211,16 @@ class MCompare
     }
 
     void printOpcode(FILE *fp) const;
+    void collectRangeInfo();
+
+    void trySpecializeFloat32();
+    bool isFloat32Commutative() const { return true; }
+
+# ifdef DEBUG
+    bool isConsistentFloat32Use() const {
+        return compareType_ == Compare_Float32;
+    }
+# endif
 
   protected:
     bool congruentTo(MDefinition *ins) const {
@@ -2824,8 +2868,6 @@ class MToFloat32
     }
 
     void computeRange();
-    bool truncate();
-    bool isOperandTruncated(size_t index) const;
 
     bool canConsumeFloat32() const { return true; }
     bool canProduceFloat32() const { return true; }
@@ -2857,10 +2899,40 @@ class MAsmJSUnsignedToDouble
     }
 };
 
+// Converts a uint32 to a float32 (coming from asm.js).
+class MAsmJSUnsignedToFloat32
+  : public MUnaryInstruction
+{
+    MAsmJSUnsignedToFloat32(MDefinition *def)
+      : MUnaryInstruction(def)
+    {
+        setResultType(MIRType_Float32);
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(AsmJSUnsignedToFloat32);
+    static MAsmJSUnsignedToFloat32 *NewAsmJS(MDefinition *def) {
+        return new MAsmJSUnsignedToFloat32(def);
+    }
+
+    MDefinition *foldsTo(bool useValueNumbers);
+    bool congruentTo(MDefinition *ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+
+    bool canProduceFloat32() const { return true; }
+};
+
 // Converts a primitive (either typed or untyped) to an int32. If the input is
 // not primitive at runtime, a bailout occurs. If the input cannot be converted
 // to an int32 without loss (i.e. "5.5" or undefined) then a bailout occurs.
-class MToInt32 : public MUnaryInstruction
+class MToInt32
+  : public MUnaryInstruction,
+    public ToInt32Policy
 {
     bool canBeNegativeZero_;
 
@@ -2889,6 +2961,10 @@ class MToInt32 : public MUnaryInstruction
     }
     void setCanBeNegativeZero(bool negativeZero) {
         canBeNegativeZero_ = negativeZero;
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
     }
 
     bool congruentTo(MDefinition *ins) const {
@@ -2936,6 +3012,11 @@ class MTruncateToInt32 : public MUnaryInstruction
 
     void computeRange();
     bool isOperandTruncated(size_t index) const;
+# ifdef DEBUG
+    bool isConsistentFloat32Use() const {
+        return true;
+    }
+#endif
 };
 
 // Converts any type to a string
@@ -3233,11 +3314,11 @@ class MRsh : public MShiftInstruction
 
 class MUrsh : public MShiftInstruction
 {
-    bool canOverflow_;
+    bool bailoutsDisabled_;
 
     MUrsh(MDefinition *left, MDefinition *right)
       : MShiftInstruction(left, right),
-        canOverflow_(true)
+        bailoutsDisabled_(false)
     { }
 
   public:
@@ -3255,11 +3336,11 @@ class MUrsh : public MShiftInstruction
 
     void infer(BaselineInspector *inspector, jsbytecode *pc);
 
-    bool canOverflow();
-
-    bool fallible() {
-        return canOverflow();
+    bool bailoutsDisabled() const {
+        return bailoutsDisabled_;
     }
+
+    bool fallible();
 
     void computeRange();
 };
@@ -3381,7 +3462,7 @@ class MAbs
       : MUnaryInstruction(num),
         implicitTruncate_(false)
     {
-        JS_ASSERT(type == MIRType_Double || type == MIRType_Int32);
+        JS_ASSERT(IsNumberType(type));
         setResultType(type);
         setMovable();
         specialization_ = type;
@@ -3413,28 +3494,31 @@ class MAbs
         return AliasSet::None();
     }
     void computeRange();
+    bool isFloat32Commutative() const { return true; }
+    void trySpecializeFloat32();
 };
 
 // Inline implementation of Math.sqrt().
 class MSqrt
   : public MUnaryInstruction,
-    public DoublePolicy<0>
+    public FloatingPointPolicy<0>
 {
-    MSqrt(MDefinition *num)
+    MSqrt(MDefinition *num, MIRType type)
       : MUnaryInstruction(num)
     {
-        setResultType(MIRType_Double);
+        setResultType(type);
+        setPolicyType(type);
         setMovable();
     }
 
   public:
     INSTRUCTION_HEADER(Sqrt)
     static MSqrt *New(MDefinition *num) {
-        return new MSqrt(num);
+        return new MSqrt(num, MIRType_Double);
     }
     static MSqrt *NewAsmJS(MDefinition *num, MIRType type) {
-        JS_ASSERT(type == MIRType_Double);
-        return new MSqrt(num);
+        JS_ASSERT(IsFloatingPointType(type));
+        return new MSqrt(num, type);
     }
     MDefinition *num() const {
         return getOperand(0);
@@ -3450,6 +3534,9 @@ class MSqrt
         return AliasSet::None();
     }
     void computeRange();
+
+    bool isFloat32Commutative() const { return true; }
+    void trySpecializeFloat32();
 };
 
 // Inline implementation of atan2 (arctangent of y/x).
@@ -3583,11 +3670,13 @@ class MRandom : public MNullaryInstruction
     bool possiblyCalls() const {
         return true;
     }
+
+    void computeRange();
 };
 
 class MMathFunction
   : public MUnaryInstruction,
-    public DoublePolicy<0>
+    public FloatingPointPolicy<0>
 {
   public:
     enum Function {
@@ -3624,6 +3713,7 @@ class MMathFunction
       : MUnaryInstruction(input), function_(function), cache_(cache)
     {
         setResultType(MIRType_Double);
+        setPolicyType(MIRType_Double);
         setMovable();
     }
 
@@ -3662,6 +3752,14 @@ class MMathFunction
     void printOpcode(FILE *fp) const;
 
     static const char *FunctionName(Function function);
+
+    bool isFloat32Commutative() const {
+        return function_ == Log || function_ == Sin || function_ == Cos
+               || function_ == Exp || function_ == Tan || function_ == ATan
+               || function_ == ASin || function_ == ACos || function_ == Floor;
+    }
+    void trySpecializeFloat32();
+    void computeRange();
 };
 
 class MAdd : public MBinaryArithInstruction
@@ -3972,12 +4070,8 @@ class MConcatPar
   public:
     INSTRUCTION_HEADER(ConcatPar)
 
-    static MConcatPar *New(MDefinition *slice, MDefinition *left, MDefinition *right) {
-        return new MConcatPar(slice, left, right);
-    }
-
     static MConcatPar *New(MDefinition *slice, MConcat *concat) {
-        return New(slice, concat->lhs(), concat->rhs());
+        return new MConcatPar(slice, concat->lhs(), concat->rhs());
     }
 
     MDefinition *forkJoinSlice() const {
@@ -4336,6 +4430,28 @@ class MOsrArgumentsObject : public MUnaryInstruction
     }
 };
 
+// MIR representation of the return value on the OSR StackFrame.
+// The Value is indexed off of OsrFrameReg.
+class MOsrReturnValue : public MUnaryInstruction
+{
+  private:
+    MOsrReturnValue(MOsrEntry *entry)
+      : MUnaryInstruction(entry)
+    {
+        setResultType(MIRType_Value);
+    }
+
+  public:
+    INSTRUCTION_HEADER(OsrReturnValue)
+    static MOsrReturnValue *New(MOsrEntry *entry) {
+        return new MOsrReturnValue(entry);
+    }
+
+    MOsrEntry *entry() {
+        return getOperand(0)->toOsrEntry();
+    }
+};
+
 // Check the current frame for over-recursion past the global stack limit.
 class MCheckOverRecursed : public MNullaryInstruction
 {
@@ -4467,10 +4583,12 @@ class MRegExp : public MNullaryInstruction
 {
     CompilerRoot<RegExpObject *> source_;
     CompilerRootObject prototype_;
+    bool mustClone_;
 
-    MRegExp(RegExpObject *source, JSObject *prototype)
+    MRegExp(RegExpObject *source, JSObject *prototype, bool mustClone)
       : source_(source),
-        prototype_(prototype)
+        prototype_(prototype),
+        mustClone_(mustClone)
     {
         setResultType(MIRType_Object);
 
@@ -4481,10 +4599,13 @@ class MRegExp : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(RegExp)
 
-    static MRegExp *New(RegExpObject *source, JSObject *prototype) {
-        return new MRegExp(source, prototype);
+    static MRegExp *New(RegExpObject *source, JSObject *prototype, bool mustClone) {
+        return new MRegExp(source, prototype, mustClone);
     }
 
+    bool mustClone() const {
+        return mustClone_;
+    }
     RegExpObject *source() const {
         return source_;
     }
@@ -4553,6 +4674,13 @@ struct LambdaFunctionInfo
         singletonType(fun->hasSingletonType()),
         useNewTypeForClone(types::UseNewTypeForClone(fun))
     {}
+
+    LambdaFunctionInfo(const LambdaFunctionInfo &info)
+      : fun((JSFunction *) info.fun), flags(info.flags),
+        scriptOrLazyScript(info.scriptOrLazyScript),
+        singletonType(info.singletonType),
+        useNewTypeForClone(info.useNewTypeForClone)
+    {}
 };
 
 class MLambda
@@ -4593,11 +4721,11 @@ class MLambdaPar
     LambdaFunctionInfo info_;
 
     MLambdaPar(MDefinition *slice, MDefinition *scopeChain, JSFunction *fun,
-               types::TemporaryTypeSet *resultTypes)
-      : MBinaryInstruction(slice, scopeChain), info_(fun)
+               types::TemporaryTypeSet *resultTypes, const LambdaFunctionInfo &info)
+      : MBinaryInstruction(slice, scopeChain), info_(info)
     {
-        JS_ASSERT(!fun->hasSingletonType());
-        JS_ASSERT(!types::UseNewTypeForClone(fun));
+        JS_ASSERT(!info_.singletonType);
+        JS_ASSERT(!info_.useNewTypeForClone);
         setResultType(MIRType_Object);
         setResultTypeSet(resultTypes);
     }
@@ -4605,13 +4733,9 @@ class MLambdaPar
   public:
     INSTRUCTION_HEADER(LambdaPar);
 
-    static MLambdaPar *New(MDefinition *slice, MDefinition *scopeChain, JSFunction *fun) {
-        return new MLambdaPar(slice, scopeChain, fun, MakeSingletonTypeSet(fun));
-    }
-
     static MLambdaPar *New(MDefinition *slice, MLambda *lambda) {
         return new MLambdaPar(slice, lambda->scopeChain(), lambda->info().fun,
-                              lambda->resultTypeSet());
+                              lambda->resultTypeSet(), lambda->info());
     }
 
     MDefinition *forkJoinSlice() const {
@@ -5035,11 +5159,13 @@ class MNot
     public TestPolicy
 {
     bool operandMightEmulateUndefined_;
+    bool operandIsNeverNaN_;
 
   public:
     MNot(MDefinition *input)
       : MUnaryInstruction(input),
-        operandMightEmulateUndefined_(true)
+        operandMightEmulateUndefined_(true),
+        operandIsNeverNaN_(false)
     {
         setResultType(MIRType_Boolean);
         setMovable();
@@ -5065,6 +5191,9 @@ class MNot
     bool operandMightEmulateUndefined() const {
         return operandMightEmulateUndefined_;
     }
+    bool operandIsNeverNaN() const {
+        return operandIsNeverNaN_;
+    }
 
     MDefinition *operand() const {
         return getOperand(0);
@@ -5076,6 +5205,15 @@ class MNot
     TypePolicy *typePolicy() {
         return this;
     }
+    void collectRangeInfo();
+
+    void trySpecializeFloat32();
+    bool isFloat32Commutative() const { return true; }
+#ifdef DEBUG
+    bool isConsistentFloat32Use() const {
+        return true;
+    }
+#endif
 };
 
 // Bailout if index + minimum < 0 or index + maximum >= length. The length used
@@ -5135,6 +5273,7 @@ class MBoundsCheck
     virtual AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    void computeRange();
 };
 
 // Bailout if index < minimum.
@@ -5492,6 +5631,7 @@ class MArrayPush
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
     }
+    void computeRange();
 };
 
 // Array.prototype.concat on two dense arrays.
@@ -6966,7 +7106,7 @@ class MSetPropertyInstruction : public MBinaryInstruction
     {}
 
   public:
-    MDefinition *obj() const {
+    MDefinition *object() const {
         return getOperand(0);
     }
     MDefinition *value() const {
@@ -7126,10 +7266,13 @@ class MSetElementCache
     public MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >
 {
     bool strict_;
+    bool guardHoles_;
 
-    MSetElementCache(MDefinition *obj, MDefinition *index, MDefinition *value, bool strict)
+    MSetElementCache(MDefinition *obj, MDefinition *index, MDefinition *value, bool strict,
+                     bool guardHoles)
       : MSetElementInstruction(obj, index, value),
-        strict_(strict)
+        strict_(strict),
+        guardHoles_(guardHoles)
     {
     }
 
@@ -7137,12 +7280,15 @@ class MSetElementCache
     INSTRUCTION_HEADER(SetElementCache);
 
     static MSetElementCache *New(MDefinition *obj, MDefinition *index, MDefinition *value,
-                                 bool strict) {
-        return new MSetElementCache(obj, index, value, strict);
+                                 bool strict, bool guardHoles) {
+        return new MSetElementCache(obj, index, value, strict, guardHoles);
     }
 
     bool strict() const {
         return strict_;
+    }
+    bool guardHoles() const {
+        return guardHoles_;
     }
 
     TypePolicy *typePolicy() {
@@ -7158,10 +7304,12 @@ class MCallGetProperty
 {
     CompilerRootPropertyName name_;
     bool idempotent_;
+    bool callprop_;
 
-    MCallGetProperty(MDefinition *value, PropertyName *name)
+    MCallGetProperty(MDefinition *value, PropertyName *name, bool callprop)
       : MUnaryInstruction(value), name_(name),
-        idempotent_(false)
+        idempotent_(false),
+        callprop_(callprop)
     {
         setResultType(MIRType_Value);
     }
@@ -7169,14 +7317,17 @@ class MCallGetProperty
   public:
     INSTRUCTION_HEADER(CallGetProperty)
 
-    static MCallGetProperty *New(MDefinition *value, PropertyName *name) {
-        return new MCallGetProperty(value, name);
+    static MCallGetProperty *New(MDefinition *value, PropertyName *name, bool callprop) {
+        return new MCallGetProperty(value, name, callprop);
     }
     MDefinition *value() const {
         return getOperand(0);
     }
     PropertyName *name() const {
         return name_;
+    }
+    bool callprop() const {
+        return callprop_;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -7461,13 +7612,14 @@ class MStringLength
 // Inlined version of Math.floor().
 class MFloor
   : public MUnaryInstruction,
-    public DoublePolicy<0>
+    public FloatingPointPolicy<0>
 {
   public:
     MFloor(MDefinition *num)
       : MUnaryInstruction(num)
     {
         setResultType(MIRType_Int32);
+        setPolicyType(MIRType_Double);
         setMovable();
     }
 
@@ -7482,6 +7634,15 @@ class MFloor
     TypePolicy *typePolicy() {
         return this;
     }
+    bool isFloat32Commutative() const {
+        return true;
+    }
+    void trySpecializeFloat32();
+#ifdef DEBUG
+    bool isConsistentFloat32Use() const {
+        return true;
+    }
+#endif
 };
 
 // Inlined version of Math.round().
@@ -7916,11 +8077,6 @@ class MRestPar
   public:
     INSTRUCTION_HEADER(RestPar);
 
-    static MRestPar *New(MDefinition *slice, MDefinition *numActuals, unsigned numFormals,
-                         JSObject *templateObject) {
-        return new MRestPar(slice, numActuals, numFormals, templateObject,
-                            MakeSingletonTypeSet(templateObject));
-    }
     static MRestPar *New(MDefinition *slice, MRest *rest) {
         return new MRestPar(slice, rest->numActuals(), rest->numFormals(),
                             rest->templateObject(), rest->resultTypeSet());
@@ -8146,7 +8302,7 @@ class MNewDeclEnvObject : public MNullaryInstruction
 {
     CompilerRootObject templateObj_;
 
-    MNewDeclEnvObject(HandleObject templateObj)
+    MNewDeclEnvObject(JSObject *templateObj)
       : MNullaryInstruction(),
         templateObj_(templateObj)
     {
@@ -8156,7 +8312,7 @@ class MNewDeclEnvObject : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(NewDeclEnvObject);
 
-    static MNewDeclEnvObject *New(HandleObject templateObj) {
+    static MNewDeclEnvObject *New(JSObject *templateObj) {
         return new MNewDeclEnvObject(templateObj);
     }
 
@@ -8173,7 +8329,7 @@ class MNewCallObject : public MUnaryInstruction
     CompilerRootObject templateObj_;
     bool needsSingletonType_;
 
-    MNewCallObject(HandleObject templateObj, bool needsSingletonType, MDefinition *slots)
+    MNewCallObject(JSObject *templateObj, bool needsSingletonType, MDefinition *slots)
       : MUnaryInstruction(slots),
         templateObj_(templateObj),
         needsSingletonType_(needsSingletonType)
@@ -8184,7 +8340,7 @@ class MNewCallObject : public MUnaryInstruction
   public:
     INSTRUCTION_HEADER(NewCallObject)
 
-    static MNewCallObject *New(HandleObject templateObj, bool needsSingletonType, MDefinition *slots) {
+    static MNewCallObject *New(JSObject *templateObj, bool needsSingletonType, MDefinition *slots) {
         return new MNewCallObject(templateObj, needsSingletonType, slots);
     }
 
@@ -8216,14 +8372,8 @@ class MNewCallObjectPar : public MBinaryInstruction
   public:
     INSTRUCTION_HEADER(NewCallObjectPar);
 
-    static MNewCallObjectPar *New(MDefinition *slice, JSObject *templateObj,
-                                  MDefinition *slots)
-    {
-        return new MNewCallObjectPar(slice, templateObj, slots);
-    }
-
     static MNewCallObjectPar *New(MDefinition *slice, MNewCallObject *callObj) {
-        return New(slice, callObj->templateObject(), callObj->slots());
+        return new MNewCallObjectPar(slice, callObj->templateObject(), callObj->slots());
     }
 
     MDefinition *forkJoinSlice() const {
@@ -8633,8 +8783,7 @@ class MAsmJSLoadHeap : public MUnaryInstruction, public MAsmJSHeapAccess
     MAsmJSLoadHeap(ArrayBufferView::ViewType vt, MDefinition *ptr)
       : MUnaryInstruction(ptr), MAsmJSHeapAccess(vt, false)
     {
-        // Disabled due to errors, see bug 919958
-        // setMovable();
+        setMovable();
         if (vt == ArrayBufferView::TYPE_FLOAT32 || vt == ArrayBufferView::TYPE_FLOAT64)
             setResultType(MIRType_Double);
         else
@@ -8949,6 +9098,11 @@ class MAsmJSCheckOverRecursed : public MNullaryInstruction
     {                                                                       \
         JS_ASSERT(is##opcode());                                            \
         return static_cast<M##opcode *>(this);                              \
+    }                                                                       \
+    const M##opcode *MDefinition::to##opcode() const                        \
+    {                                                                       \
+        JS_ASSERT(is##opcode());                                            \
+        return static_cast<const M##opcode *>(this);                        \
     }
 MIR_OPCODE_LIST(OPCODE_CASTS)
 #undef OPCODE_CASTS
@@ -8993,19 +9147,21 @@ bool ElementAccessIsPacked(types::CompilerConstraintList *constraints, MDefiniti
 bool ElementAccessHasExtraIndexedProperty(types::CompilerConstraintList *constraints,
                                           MDefinition *obj);
 MIRType DenseNativeElementType(types::CompilerConstraintList *constraints, MDefinition *obj);
-bool PropertyReadNeedsTypeBarrier(JSContext *cx, types::CompilerConstraintList *constraints,
+bool PropertyReadNeedsTypeBarrier(JSContext *propertycx,
+                                  types::CompilerConstraintList *constraints,
                                   types::TypeObjectKey *object, PropertyName *name,
-                                  types::StackTypeSet *observed, bool updateObserved);
-bool PropertyReadNeedsTypeBarrier(JSContext *cx, types::CompilerConstraintList *constraints,
+                                  types::TemporaryTypeSet *observed, bool updateObserved);
+bool PropertyReadNeedsTypeBarrier(JSContext *propertycx,
+                                  types::CompilerConstraintList *constraints,
                                   MDefinition *obj, PropertyName *name,
-                                  types::StackTypeSet *observed);
-bool PropertyReadOnPrototypeNeedsTypeBarrier(JSContext *cx, types::CompilerConstraintList *constraints,
+                                  types::TemporaryTypeSet *observed);
+bool PropertyReadOnPrototypeNeedsTypeBarrier(types::CompilerConstraintList *constraints,
                                              MDefinition *obj, PropertyName *name,
                                              types::TemporaryTypeSet *observed);
 bool PropertyReadIsIdempotent(types::CompilerConstraintList *constraints,
                               MDefinition *obj, PropertyName *name);
-bool AddObjectsForPropertyRead(JSContext *cx, MDefinition *obj, PropertyName *name,
-                               types::StackTypeSet *observed);
+bool AddObjectsForPropertyRead(MDefinition *obj, PropertyName *name,
+                               types::TemporaryTypeSet *observed);
 bool PropertyWriteNeedsTypeBarrier(types::CompilerConstraintList *constraints,
                                    MBasicBlock *current, MDefinition **pobj,
                                    PropertyName *name, MDefinition **pvalue,

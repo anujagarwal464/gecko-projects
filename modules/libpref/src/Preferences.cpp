@@ -15,6 +15,7 @@
 
 #include "mozilla/Preferences.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "nsDataHashtable.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsICategoryManager.h"
 #include "nsCategoryManagerUtils.h"
@@ -207,28 +208,22 @@ Preferences::SizeOfIncludingThisAndOtherStuff(mozilla::MallocSizeOf aMallocSizeO
   return n;
 }
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf)
-
-class PreferencesReporter MOZ_FINAL : public nsIMemoryReporter
+class PreferenceServiceReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIMEMORYREPORTER
+  PreferenceServiceReporter()
+    : MemoryMultiReporter("preference-service")
+  {}
+
+  NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCallback,
+                            nsISupports* aData);
+
 protected:
   static const uint32_t kSuspectReferentCount = 1000;
   static PLDHashOperator CountReferents(PrefCallback* aKey,
                                         nsAutoPtr<PrefCallback>& aCallback,
                                         void* aClosure);
 };
-
-NS_IMPL_ISUPPORTS1(PreferencesReporter, nsIMemoryReporter)
-
-NS_IMETHODIMP
-PreferencesReporter::GetName(nsACString& aName)
-{
-  aName.AssignLiteral("preference-service");
-  return NS_OK;
-}
 
 struct PreferencesReferentCount {
   PreferencesReferentCount() : numStrong(0), numWeakAlive(0), numWeakDead(0) {}
@@ -241,9 +236,9 @@ struct PreferencesReferentCount {
 };
 
 PLDHashOperator
-PreferencesReporter::CountReferents(PrefCallback* aKey,
-                                    nsAutoPtr<PrefCallback>& aCallback,
-                                    void* aClosure)
+PreferenceServiceReporter::CountReferents(PrefCallback* aKey,
+                                          nsAutoPtr<PrefCallback>& aCallback,
+                                          void* aClosure)
 {
   PreferencesReferentCount* referentCount =
     static_cast<PreferencesReferentCount*>(aClosure);
@@ -278,8 +273,8 @@ PreferencesReporter::CountReferents(PrefCallback* aKey,
 }
 
 NS_IMETHODIMP
-PreferencesReporter::CollectReports(nsIMemoryReporterCallback* aCb,
-                                    nsISupports* aClosure)
+PreferenceServiceReporter::CollectReports(nsIMemoryReporterCallback* aCb,
+                                          nsISupports* aClosure)
 {
 #define REPORT(_path, _kind, _units, _amount, _desc)                          \
     do {                                                                      \
@@ -292,7 +287,7 @@ PreferencesReporter::CollectReports(nsIMemoryReporterCallback* aCb,
 
   REPORT(NS_LITERAL_CSTRING("explicit/preferences"),
          nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES,
-         Preferences::SizeOfIncludingThisAndOtherStuff(PreferencesMallocSizeOf),
+         Preferences::SizeOfIncludingThisAndOtherStuff(MallocSizeOf),
          "Memory used by the preferences system.");
 
   nsPrefBranch* rootBranch =
@@ -346,7 +341,7 @@ class AddPreferencesMemoryReporterRunnable : public nsRunnable
 {
   NS_IMETHOD Run()
   {
-    return NS_RegisterMemoryReporter(new PreferencesReporter());
+    return NS_RegisterMemoryReporter(new PreferenceServiceReporter());
   }
 };
 } // anonymous namespace
@@ -411,7 +406,7 @@ Preferences::Shutdown()
   if (!sShutdown) {
     sShutdown = true; // Don't create the singleton instance after here.
 
-    // Don't set NULL to sPreferences here.  The instance may be grabbed by
+    // Don't set sPreferences to nullptr here.  The instance may be grabbed by
     // other modules.  The utility methods of Preferences should be available
     // until the singleton instance actually released.
     if (sPreferences) {
@@ -658,7 +653,7 @@ ReadExtensionPrefs(nsIFile *aFile)
     uint32_t read;
 
     PrefParseState ps;
-    PREF_InitParseState(&ps, PREF_ReaderCallback, NULL);
+    PREF_InitParseState(&ps, PREF_ReaderCallback, nullptr);
     while (NS_SUCCEEDED(rv = stream->Available(&avail)) && avail) {
       rv = stream->Read(buffer, 4096, &read);
       if (NS_FAILED(rv)) {
@@ -751,7 +746,15 @@ Preferences::UseDefaultPrefFile()
   nsresult rv;
   nsCOMPtr<nsIFile> aFile;
 
-  rv = NS_GetSpecialDirectory(NS_APP_PREFS_50_FILE, getter_AddRefs(aFile));
+#if defined(XP_WIN) && defined(MOZ_METRO)
+  if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
+    rv = NS_GetSpecialDirectory(NS_METRO_APP_PREFS_50_FILE, getter_AddRefs(aFile));
+  } else
+#endif
+  {
+    rv = NS_GetSpecialDirectory(NS_APP_PREFS_50_FILE, getter_AddRefs(aFile));
+  }
+
   if (NS_SUCCEEDED(rv)) {
     rv = ReadAndOwnUserPrefFile(aFile);
     // Most likely cause of failure here is that the file didn't
@@ -915,7 +918,7 @@ Preferences::WritePrefFile(nsIFile* aFile)
   PL_DHashTableEnumerate(&gHashTable, pref_savePref, &saveArgs);
     
   /* Sort the preferences to make a readable file on disk */
-  NS_QuickSort(valueArray, gHashTable.entryCount, sizeof(char *), pref_CompareStrings, NULL);
+  NS_QuickSort(valueArray, gHashTable.entryCount, sizeof(char *), pref_CompareStrings, nullptr);
   
   // write out the file header
   outStream->Write(outHeader, sizeof(outHeader) - 1, &writeAmount);
@@ -965,7 +968,7 @@ static nsresult openPrefFile(nsIFile* aFile)
     return NS_ERROR_OUT_OF_MEMORY;
 
   PrefParseState ps;
-  PREF_InitParseState(&ps, PREF_ReaderCallback, NULL);
+  PREF_InitParseState(&ps, PREF_ReaderCallback, nullptr);
 
   // Read is not guaranteed to return a buf the size of fileSize,
   // but usually will.
@@ -1140,7 +1143,7 @@ static nsresult pref_ReadPrefFromJar(nsZipArchive* jarReader, const char *name)
   NS_ENSURE_TRUE(manifest.Buffer(), NS_ERROR_NOT_AVAILABLE);
 
   PrefParseState ps;
-  PREF_InitParseState(&ps, PREF_ReaderCallback, NULL);
+  PREF_InitParseState(&ps, PREF_ReaderCallback, nullptr);
   PREF_ParseBuf(&ps, manifest, manifest.Length());
   PREF_FinalizeParseState(&ps);
 

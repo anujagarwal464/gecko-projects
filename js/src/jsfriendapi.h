@@ -173,8 +173,22 @@ extern JS_FRIEND_API(void)
 js_DumpChars(const jschar *s, size_t n);
 #endif
 
+/*
+ * Copies all own properties from |obj| to |target|. |obj| must be a "native"
+ * object (that is to say, normal-ish - not an Array or a Proxy).
+ *
+ * On entry, |cx| must be in the compartment of |target|.
+ */
 extern JS_FRIEND_API(bool)
 JS_CopyPropertiesFrom(JSContext *cx, JSObject *target, JSObject *obj);
+
+/*
+ * Single-property version of the above. This function asserts that an |own|
+ * property of the given name exists on |obj|.
+ */
+extern JS_FRIEND_API(bool)
+JS_CopyPropertyFrom(JSContext *cx, JS::HandleId id, JS::HandleObject target,
+                    JS::HandleObject obj);
 
 extern JS_FRIEND_API(bool)
 JS_WrapPropertyDescriptor(JSContext *cx, JS::MutableHandle<JSPropertyDescriptor> desc);
@@ -240,24 +254,6 @@ SetSourceHook(JSRuntime *rt, SourceHook *hook);
 /* Remove |rt|'s source hook, and return it. The caller now owns the hook. */
 extern JS_FRIEND_API(SourceHook *)
 ForgetSourceHook(JSRuntime *rt);
-
-inline JSRuntime *
-GetRuntime(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->runtime_;
-}
-
-inline JSCompartment *
-GetContextCompartment(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->compartment_;
-}
-
-inline JS::Zone *
-GetContextZone(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->zone_;
-}
 
 extern JS_FRIEND_API(JS::Zone *)
 GetCompartmentZone(JSCompartment *comp);
@@ -483,6 +479,16 @@ GetObjectParentMaybeScope(JSObject *obj);
 JS_FRIEND_API(JSObject *)
 GetGlobalForObjectCrossCompartment(JSObject *obj);
 
+JS_FRIEND_API(void)
+AssertSameCompartment(JSContext *cx, JSObject *obj);
+
+#ifdef DEBUG
+JS_FRIEND_API(void)
+AssertSameCompartment(JSObject *objA, JSObject *objB);
+#else
+inline void AssertSameCompartment(JSObject *objA, JSObject *objB) {}
+#endif
+
 // For legacy consumers only. This whole concept is going away soon.
 JS_FRIEND_API(JSObject *)
 DefaultObjectForContextOrNull(JSContext *cx);
@@ -639,7 +645,6 @@ ErrorFromException(JS::Value val);
 #define JSITER_KEYVALUE   0x4   /* destructuring for-in wants [key, value] */
 #define JSITER_OWNONLY    0x8   /* iterate over obj's own properties only */
 #define JSITER_HIDDEN     0x10  /* also enumerate non-enumerable properties */
-#define JSITER_FOR_OF     0x20  /* harmony for-of loop */
 
 JS_FRIEND_API(bool)
 RunningWithTrustedPrincipals(JSContext *cx);
@@ -737,8 +742,7 @@ extern JS_FRIEND_API(bool)
 IsContextRunningJS(JSContext *cx);
 
 typedef bool
-(* DOMInstanceClassMatchesProto)(JS::HandleObject protoObject, uint32_t protoID,
-                                 uint32_t depth);
+(* DOMInstanceClassMatchesProto)(JSObject *protoObject, uint32_t protoID, uint32_t depth);
 struct JSDOMCallbacks {
     DOMInstanceClassMatchesProto instanceClassMatchesProto;
 };
@@ -1242,6 +1246,12 @@ extern JS_FRIEND_API(JSObject *)
 JS_GetArrayBufferViewBuffer(JSObject *obj);
 
 /*
+ * Set an ArrayBuffer's length to 0 and neuter all of its views.
+ */
+extern JS_FRIEND_API(bool)
+JS_NeuterArrayBuffer(JSContext *cx, JS::HandleObject obj);
+
+/*
  * Check whether obj supports JS_GetDataView* APIs.
  */
 JS_FRIEND_API(bool)
@@ -1493,7 +1503,7 @@ JSID_TO_ATOM(jsid id)
     return (JSAtom *)JSID_TO_STRING(id);
 }
 
-JS_STATIC_ASSERT(sizeof(jsid) == JS_BYTES_PER_WORD);
+JS_STATIC_ASSERT(sizeof(jsid) == sizeof(void*));
 
 namespace js {
 

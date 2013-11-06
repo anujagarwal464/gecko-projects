@@ -383,3 +383,93 @@ BaselineInspector::hasSeenDoubleResult(jsbytecode *pc)
 
     return false;
 }
+
+JSObject *
+BaselineInspector::getTemplateObject(jsbytecode *pc)
+{
+    if (!hasBaselineScript())
+        return nullptr;
+
+    const ICEntry &entry = icEntryFromPC(pc);
+    for (ICStub *stub = entry.firstStub(); stub; stub = stub->next()) {
+        switch (stub->kind()) {
+          case ICStub::NewArray_Fallback:
+            return stub->toNewArray_Fallback()->templateObject();
+          case ICStub::NewObject_Fallback:
+            return stub->toNewObject_Fallback()->templateObject();
+          case ICStub::Rest_Fallback:
+            return stub->toRest_Fallback()->templateObject();
+          case ICStub::Call_Scripted:
+            if (JSObject *obj = stub->toCall_Scripted()->templateObject())
+                return obj;
+            break;
+          default:
+            break;
+        }
+    }
+
+    return nullptr;
+}
+
+JSObject *
+BaselineInspector::getTemplateObjectForNative(jsbytecode *pc, Native native)
+{
+    if (!hasBaselineScript())
+        return nullptr;
+
+    const ICEntry &entry = icEntryFromPC(pc);
+    for (ICStub *stub = entry.firstStub(); stub; stub = stub->next()) {
+        if (stub->isCall_Native() && stub->toCall_Native()->callee()->native() == native)
+            return stub->toCall_Native()->templateObject();
+    }
+
+    return nullptr;
+}
+
+DeclEnvObject *
+BaselineInspector::templateDeclEnvObject()
+{
+    JSObject *res = &templateCallObject()->as<ScopeObject>().enclosingScope();
+    JS_ASSERT(res);
+
+    return &res->as<DeclEnvObject>();
+}
+
+CallObject *
+BaselineInspector::templateCallObject()
+{
+    JSObject *res = baselineScript()->templateScope();
+    JS_ASSERT(res);
+
+    return &res->as<CallObject>();
+}
+
+JSObject *
+BaselineInspector::commonGetPropFunction(jsbytecode *pc, Shape **lastProperty, JSFunction **commonGetter)
+{
+    const ICEntry &entry = icEntryFromPC(pc);
+    for (ICStub *stub = entry.firstStub(); stub; stub = stub->next()) {
+        if (stub->isGetProp_CallScripted() || stub->isGetProp_CallNative()) {
+            ICGetPropCallGetter *nstub = static_cast<ICGetPropCallGetter *>(stub);
+            *lastProperty = nstub->holderShape();
+            *commonGetter = nstub->getter();
+            return nstub->holder();
+        }
+    }
+    return nullptr;
+}
+
+JSObject *
+BaselineInspector::commonSetPropFunction(jsbytecode *pc, Shape **lastProperty, JSFunction **commonSetter)
+{
+    const ICEntry &entry = icEntryFromPC(pc);
+    for (ICStub *stub = entry.firstStub(); stub; stub = stub->next()) {
+        if (stub->isSetProp_CallScripted() || stub->isSetProp_CallNative()) {
+            ICSetPropCallSetter *nstub = static_cast<ICSetPropCallSetter *>(stub);
+            *lastProperty = nstub->holderShape();
+            *commonSetter = nstub->setter();
+            return nstub->holder();
+        }
+    }
+    return nullptr;
+}

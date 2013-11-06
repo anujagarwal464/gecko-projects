@@ -7,10 +7,6 @@
 
 MOZILLA_INTERNAL_API = 1
 
-ifeq (Darwin, $(OS_ARCH))
-CSRCS = mach_override.c
-endif
-
 SHARED_LIBRARY_LIBS = \
 		$(DEPTH)/chrome/src/$(LIB_PREFIX)chrome_s.$(LIB_SUFFIX) \
 		../ds/$(LIB_PREFIX)xpcomds_s.$(LIB_SUFFIX) \
@@ -46,7 +42,6 @@ LOCAL_INCLUDES	= \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk
-include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
 DEFINES		+= \
 		-D_IMPL_NS_STRINGAPI \
