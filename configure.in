@@ -71,7 +71,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.8.0.2
+SQLITE_VERSION=3.8.1
 
 MSMANIFEST_TOOL=
 
@@ -223,6 +223,7 @@ if test -n "$gonkdir" ; then
         GONK_INCLUDES="-I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/frameworks/base/include -I$gonkdir/frameworks/base/services/camera -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib -I$gonkdir/dalvik/libnativehelper/include/nativehelper"
         MOZ_B2G_BT=1
         MOZ_B2G_BT_BLUEZ=1
+        MOZ_NFC=1
         MOZ_B2G_CAMERA=1
         MOZ_OMX_DECODER=1
         AC_SUBST(MOZ_OMX_DECODER)
@@ -239,6 +240,8 @@ if test -n "$gonkdir" ; then
             MOZ_B2G_BT_BLUEDROID=1
         fi
 
+        MOZ_RTSP=1
+        MOZ_NFC=1
         MOZ_B2G_CAMERA=1
         MOZ_OMX_DECODER=1
         AC_SUBST(MOZ_OMX_DECODER)
@@ -3094,15 +3097,23 @@ fi
 AC_CACHE_CHECK(
     [for res_ninit()],
     ac_cv_func_res_ninit,
-    [AC_TRY_LINK([
-        #ifdef linux
-        #define _BSD_SOURCE 1
-        #endif
-        #include <resolv.h>
-        ],
-        [int foo = res_ninit(&_res);],
-        [ac_cv_func_res_ninit=yes],
-        [ac_cv_func_res_ninit=no])
+    [if test "$OS_TARGET" = NetBSD -o "$OS_TARGET" = OpenBSD; then
+        dnl no need for res_ninit() on NetBSD and OpenBSD
+        ac_cv_func_res_ninit=no
+     else
+        AC_TRY_LINK([
+            #ifdef linux
+            #define _BSD_SOURCE 1
+            #endif
+            #include <sys/types.h>
+            #include <netinet/in.h>
+            #include <arpa/nameser.h>
+            #include <resolv.h>
+            ],
+            [int foo = res_ninit(&_res);],
+            [ac_cv_func_res_ninit=yes],
+            [ac_cv_func_res_ninit=no])
+     fi
     ])
 
 if test "$ac_cv_func_res_ninit" = "yes"; then
@@ -3668,7 +3679,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.15.3, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.15.4, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSS"; then
@@ -3931,6 +3942,7 @@ MOZ_OPUS=1
 MOZ_WEBM=1
 MOZ_DIRECTSHOW=
 MOZ_WMF=
+MOZ_FMP4=
 MOZ_WEBRTC=1
 MOZ_PEERCONNECTION=
 MOZ_SRTP=
@@ -5265,6 +5277,26 @@ if test -n "$MOZ_WMF"; then
 fi;
 
 dnl ========================================================
+dnl = Built-in fragmented MP4 support.
+dnl ========================================================
+if test -n "$MOZ_WMF"; then
+    dnl Enable fragmented MP4 parser on Windows by default.
+    dnl We will also need to enable it on other platforms as we implement
+    dnl platform decoder support there too.
+    MOZ_FMP4=1
+fi
+
+MOZ_ARG_DISABLE_BOOL(fmp4,
+[  --disable-fmp4  Disable support for in built Fragmented MP4 parsing],
+    MOZ_FMP4=,
+    MOZ_FMP4=1)
+
+if test -n "$MOZ_FMP4"; then
+    AC_DEFINE(MOZ_FMP4)
+fi;
+
+
+dnl ========================================================
 dnl = Enable media plugin support
 dnl ========================================================
 if test "$OS_TARGET" = Android -a x"$MOZ_WIDGET_TOOLKIT" != x"gonk"; then
@@ -6121,7 +6153,6 @@ if test -n "$MOZ_TREE_FREETYPE"; then
    CAIRO_FT_CFLAGS='-I$(topsrcdir)/modules/freetype2/include'
    FT2_LIBS='$(call EXPAND_LIBNAME_PATH,freetype,$(DEPTH)/modules/freetype2/.libs)'
    CAIRO_FT_OSLIBS=''
-   CAIRO_FT_LIBS='$(call EXPAND_LIBNAME_PATH,freetype,$(DEPTH)/modules/freetype2/.libs)'
    AC_DEFINE(HAVE_FT_BITMAP_SIZE_Y_PPEM)
    AC_DEFINE(HAVE_FT_GLYPHSLOT_EMBOLDEN)
    AC_DEFINE(HAVE_FT_LOAD_SFNT_TABLE)
@@ -7307,6 +7338,18 @@ AC_SUBST(MOZ_B2G_BT_BLUEZ)
 AC_SUBST(MOZ_B2G_BT_BLUEDROID)
 
 dnl ========================================================
+dnl = Enable NFC Interface for B2G (Gonk usually)
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(b2g-nfc,
+[  --enable-nfc         Set compile flags necessary for compiling NFC API ],
+    MOZ_NFC=1,
+    MOZ_NFC= )
+if test -n "$MOZ_NFC"; then
+   AC_DEFINE(MOZ_NFC)
+fi
+AC_SUBST(MOZ_NFC)
+
+dnl ========================================================
 dnl = Enable Pico Speech Synthesis (Gonk usually)
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(synth-pico,
@@ -7934,7 +7977,6 @@ if test "$MOZ_TREE_CAIRO"; then
         MOZ_ENABLE_CAIRO_FT=1
         CAIRO_FT_CFLAGS="-I${MZFTCFGFT2}/include"
         CAIRO_FT_OSLIBS="-L${MZFTCFGFT2}/lib -lmozft -lmzfntcfg"
-        CAIRO_FT_LIBS=""
         ;;
     esac
     if test "$USE_FC_FREETYPE"; then
@@ -7967,7 +8009,6 @@ if test "$MOZ_TREE_CAIRO"; then
     AC_SUBST(QT_SURFACE_FEATURE)
     AC_SUBST(TEE_SURFACE_FEATURE)
 
-    MOZ_CAIRO_LIBS='$(call EXPAND_LIBNAME_PATH,mozcairo,$(DEPTH)/gfx/cairo/cairo/src)'" $CAIRO_FT_LIBS"
     MOZ_CAIRO_OSLIBS='${CAIRO_FT_OSLIBS}'
 
     if test "$MOZ_X11"; then
@@ -7995,35 +8036,9 @@ AC_SUBST(MOZ_CAIRO_OSLIBS)
 AC_SUBST(MOZ_TREE_PIXMAN)
 
 dnl ========================================================
-dnl qcms
-dnl ========================================================
-
-QCMS_LIBS='$(DEPTH)/gfx/qcms/$(LIB_PREFIX)mozqcms.$(LIB_SUFFIX)'
-AC_SUBST(QCMS_LIBS)
-
-dnl ========================================================
-dnl HarfBuzz
-dnl ========================================================
-MOZ_HARFBUZZ_LIBS='$(DEPTH)/gfx/harfbuzz/src/$(LIB_PREFIX)mozharfbuzz.$(LIB_SUFFIX)'
-AC_SUBST(MOZ_HARFBUZZ_LIBS)
-
-dnl ========================================================
-dnl SIL Graphite
-dnl ========================================================
-MOZ_GRAPHITE_LIBS='$(DEPTH)/gfx/graphite2/src/$(LIB_PREFIX)mozgraphite2.$(LIB_SUFFIX)'
-AC_SUBST(MOZ_GRAPHITE_LIBS)
-
-dnl ========================================================
-dnl OTS
-dnl ========================================================
-MOZ_OTS_LIBS='$(DEPTH)/gfx/ots/src/$(LIB_PREFIX)mozots.$(LIB_SUFFIX)'
-AC_SUBST(MOZ_OTS_LIBS)
-
-dnl ========================================================
 dnl Skia 
 dnl ========================================================
 if test "$MOZ_ENABLE_SKIA"; then
-  MOZ_SKIA_LIBS='$(DEPTH)/gfx/skia/$(LIB_PREFIX)skia.$(LIB_SUFFIX)'
   AC_DEFINE(MOZ_ENABLE_SKIA)
   AC_DEFINE(USE_SKIA)
   if test "${MOZ_WIDGET_TOOLKIT}" = "android" -o x"$MOZ_WIDGET_TOOLKIT" = x"gonk"; then
@@ -8038,11 +8053,8 @@ if test "$MOZ_ENABLE_SKIA"; then
     AC_DEFINE(USE_SKIA_GPU)
     AC_SUBST(MOZ_ENABLE_SKIA_GPU)
   fi
-else
-  MOZ_SKIA_LIBS=
 fi
 AC_SUBST(MOZ_ENABLE_SKIA)
-AC_SUBST(MOZ_SKIA_LIBS)
 
 dnl ========================================================
 dnl disable xul
@@ -8636,6 +8648,7 @@ AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_OPUS)
 AC_SUBST(MOZ_WEBM)
 AC_SUBST(MOZ_WMF)
+AC_SUBST(MOZ_FMP4)
 AC_SUBST(MOZ_DIRECTSHOW)
 AC_SUBST(MOZ_MEDIA_PLUGINS)
 AC_SUBST(MOZ_APPLEMEDIA)
@@ -8713,13 +8726,6 @@ if test "$MOZ_X11"; then
 
 fi # MOZ_X11
 
-dnl Check for headers, etc. needed by WebGL.
-if test "$MOZ_GL_DEFAULT_PROVIDER" = "GLX"; then
-    MOZ_CHECK_HEADER(GL/glx.h)
-    if test "$ac_cv_header_GL_glx_h" != "yes"; then
-        AC_MSG_ERROR([Can't find header GL/glx.h for WebGL (install mesa-common-dev (Ubuntu), mesa-libGL-devel (Fedora), or Mesa-devel (openSUSE))])
-    fi
-fi # MOZ_GL_DEFAULT_PROVIDER=GLX
 fi # COMPILE_ENVIRONMENT
 
 dnl Set various defines and substitutions
@@ -8883,7 +8889,7 @@ dnl so that regeneration via dependencies works correctly
            GYP_MOZMAKE_OPTIONS="${GYP_MOZMAKE_OPTIONS} -D mac_sdk_path=$MACOS_SDK_DIR"
         fi
         ;;
-      *-android*)
+      *-*linux*)
         GYP_MOZMAKE_OPTIONS="-G os=linux"
         ;;
       *)

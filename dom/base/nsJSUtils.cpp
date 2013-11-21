@@ -26,6 +26,7 @@
 #include "nsJSPrincipals.h"
 #include "xpcpublic.h"
 #include "nsContentUtils.h"
+#include "nsGlobalWindow.h"
 
 bool
 nsJSUtils::GetCallingLocation(JSContext* aContext, const char* *aFilename,
@@ -47,46 +48,9 @@ nsJSUtils::GetCallingLocation(JSContext* aContext, const char* *aFilename,
 nsIScriptGlobalObject *
 nsJSUtils::GetStaticScriptGlobal(JSObject* aObj)
 {
-  const JSClass* clazz;
-  JSObject* glob = aObj; // starting point for search
-
-  if (!glob)
+  if (!aObj)
     return nullptr;
-
-  glob = js::GetGlobalForObjectCrossCompartment(glob);
-  NS_ABORT_IF_FALSE(glob, "Infallible returns null");
-
-  clazz = JS_GetClass(glob);
-
-  // Whenever we end up with globals that are JSCLASS_IS_DOMJSCLASS
-  // and have an nsISupports DOM object, we will need to modify this
-  // check here.
-  MOZ_ASSERT(!(clazz->flags & JSCLASS_IS_DOMJSCLASS));
-  nsISupports* supports;
-  if (!(clazz->flags & JSCLASS_HAS_PRIVATE) ||
-      !(clazz->flags & JSCLASS_PRIVATE_IS_NSISUPPORTS) ||
-      !(supports = (nsISupports*)::JS_GetPrivate(glob))) {
-    return nullptr;
-  }
-
-  // We might either have a window directly (e.g. if the global is a
-  // sandbox whose script object principal pointer is a window), or an
-  // XPCWrappedNative for a window.  We could also have other
-  // sandbox-related script object principals, but we can't do much
-  // about those short of trying to walk the proto chain of |glob|
-  // looking for a window or something.
-  nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(supports));
-  if (!sgo) {
-    nsCOMPtr<nsIXPConnectWrappedNative> wrapper(do_QueryInterface(supports));
-    if (!wrapper) {
-      return nullptr;
-    }
-    sgo = do_QueryWrappedNative(wrapper);
-  }
-
-  // We're returning a pointer to something that's about to be
-  // released, but that's ok here.
-  return sgo;
+  return xpc::WindowGlobalOrNull(aObj);
 }
 
 nsIScriptContext *
@@ -241,15 +205,14 @@ nsJSUtils::EvaluateString(JSContext* aCx,
 
   JS::ExposeObjectToActiveJS(aScopeObject);
   nsAutoMicroTask mt;
+  nsresult rv = NS_OK;
 
   JSPrincipals* p = JS_GetCompartmentPrincipals(js::GetObjectCompartment(aScopeObject));
   aCompileOptions.setPrincipals(p);
 
   bool ok = false;
-  nsresult rv = nsContentUtils::GetSecurityManager()->
-                  CanExecuteScripts(aCx, nsJSPrincipals::get(p), &ok);
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(ok, NS_OK);
+  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+  NS_ENSURE_TRUE(ssm->ScriptAllowed(js::GetGlobalForObjectCrossCompartment(aScopeObject)), NS_OK);
 
   mozilla::Maybe<AutoDontReportUncaught> dontReport;
   if (!aEvaluateOptions.reportUncaught) {
@@ -279,7 +242,8 @@ nsJSUtils::EvaluateString(JSContext* aCx,
     }
 
     if (ok && aEvaluateOptions.coerceToString && !aRetValue->isUndefined()) {
-      JSString* str = JS_ValueToString(aCx, *aRetValue);
+      JS::Rooted<JS::Value> value(aCx, *aRetValue);
+      JSString* str = JS::ToString(aCx, value);
       ok = !!str;
       *aRetValue = ok ? JS::StringValue(str) : JS::UndefinedValue();
     }

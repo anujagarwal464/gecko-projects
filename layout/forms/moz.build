@@ -6,8 +6,6 @@
 
 TEST_DIRS += ['test']
 
-MODULE = 'layout'
-
 EXPORTS += [
     'nsIComboboxControlFrame.h',
     'nsIFormControlFrame.h',
@@ -16,7 +14,7 @@ EXPORTS += [
     'nsITextControlFrame.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsButtonFrameRenderer.cpp',
     'nsColorControlFrame.cpp',
     'nsComboboxControlFrame.cpp',
@@ -37,11 +35,8 @@ SOURCES += [
     'nsTextControlFrame.cpp',
 ]
 
-LIBRARY_NAME = 'gkforms_s'
-
 FAIL_ON_WARNINGS = True
-
-LIBXUL_LIBRARY = True
 
 MSVC_ENABLE_PGO = True
 
+FINAL_LIBRARY = 'gklayout'

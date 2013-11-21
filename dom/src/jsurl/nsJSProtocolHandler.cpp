@@ -240,6 +240,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
 
     AutoPushJSContext cx(scriptContext->GetNativeContext());
     JS::Rooted<JSObject*> globalJSObject(cx, innerGlobal->GetGlobalJSObject());
+    NS_ENSURE_TRUE(globalJSObject, NS_ERROR_UNEXPECTED);
 
     if (!useSandbox) {
         //-- Don't outside a sandbox unless the script principal subsumes the
@@ -264,13 +265,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
 
         // First check to make sure it's OK to evaluate this script to
         // start with.  For example, script could be disabled.
-        bool ok;
-        rv = securityManager->CanExecuteScripts(cx, principal, &ok);
-        if (NS_FAILED(rv)) {
-            return rv;
-        }
-
-        if (!ok) {
+        if (!securityManager->ScriptAllowed(globalJSObject)) {
             // Treat this as returning undefined from the script.  That's what
             // nsJSContext does.
             return NS_ERROR_DOM_RETVAL_UNDEFINED;
@@ -291,7 +286,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         sandboxObj = js::UncheckedUnwrap(sandboxObj);
         JSAutoCompartment ac(cx, sandboxObj);
 
-        // Push our JSContext on the context stack so the JS_ValueToString call (and
+        // Push our JSContext on the context stack so the EvalInSandboxObject call (and
         // JS_ReportPendingException, if relevant) will use the principal of cx.
         nsCxPusher pusher;
         pusher.Push(cx);

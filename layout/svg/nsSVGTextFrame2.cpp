@@ -8,28 +8,26 @@
 
 // Keep others in (case-insensitive) order:
 #include "DOMSVGPoint.h"
+#include "gfx2DGlue.h"
 #include "gfxFont.h"
 #include "gfxSkipChars.h"
 #include "gfxTypes.h"
 #include "LookAndFeel.h"
+#include "mozilla/gfx/2D.h"
 #include "nsAlgorithm.h"
 #include "nsBlockFrame.h"
 #include "nsCaret.h"
 #include "nsContentUtils.h"
 #include "nsGkAtoms.h"
 #include "nsIDOMSVGLength.h"
-#include "nsISVGGlyphFragmentNode.h"
 #include "nsISelection.h"
 #include "nsQuickSort.h"
 #include "nsRenderingContext.h"
 #include "nsSVGEffects.h"
-#include "nsSVGGlyphFrame.h"
 #include "nsSVGOuterSVGFrame.h"
 #include "nsSVGPaintServerFrame.h"
 #include "mozilla/dom/SVGRect.h"
 #include "nsSVGIntegrationUtils.h"
-#include "nsSVGTextFrame.h"
-#include "nsSVGTextPathFrame.h"
 #include "nsSVGUtils.h"
 #include "nsTArray.h"
 #include "nsTextFrame.h"
@@ -47,6 +45,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::gfx;
 
 // ============================================================================
 // Utility functions
@@ -1937,11 +1936,6 @@ TextRenderedRunIterator::Next()
 
     charIndex = mTextElementCharIndex;
 
-    // Get the position and rotation of the character that begins this
-    // rendered run.
-    pt = Root()->mPositions[mTextElementCharIndex].mPosition;
-    rotate = Root()->mPositions[mTextElementCharIndex].mAngle;
-
     // Find the end of the rendered run, by looking through the
     // nsSVGTextFrame2's positions array until we find one that is recorded
     // as a run boundary.
@@ -1982,6 +1976,11 @@ TextRenderedRunIterator::Next()
       frame->GetTrimmedOffsets(frame->GetContent()->GetText(), true);
     TrimOffsets(offset, length, trimmedOffsets);
     charIndex += offset - untrimmedOffset;
+
+    // Get the position and rotation of the character that begins this
+    // rendered run.
+    pt = Root()->mPositions[charIndex].mPosition;
+    rotate = Root()->mPositions[charIndex].mAngle;
 
     // Determine if we should skip this rendered run.
     bool skip = !mFrameIterator.IsWithinSubtree() ||
@@ -4715,16 +4714,25 @@ nsSVGTextFrame2::GetTextPathPathFrame(nsIFrame* aTextPathFrame)
   return property->GetReferencedFrame(nsGkAtoms::svgPathGeometryFrame, nullptr);
 }
 
-already_AddRefed<gfxPath>
+TemporaryRef<Path>
 nsSVGTextFrame2::GetTextPath(nsIFrame* aTextPathFrame)
 {
-  nsIFrame *path = GetTextPathPathFrame(aTextPathFrame);
+  nsIFrame *pathFrame = GetTextPathPathFrame(aTextPathFrame);
 
-  if (path) {
+  if (pathFrame) {
     nsSVGPathGeometryElement *element =
-      static_cast<nsSVGPathGeometryElement*>(path->GetContent());
+      static_cast<nsSVGPathGeometryElement*>(pathFrame->GetContent());
 
-    return element->GetPath(element->PrependLocalTransformsTo(gfxMatrix()));
+    RefPtr<Path> path = element->GetPathForLengthOrPositionMeasuring();
+
+    gfxMatrix matrix = element->PrependLocalTransformsTo(gfxMatrix());
+    if (!matrix.IsIdentity()) {
+      RefPtr<PathBuilder> builder =
+        path->TransformedCopyToBuilder(ToMatrix(matrix));
+      path = builder->Finish();
+    }
+
+    return path.forget();
   }
   return nullptr;
 }
@@ -4749,10 +4757,10 @@ nsSVGTextFrame2::GetStartOffset(nsIFrame* aTextPathFrame)
     &tp->mLengthAttributes[dom::SVGTextPathElement::STARTOFFSET];
 
   if (length->IsPercentage()) {
-    nsRefPtr<gfxPath> data = GetTextPath(aTextPathFrame);
+    RefPtr<Path> data = GetTextPath(aTextPathFrame);
     return data ?
-             length->GetAnimValInSpecifiedUnits() * data->GetLength() / 100.0 :
-             0.0;
+      length->GetAnimValInSpecifiedUnits() * data->ComputeLength() / 100.0 :
+      0.0;
   }
   return length->GetAnimValue(tp) * GetOffsetScale(aTextPathFrame);
 }
@@ -4772,8 +4780,8 @@ nsSVGTextFrame2::DoTextPathLayout()
     }
 
     // Get the path itself.
-    nsRefPtr<gfxPath> data = GetTextPath(textPathFrame);
-    if (!data) {
+    RefPtr<Path> path = GetTextPath(textPathFrame);
+    if (!path) {
       it.AdvancePastCurrentTextPathFrame();
       continue;
     }
@@ -4781,7 +4789,7 @@ nsSVGTextFrame2::DoTextPathLayout()
     nsIContent* textPath = textPathFrame->GetContent();
 
     gfxFloat offset = GetStartOffset(textPathFrame);
-    gfxFloat pathLength = data->GetLength();
+    Float pathLength = path->ComputeLength();
 
     // Loop for each text frame in the text path.
     do {
@@ -4795,19 +4803,22 @@ nsSVGTextFrame2::DoTextPathLayout()
       mPositions[i].mHidden = midx < 0 || midx > pathLength;
 
       // Position the character on the path at the right angle.
-      double angle;
-      gfxPoint pt =
-        data->FindPoint(gfxPoint(midx, mPositions[i].mPosition.y), &angle);
-      gfxPoint direction = gfxPoint(cos(angle), sin(angle)) * sign;
-      mPositions[i].mPosition = pt - direction * halfAdvance;
-      mPositions[i].mAngle += angle;
+      Point tangent; // Unit vector tangent to the point we find.
+      Point pt = path->ComputePointAtLength(Float(midx), &tangent);
+      Float rotation = atan2f(tangent.y, tangent.x);
+      Point normal(-tangent.y, tangent.x); // Unit vector normal to the point.
+      Point offsetFromPath = normal * mPositions[i].mPosition.y;
+      pt += offsetFromPath;
+      Point direction = tangent * sign;
+      mPositions[i].mPosition = ThebesPoint(pt) - ThebesPoint(direction) * halfAdvance;
+      mPositions[i].mAngle += rotation;
 
       // Position any characters for a partial ligature.
       for (uint32_t j = i + 1;
            j < mPositions.Length() && mPositions[j].mClusterOrLigatureGroupMiddle;
            j++) {
         gfxPoint partialAdvance =
-          direction * it.GetGlyphPartialAdvance(j - i, context) /
+          ThebesPoint(direction) * it.GetGlyphPartialAdvance(j - i, context) /
                                                          mFontSizeScaleFactor;
         mPositions[j].mPosition = mPositions[i].mPosition + partialAdvance;
         mPositions[j].mAngle = mPositions[i].mAngle;

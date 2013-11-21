@@ -2159,7 +2159,8 @@ WorkerPrivateParent<Derived>::WrapObject(JSContext* aCx,
 
   AssertIsOnParentThread();
 
-  JSObject* obj = WorkerBinding::Wrap(aCx, aScope, ParentAsWorkerPrivate());
+  JS::Rooted<JSObject*> obj(aCx, WorkerBinding::Wrap(aCx, aScope,
+                                                     ParentAsWorkerPrivate()));
 
   if (mRooted) {
     PreserveWrapper(this);
@@ -4240,6 +4241,11 @@ WorkerPrivate::TraceTimeouts(const TraceCallbacks& aCallbacks,
 
   for (uint32_t index = 0; index < mTimeouts.Length(); index++) {
     TimeoutInfo* info = mTimeouts[index];
+
+    if (info->mTimeoutCallable.isUndefined()) {
+      continue;
+    }
+
     aCallbacks.Trace(&info->mTimeoutCallable, "mTimeoutCallable", aClosure);
     for (uint32_t index2 = 0; index2 < info->mExtraArgVals.Length(); index2++) {
       aCallbacks.Trace(&info->mExtraArgVals[index2], "mExtraArgVals[i]", aClosure);
@@ -5254,16 +5260,23 @@ WorkerPrivate::ConnectMessagePort(JSContext* aCx, uint64_t aMessagePortSerial)
     return false;
   }
 
-  MessageEventInit init;
-  init.mBubbles = false;
-  init.mCancelable = false;
-  init.mSource = &jsPort.toObject();
+  nsRefPtr<nsDOMMessageEvent> event;
+  {
+    // Bug 940779 - MessageEventInit contains unrooted JS objects, and
+    // ~nsRefPtr can GC, so make sure 'init' is no longer live before ~nsRefPtr
+    // runs (or the nsRefPtr is even created) to avoid a rooting hazard. Note
+    // that 'init' is live until its destructor runs, not just until its final
+    // use.
+    MessageEventInit init;
+    init.mBubbles = false;
+    init.mCancelable = false;
+    init.mSource = &jsPort.toObject();
 
-  ErrorResult rv;
-
-  nsRefPtr<nsDOMMessageEvent> event =
-    nsDOMMessageEvent::Constructor(globalObject, aCx,
-                                   NS_LITERAL_STRING("connect"), init, rv);
+    ErrorResult rv;
+    event = nsDOMMessageEvent::Constructor(globalObject, aCx,
+                                           NS_LITERAL_STRING("connect"),
+                                           init, rv);
+  }
 
   event->SetTrusted(true);
 

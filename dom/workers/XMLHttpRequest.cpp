@@ -682,19 +682,19 @@ public:
       }
     }
 
-    XMLHttpRequest::StateData state;
-    StateDataAutoRooter rooter(aCx, &state);
+    nsAutoPtr<XMLHttpRequest::StateData> state(new XMLHttpRequest::StateData());
+    StateDataAutoRooter rooter(aCx, state);
 
-    state.mResponseTextResult = mResponseTextResult;
-    state.mResponseText = mResponseText;
+    state->mResponseTextResult = mResponseTextResult;
+    state->mResponseText = mResponseText;
 
     if (NS_SUCCEEDED(mResponseTextResult)) {
       MOZ_ASSERT(JSVAL_IS_VOID(mResponse) || JSVAL_IS_NULL(mResponse));
-      state.mResponseResult = mResponseTextResult;
-      state.mResponse = mResponse;
+      state->mResponseResult = mResponseTextResult;
+      state->mResponse = mResponse;
     }
     else {
-      state.mResponseResult = mResponseResult;
+      state->mResponseResult = mResponseResult;
 
       if (NS_SUCCEEDED(mResponseResult)) {
         if (mResponseBuffer.data()) {
@@ -716,23 +716,23 @@ public:
             return false;
           }
 
-          state.mResponse = response;
+          state->mResponse = response;
         }
         else {
-          state.mResponse = mResponse;
+          state->mResponse = mResponse;
         }
       }
     }
 
-    state.mStatusResult = mStatusResult;
-    state.mStatus = mStatus;
+    state->mStatusResult = mStatusResult;
+    state->mStatus = mStatus;
 
-    state.mStatusText = mStatusText;
+    state->mStatusText = mStatusText;
 
-    state.mReadyState = mReadyState;
+    state->mReadyState = mReadyState;
 
     XMLHttpRequest* xhr = mProxy->mXMLHttpRequestPrivate;
-    xhr->UpdateState(state);
+    xhr->UpdateState(*state);
 
     if (mUploadEvent && !xhr->GetUploadObjectNoCreate()) {
       return true;
@@ -1986,7 +1986,8 @@ XMLHttpRequest::Send(JSObject* aBody, ErrorResult& aRv)
     valToClone.setObject(*aBody);
   }
   else {
-    JSString* bodyStr = JS_ValueToString(cx, OBJECT_TO_JSVAL(aBody));
+    JS::Rooted<JS::Value> obj(cx, JS::ObjectValue(*aBody));
+    JSString* bodyStr = JS::ToString(cx, obj);
     if (!bodyStr) {
       aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
       return;

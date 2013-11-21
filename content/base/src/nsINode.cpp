@@ -1331,15 +1331,15 @@ AdoptNodeIntoOwnerDoc(nsINode *aParent, nsINode *aNode)
 static nsresult
 CheckForOutdatedParent(nsINode* aParent, nsINode* aNode)
 {
-  if (JSObject* existingObj = aNode->GetWrapper()) {
+  if (JSObject* existingObjUnrooted = aNode->GetWrapper()) {
+    AutoJSContext cx;
+    JS::Rooted<JSObject*> existingObj(cx, existingObjUnrooted);
     nsIGlobalObject* global = aParent->OwnerDoc()->GetScopeObject();
     MOZ_ASSERT(global);
 
     if (js::GetGlobalForObjectCrossCompartment(existingObj) !=
         global->GetGlobalJSObject()) {
-      AutoJSContext cx;
-      JS::Rooted<JSObject*> rooted(cx, existingObj);
-      nsresult rv = ReparentWrapper(cx, rooted);
+      nsresult rv = ReparentWrapper(cx, existingObj);
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
@@ -2198,21 +2198,6 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
     if (elm) {                                                               \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);    \
     }                                                                        \
-  }                                                                          \
-  NS_IMETHODIMP nsINode::GetOn##name_(JSContext *cx, JS::Value *vp) {        \
-    EventHandlerNonNull* h = GetOn##name_();                                 \
-    vp->setObjectOrNull(h ? h->Callable().get() : nullptr);                  \
-    return NS_OK;                                                            \
-  }                                                                          \
-  NS_IMETHODIMP nsINode::SetOn##name_(JSContext *cx, const JS::Value &v) {   \
-    nsRefPtr<EventHandlerNonNull> handler;                                   \
-    JSObject *callable;                                                      \
-    if (v.isObject() &&                                                      \
-        JS_ObjectIsCallable(cx, callable = &v.toObject())) {                 \
-      handler = new EventHandlerNonNull(callable);                           \
-    }                                                                        \
-    SetOn##name_(handler);                                                   \
-    return NS_OK;                                                            \
   }
 #define TOUCH_EVENT EVENT
 #define DOCUMENT_ONLY_EVENT EVENT
@@ -2334,6 +2319,59 @@ AddScopeElements(TreeMatchContext& aMatchContext,
   }
 }
 
+namespace {
+struct SelectorMatchInfo {
+  nsCSSSelectorList* const mSelectorList;
+  TreeMatchContext& mMatchContext;
+};
+}
+
+// Given an id, find elements with that id under aRoot that match aMatchInfo if
+// any is provided.  If no SelectorMatchInfo is provided, just find the ones
+// with the given id.  aRoot must be in the document.
+template<bool onlyFirstMatch, class T>
+inline static void
+FindMatchingElementsWithId(const nsAString& aId, nsINode* aRoot,
+                           SelectorMatchInfo* aMatchInfo,
+                           T& aList)
+{
+  MOZ_ASSERT(aRoot->IsInDoc(),
+             "Don't call me if the root is not in the document");
+  MOZ_ASSERT(aRoot->IsElement() || aRoot->IsNodeOfType(nsINode::eDOCUMENT),
+             "The optimization below to check ContentIsDescendantOf only for "
+             "elements depends on aRoot being either an element or a "
+             "document if it's in the document.  Note that document fragments "
+             "can't be IsInDoc(), so should never show up here.");
+
+  const nsSmallVoidArray* elements = aRoot->OwnerDoc()->GetAllElementsForId(aId);
+
+  if (!elements) {
+    // Nothing to do; we're done
+    return;
+  }
+
+  // XXXbz: Should we fall back to the tree walk if aRoot is not the
+  // document and |elements| is long, for some value of "long"?
+  for (int32_t i = 0; i < elements->Count(); ++i) {
+    Element *element = static_cast<Element*>(elements->ElementAt(i));
+    if (!aRoot->IsElement() ||
+        (element != aRoot &&
+           nsContentUtils::ContentIsDescendantOf(element, aRoot))) {
+      // We have an element with the right id and it's a strict descendant
+      // of aRoot.  Make sure it really matches the selector.
+      if (!aMatchInfo ||
+          nsCSSRuleProcessor::SelectorListMatches(element,
+                                                  aMatchInfo->mMatchContext,
+                                                  aMatchInfo->mSelectorList)) {
+        aList.AppendElement(element);
+        if (onlyFirstMatch) {
+          return;
+        }
+      }
+    }
+  }
+}
+
 // Actually find elements matching aSelectorList (which must not be
 // null) and which are descendants of aRoot and put them in aList.  If
 // onlyFirstMatch, then stop once the first one is found.
@@ -2341,7 +2379,6 @@ template<bool onlyFirstMatch, class Collector, class T>
 MOZ_ALWAYS_INLINE static nsresult
 FindMatchingElements(nsINode* aRoot, const nsAString& aSelector, T &aList)
 {
-
   nsIDocument* doc = aRoot->OwnerDoc();
   nsIDocument::SelectorCache& cache = doc->GetSelectorCache();
   nsCSSSelectorList* selectorList = nullptr;
@@ -2395,32 +2432,9 @@ FindMatchingElements(nsINode* aRoot, const nsAString& aSelector, T &aList)
       !selectorList->mNext &&
       selectorList->mSelectors->mIDList) {
     nsIAtom* id = selectorList->mSelectors->mIDList->mAtom;
-    const nsSmallVoidArray* elements =
-      doc->GetAllElementsForId(nsDependentAtomString(id));
-
-    // XXXbz: Should we fall back to the tree walk if aRoot is not the
-    // document and |elements| is long, for some value of "long"?
-    if (elements) {
-      for (int32_t i = 0; i < elements->Count(); ++i) {
-        Element *element = static_cast<Element*>(elements->ElementAt(i));
-        if (!aRoot->IsElement() ||
-            (element != aRoot &&
-             nsContentUtils::ContentIsDescendantOf(element, aRoot))) {
-          // We have an element with the right id and it's a strict descendant
-          // of aRoot.  Make sure it really matches the selector.
-          if (nsCSSRuleProcessor::SelectorListMatches(element, matchingContext,
-                                                      selectorList)) {
-            aList.AppendElement(element);
-            if (onlyFirstMatch) {
-              return NS_OK;
-            }
-          }
-        }
-      }
-    }
-
-    // No elements with this id, or none of them are our descendants,
-    // or none of them match.  We're done here.
+    SelectorMatchInfo info = { selectorList, matchingContext };
+    FindMatchingElementsWithId<onlyFirstMatch, T>(nsDependentAtomString(id),
+                                                  aRoot, &info, aList);
     return NS_OK;
   }
 
@@ -2507,6 +2521,29 @@ nsINode::QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn)
   return rv.ErrorCode();
 }
 
+Element*
+nsINode::GetElementById(const nsAString& aId)
+{
+  MOZ_ASSERT(IsElement() || IsNodeOfType(eDOCUMENT_FRAGMENT),
+             "Bogus this object for GetElementById call");
+  if (IsInDoc()) {
+    ElementHolder holder;
+    FindMatchingElementsWithId<true>(aId, this, nullptr, holder);
+    return holder.mElement;
+  }
+
+  for (nsIContent* kid = GetFirstChild(); kid; kid = kid->GetNextNode(this)) {
+    if (!kid->IsElement()) {
+      continue;
+    }
+    nsIAtom* id = kid->AsElement()->GetID();
+    if (id && id->Equals(aId)) {
+      return kid->AsElement();
+    }
+  }
+  return nullptr;
+}
+
 JSObject*
 nsINode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
@@ -2557,6 +2594,17 @@ nsINode::CloneNode(bool aDeep, ErrorResult& aError)
                                       getter_AddRefs(result));
   return result.forget();
 }
+
+already_AddRefed<nsINode>
+nsINode::CloneNode(mozilla::ErrorResult& aError)
+{
+  if (HasChildNodes()) {
+    // Flag it as an error, not a warning, to make people actually notice.
+    OwnerDoc()->WarnOnceAbout(nsIDocument::eUnsafeCloneNode, true);
+  }
+  return CloneNode(true, aError);
+}
+
 
 nsDOMAttributeMap*
 nsINode::GetAttributes()

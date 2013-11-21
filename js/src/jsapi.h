@@ -1043,9 +1043,6 @@ extern JS_PUBLIC_API(JSFunction *)
 JS_ValueToConstructor(JSContext *cx, JS::HandleValue v);
 
 extern JS_PUBLIC_API(JSString *)
-JS_ValueToString(JSContext *cx, jsval v);
-
-extern JS_PUBLIC_API(JSString *)
 JS_ValueToSource(JSContext *cx, jsval v);
 
 namespace js {
@@ -1060,6 +1057,12 @@ ToNumberSlow(JSContext *cx, JS::Value v, double *dp);
  */
 extern JS_PUBLIC_API(bool)
 ToBooleanSlow(JS::HandleValue v);
+
+/*
+ * DO NOT CALL THIS. Use JS::ToString
+ */
+extern JS_PUBLIC_API(JSString*)
+ToStringSlow(JSContext *cx, JS::HandleValue v);
 } /* namespace js */
 
 namespace JS {
@@ -1097,6 +1100,14 @@ ToBoolean(HandleValue v)
 
     /* The slow path handles strings and objects. */
     return js::ToBooleanSlow(v);
+}
+
+JS_ALWAYS_INLINE JSString*
+ToString(JSContext *cx, HandleValue v)
+{
+    if (v.isString())
+        return v.toString();
+    return js::ToStringSlow(cx, v);
 }
 
 } /* namespace JS */
@@ -1436,7 +1447,6 @@ class JS_PUBLIC_API(ContextOptions) {
         werror_(false),
         varObjFix_(false),
         privateIsNSISupports_(false),
-        compileAndGo_(false),
         dontReportUncaught_(false),
         noDefaultCompartmentObject_(false),
         noScriptRval_(false),
@@ -1485,16 +1495,6 @@ class JS_PUBLIC_API(ContextOptions) {
     }
     ContextOptions &togglePrivateIsNSISupports() {
         privateIsNSISupports_ = !privateIsNSISupports_;
-        return *this;
-    }
-
-    bool compileAndGo() const { return compileAndGo_; }
-    ContextOptions &setCompileAndGo(bool flag) {
-        compileAndGo_ = flag;
-        return *this;
-    }
-    ContextOptions &toggleCompileAndGo() {
-        compileAndGo_ = !compileAndGo_;
         return *this;
     }
 
@@ -1583,7 +1583,6 @@ class JS_PUBLIC_API(ContextOptions) {
     bool werror_ : 1;
     bool varObjFix_ : 1;
     bool privateIsNSISupports_ : 1;
-    bool compileAndGo_ : 1;
     bool dontReportUncaught_ : 1;
     bool noDefaultCompartmentObject_ : 1;
     bool noScriptRval_ : 1;
@@ -2407,6 +2406,8 @@ struct JSPropertySpec {
     uint8_t                     flags;
     JSPropertyOpWrapper         getter;
     JSStrictPropertyOpWrapper   setter;
+    const char                 *selfHostedGetter;
+    const char                 *selfHostedSetter;
 };
 
 namespace JS {
@@ -2437,13 +2438,23 @@ inline int CheckIsNative(JSNative native);
     {name, 0, \
      uint8_t(JS_CHECK_ACCESSOR_FLAGS(flags) | JSPROP_SHARED | JSPROP_NATIVE_ACCESSORS), \
      JSOP_WRAPPER(JS_CAST_NATIVE_TO(getter, JSPropertyOp)), \
-     JSOP_NULLWRAPPER}
+     JSOP_NULLWRAPPER, nullptr, nullptr}
 #define JS_PSGS(name, getter, setter, flags) \
     {name, 0, \
      uint8_t(JS_CHECK_ACCESSOR_FLAGS(flags) | JSPROP_SHARED | JSPROP_NATIVE_ACCESSORS), \
      JSOP_WRAPPER(JS_CAST_NATIVE_TO(getter, JSPropertyOp)), \
-     JSOP_WRAPPER(JS_CAST_NATIVE_TO(setter, JSStrictPropertyOp))}
-#define JS_PS_END {0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER}
+     JSOP_WRAPPER(JS_CAST_NATIVE_TO(setter, JSStrictPropertyOp)), \
+     nullptr, nullptr}
+#define JS_SELF_HOSTED_GET(name, getterName, flags) \
+    {name, 0, \
+     uint8_t(JS_CHECK_ACCESSOR_FLAGS(flags) | JSPROP_SHARED | JSPROP_GETTER), \
+     JSOP_NULLWRAPPER, JSOP_NULLWRAPPER, getterName, nullptr}
+#define JS_SELF_HOSTED_GETSET(name, getterName, setterName, flags) \
+    {name, 0, \
+     uint8_t(JS_CHECK_ACCESSOR_FLAGS(flags) | JSPROP_SHARED | JSPROP_GETTER | JSPROP_SETTER), \
+     JSOP_NULLWRAPPER, JSOP_NULLWRAPPER, getterName, setterName}
+#define JS_PS_END {0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER, \
+                   nullptr, nullptr}
 
 /*
  * To define a native function, set call to a JSNativeWrapper. To define a
@@ -3322,48 +3333,29 @@ extern JS_PUBLIC_API(bool)
 JS_BufferIsCompilableUnit(JSContext *cx, JSObject *obj, const char *utf8, size_t length);
 
 extern JS_PUBLIC_API(JSScript *)
-JS_CompileScript(JSContext *cx, JSObject *obj,
+JS_CompileScript(JSContext *cx, JS::HandleObject obj,
                  const char *ascii, size_t length,
-                 const char *filename, unsigned lineno);
+                 const JS::CompileOptions &options);
 
 extern JS_PUBLIC_API(JSScript *)
-JS_CompileScriptForPrincipals(JSContext *cx, JSObject *obj,
-                              JSPrincipals *principals,
-                              const char *ascii, size_t length,
-                              const char *filename, unsigned lineno);
-
-extern JS_PUBLIC_API(JSScript *)
-JS_CompileUCScript(JSContext *cx, JSObject *obj,
+JS_CompileUCScript(JSContext *cx, JS::HandleObject obj,
                    const jschar *chars, size_t length,
-                   const char *filename, unsigned lineno);
-
-extern JS_PUBLIC_API(JSScript *)
-JS_CompileUCScriptForPrincipals(JSContext *cx, JSObject *obj,
-                                JSPrincipals *principals,
-                                const jschar *chars, size_t length,
-                                const char *filename, unsigned lineno);
+                   const JS::CompileOptions &options);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetGlobalFromScript(JSScript *script);
 
 extern JS_PUBLIC_API(JSFunction *)
-JS_CompileFunction(JSContext *cx, JSObject *obj, const char *name,
+JS_CompileFunction(JSContext *cx, JS::HandleObject obj, const char *name,
                    unsigned nargs, const char *const *argnames,
                    const char *bytes, size_t length,
-                   const char *filename, unsigned lineno);
+                   const JS::CompileOptions &options);
 
 extern JS_PUBLIC_API(JSFunction *)
-JS_CompileFunctionForPrincipals(JSContext *cx, JSObject *obj,
-                                JSPrincipals *principals, const char *name,
-                                unsigned nargs, const char *const *argnames,
-                                const char *bytes, size_t length,
-                                const char *filename, unsigned lineno);
-
-extern JS_PUBLIC_API(JSFunction *)
-JS_CompileUCFunction(JSContext *cx, JSObject *obj, const char *name,
+JS_CompileUCFunction(JSContext *cx, JS::HandleObject obj, const char *name,
                      unsigned nargs, const char *const *argnames,
                      const jschar *chars, size_t length,
-                     const char *filename, unsigned lineno);
+                     const JS::CompileOptions &options);
 
 namespace JS {
 

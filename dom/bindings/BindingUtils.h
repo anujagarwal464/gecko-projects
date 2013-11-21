@@ -10,6 +10,7 @@
 #include "jsfriendapi.h"
 #include "jswrapper.h"
 #include "mozilla/Alignment.h"
+#include "mozilla/Array.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/CallbackObject.h"
 #include "mozilla/dom/DOMJSClass.h"
@@ -20,6 +21,7 @@
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/workers/Workers.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Util.h"
 #include "nsCycleCollector.h"
@@ -279,13 +281,25 @@ static_assert((size_t)constructors::id::_ID_Start ==
               "Overlapping or discontiguous indexes.");
 const size_t kProtoAndIfaceCacheCount = constructors::id::_ID_Count;
 
+class ProtoAndIfaceArray : public Array<JS::Heap<JSObject*>, kProtoAndIfaceCacheCount>
+{
+public:
+  ProtoAndIfaceArray() {
+    MOZ_COUNT_CTOR(ProtoAndIfaceArray);
+  }
+
+  ~ProtoAndIfaceArray() {
+    MOZ_COUNT_DTOR(ProtoAndIfaceArray);
+  }
+};
+
 inline void
 AllocateProtoAndIfaceCache(JSObject* obj)
 {
   MOZ_ASSERT(js::GetObjectClass(obj)->flags & JSCLASS_DOM_GLOBAL);
   MOZ_ASSERT(js::GetReservedSlot(obj, DOM_PROTOTYPE_SLOT).isUndefined());
 
-  JS::Heap<JSObject*>* protoAndIfaceArray = new JS::Heap<JSObject*>[kProtoAndIfaceCacheCount];
+  ProtoAndIfaceArray* protoAndIfaceArray = new ProtoAndIfaceArray();
 
   js::SetReservedSlot(obj, DOM_PROTOTYPE_SLOT,
                       JS::PrivateValue(protoAndIfaceArray));
@@ -298,8 +312,8 @@ TraceProtoAndIfaceCache(JSTracer* trc, JSObject* obj)
 
   if (!HasProtoAndIfaceArray(obj))
     return;
-  JS::Heap<JSObject*>* protoAndIfaceArray = GetProtoAndIfaceArray(obj);
-  for (size_t i = 0; i < kProtoAndIfaceCacheCount; ++i) {
+  ProtoAndIfaceArray& protoAndIfaceArray = *GetProtoAndIfaceArray(obj);
+  for (size_t i = 0; i < ArrayLength(protoAndIfaceArray); ++i) {
     if (protoAndIfaceArray[i]) {
       JS_CallHeapObjectTracer(trc, &protoAndIfaceArray[i], "protoAndIfaceArray[i]");
     }
@@ -311,9 +325,9 @@ DestroyProtoAndIfaceCache(JSObject* obj)
 {
   MOZ_ASSERT(js::GetObjectClass(obj)->flags & JSCLASS_DOM_GLOBAL);
 
-  JS::Heap<JSObject*>* protoAndIfaceArray = GetProtoAndIfaceArray(obj);
+  ProtoAndIfaceArray* protoAndIfaceArray = GetProtoAndIfaceArray(obj);
 
-  delete [] protoAndIfaceArray;
+  delete protoAndIfaceArray;
 }
 
 /**
@@ -900,11 +914,11 @@ EnumValueNotFound<true>(JSContext* cx, const jschar* chars, size_t length,
 
 template<bool InvalidValueFatal>
 inline int
-FindEnumStringIndex(JSContext* cx, JS::Value v, const EnumEntry* values,
+FindEnumStringIndex(JSContext* cx, JS::Handle<JS::Value> v, const EnumEntry* values,
                     const char* type, const char* sourceDescription, bool* ok)
 {
   // JS_StringEqualsAscii is slow as molasses, so don't use it here.
-  JSString* str = JS_ValueToString(cx, v);
+  JSString* str = JS::ToString(cx, v);
   if (!str) {
     *ok = false;
     return 0;
@@ -1550,7 +1564,7 @@ ConvertJSValueToString(JSContext* cx, JS::Handle<JS::Value> v,
       return true;
     }
 
-    s = JS_ValueToString(cx, v);
+    s = JS::ToString(cx, v);
     if (!s) {
       return false;
     }
@@ -2055,7 +2069,7 @@ ReportLenientThisUnwrappingFailure(JSContext* cx, JSObject* obj);
 inline JSObject*
 GetUnforgeableHolder(JSObject* aGlobal, prototypes::ID aId)
 {
-  JS::Heap<JSObject*>* protoAndIfaceArray = GetProtoAndIfaceArray(aGlobal);
+  ProtoAndIfaceArray& protoAndIfaceArray = *GetProtoAndIfaceArray(aGlobal);
   JSObject* interfaceProto = protoAndIfaceArray[aId];
   return &js::GetReservedSlot(interfaceProto,
                               DOM_INTERFACE_PROTO_SLOTS_BASE).toObject();
@@ -2273,6 +2287,9 @@ ThreadsafeCheckIsChrome(JSContext* aCx, JSObject* aObj);
 void
 TraceGlobal(JSTracer* aTrc, JSObject* aObj);
 
+void
+FinalizeGlobal(JSFreeOp* aFop, JSObject* aObj);
+
 bool
 ResolveGlobal(JSContext* aCx, JS::Handle<JSObject*> aObj,
               JS::MutableHandle<jsid> aId, unsigned aFlags,
@@ -2322,6 +2339,8 @@ CreateGlobal(JSContext* aCx, T* aObject, nsWrapperCache* aCache,
     NS_WARNING("Failed to set proto");
     return nullptr;
   }
+
+  mozilla::HoldJSObjects(aObject);
 
   return global;
 }

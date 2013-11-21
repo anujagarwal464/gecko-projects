@@ -205,7 +205,7 @@ class IonBuilder : public MIRGenerator
     static int CmpSuccessors(const void *a, const void *b);
 
   public:
-    IonBuilder(JSContext *analysisContext, JSCompartment *comp, TempAllocator *temp, MIRGraph *graph,
+    IonBuilder(JSContext *analysisContext, CompileCompartment *comp, TempAllocator *temp, MIRGraph *graph,
                types::CompilerConstraintList *constraints,
                BaselineInspector *inspector, CompileInfo *info, BaselineFrame *baselineFrame,
                size_t inliningDepth = 0, uint32_t loopDepth = 0);
@@ -332,7 +332,18 @@ class IonBuilder : public MIRGenerator
 
     // Add a guard which ensure that the set of type which goes through this
     // generated code correspond to the observed types for the bytecode.
-    bool pushTypeBarrier(MInstruction *ins, types::TemporaryTypeSet *observed, bool needBarrier);
+    bool pushTypeBarrier(MDefinition *def, types::TemporaryTypeSet *observed, bool needBarrier);
+
+    // As pushTypeBarrier, but will compute the needBarrier boolean itself based
+    // on observed and the JSFunction that we're planning to call. The
+    // JSFunction must be a DOM method or getter.
+    bool pushDOMTypeBarrier(MInstruction *ins, types::TemporaryTypeSet *observed, JSFunction* func);
+
+    // If definiteType is not known or def already has the right type, just
+    // returns def.  Otherwise, returns an MInstruction that has that definite
+    // type, infallibly unboxing ins as needed.  The new instruction will be
+    // added to |current| in this case.
+    MDefinition *ensureDefiniteType(MDefinition* def, JSValueType definiteType);
 
     JSObject *getSingletonPrototype(JSFunction *target);
 
@@ -728,7 +739,7 @@ class IonBuilder : public MIRGenerator
         return callerBuilder_ != nullptr;
     }
 
-    JSAtomState &names() { return compartment->runtimeFromAnyThread()->atomState; }
+    const JSAtomState &names() { return compartment->runtime()->names(); }
 
   private:
     bool init();
@@ -816,9 +827,10 @@ class CallInfo
     bool setter_;
 
   public:
-    CallInfo(bool constructing)
+    CallInfo(TempAllocator &alloc, bool constructing)
       : fun_(nullptr),
         thisArg_(nullptr),
+        args_(alloc),
         constructing_(constructing),
         setter_(false)
     { }
@@ -914,10 +926,10 @@ class CallInfo
         setter_ = true;
     }
 
-    void wrapArgs(MBasicBlock *current) {
-        thisArg_ = wrap(current, thisArg_);
+    void wrapArgs(TempAllocator &alloc, MBasicBlock *current) {
+        thisArg_ = wrap(alloc, current, thisArg_);
         for (uint32_t i = 0; i < argc(); i++)
-            args_[i] = wrap(current, args_[i]);
+            args_[i] = wrap(alloc, current, args_[i]);
     }
 
     void unwrapArgs() {
@@ -958,9 +970,9 @@ class CallInfo
         block->discard(passArg);
         return wrapped;
     }
-    static MDefinition *wrap(MBasicBlock *current, MDefinition *arg) {
+    static MDefinition *wrap(TempAllocator &alloc, MBasicBlock *current, MDefinition *arg) {
         JS_ASSERT(!arg->isPassArg());
-        MPassArg *passArg = MPassArg::New(arg);
+        MPassArg *passArg = MPassArg::New(alloc, arg);
         current->add(passArg);
         return passArg;
     }

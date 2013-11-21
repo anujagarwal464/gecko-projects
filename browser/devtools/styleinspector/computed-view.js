@@ -229,7 +229,7 @@ CssHtmlTree.processTemplate = function CssHtmlTree_processTemplate(aTemplate,
 };
 
 XPCOMUtils.defineLazyGetter(CssHtmlTree, "_strings", function() Services.strings
-        .createBundle("chrome://browser/locale/devtools/styleinspector.properties"));
+        .createBundle("chrome://global/locale/devtools/styleinspector.properties"));
 
 XPCOMUtils.defineLazyGetter(this, "clipboardHelper", function() {
   return Cc["@mozilla.org/widget/clipboardhelper;1"].
@@ -572,10 +572,7 @@ CssHtmlTree.prototype = {
   _onContextMenu: function(event) {
     try {
       this.styleDocument.defaultView.focus();
-
-      this._contextmenu.openPopup(
-          event.target.ownerDocument.documentElement,
-          "overlap", event.clientX, event.clientY, true, false, null);
+      this._contextmenu.openPopupAtScreen(event.screenX, event.screenY, true);
     } catch(e) {
       console.error(e);
     }

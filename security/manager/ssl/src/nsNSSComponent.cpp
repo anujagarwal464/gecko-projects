@@ -831,6 +831,8 @@ typedef struct {
   bool enabledByDefault;
 } CipherPref;
 
+// Update the switch statement in HandshakeCallback in nsNSSCallbacks.cpp when
+// you add/remove cipher suites here.
 static const CipherPref sCipherPrefs[] = {
  { "security.ssl3.ecdhe_rsa_aes_128_gcm_sha256",
    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, true },
@@ -1057,6 +1059,10 @@ void nsNSSComponent::setValidationOptions()
   }
   CERT_SetOCSPTimeout(OCSPTimeoutSeconds);
 
+  // XXX: Always use POST for OCSP; see bug 871954 for undoing this.
+  bool ocspGetEnabled = Preferences::GetBool("security.OCSP.GET.enabled", false);
+  CERT_ForcePostMethodForOCSP(!ocspGetEnabled);
+
   mDefaultCertVerifier = new CertVerifier(
       aiaDownloadEnabled ? 
         CertVerifier::missing_cert_download_on : CertVerifier::missing_cert_download_off,
@@ -1068,7 +1074,9 @@ void nsNSSComponent::setValidationOptions()
         CertVerifier::ocsp_strict : CertVerifier::ocsp_relaxed,
       anyFreshRequired ?
         CertVerifier::any_revo_strict : CertVerifier::any_revo_relaxed,
-      firstNetworkRevo.get());
+      firstNetworkRevo.get(),
+      ocspGetEnabled ?
+        CertVerifier::ocsp_get_enabled : CertVerifier::ocsp_get_disabled);
 
   /*
     * The new defaults might change the validity of already established SSL sessions,
@@ -1730,6 +1738,7 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
                || prefName.Equals("security.missing_cert_download.enabled")
                || prefName.Equals("security.first_network_revocation_method")
                || prefName.Equals("security.OCSP.require")
+               || prefName.Equals("security.OCSP.GET.enabled")
                || prefName.Equals("security.ssl.enable_ocsp_stapling")) {
       MutexAutoLock lock(mutex);
       setValidationOptions();
@@ -2062,7 +2071,6 @@ nsresult InitializeCipherSuite()
     SSL_CipherPrefSetDefault(cipher_id, false);
   }
 
-  bool cipherEnabled;
   // Now only set SSL/TLS ciphers we knew about at compile time
   for (const CipherPref* cp = sCipherPrefs; cp->pref; ++cp) {
     bool cipherEnabled = Preferences::GetBool(cp->pref, cp->enabledByDefault);

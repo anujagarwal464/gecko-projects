@@ -404,7 +404,8 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
 
     DebuggerController.SourceScripts.togglePrettyPrint(source)
       .then(resetEditor, printError)
-      .then(DebuggerView.showEditor);
+      .then(DebuggerView.showEditor)
+      .then(this.updateToolbarButtonsState);
   },
 
   /**
@@ -1515,6 +1516,7 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
       case e.DOM_VK_RETURN:
       case e.DOM_VK_ENTER:
       case e.DOM_VK_ESCAPE:
+        e.stopPropagation();
         DebuggerView.editor.focus();
         return;
     }
@@ -2376,7 +2378,7 @@ LineResults.prototype = {
         firstMatch = firstMatch || lineChunkNode;
       }
       if (lineLength >= GLOBAL_SEARCH_LINE_MAX_LENGTH) {
-        lineContentsNode.appendChild(this._ellipsis.cloneNode());
+        lineContentsNode.appendChild(this._ellipsis.cloneNode(true));
         break;
       }
     }

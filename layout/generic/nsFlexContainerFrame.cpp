@@ -809,7 +809,7 @@ nsFlexContainerFrame::
   // get from reflowing into our available width.
   // Note: This has to come *after* we construct the FlexItem, since we
   // invoke at least one convenience method (ResolveStretchedCrossSize) which
-  // requires a FlexItem. 
+  // requires a FlexItem.
 
   // Give the item a special reflow with "mIsFlexContainerMeasuringHeight"
   // set.  This tells it to behave as if it had "height: auto", regardless
@@ -1943,7 +1943,7 @@ FlexboxAxisTracker::FlexboxAxisTracker(nsFlexContainerFrame* aFlexContainerFrame
   } else {
     mCrossAxis = blockDimension;
   }
-      
+
   // FIXME: Once we support "flex-wrap", check if it's "wrap-reverse"
   // here to determine whether we should reverse mCrossAxis.
   MOZ_ASSERT(IsAxisHorizontal(mMainAxis) != IsAxisHorizontal(mCrossAxis),
@@ -1968,8 +1968,6 @@ nsFlexContainerFrame::GenerateFlexItems(
 {
   MOZ_ASSERT(aFlexItems.IsEmpty(), "Expecting outparam to start out empty");
 
-  // XXXdholbert When we support multi-line, we  might want this to be a linked
-  // list, so we can easily split into multiple lines.
   aFlexItems.SetCapacity(mFrames.GetLength());
   for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
     FlexItem* item = aFlexItems.AppendElement(
@@ -2225,16 +2223,11 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
 
   const FlexboxAxisTracker axisTracker(this);
 
-  // Generate a list of our flex items (already sorted), and get our main
-  // size (which may depend on those items).
+  // Generate a list of our flex items (already sorted).
   nsTArray<FlexItem> items;
   nsresult rv = GenerateFlexItems(aPresContext, aReflowState,
                                   axisTracker, items);
   NS_ENSURE_SUCCESS(rv, rv);
-
-  // XXXdholbert FOR MULTI-LINE FLEX CONTAINERS: Do line-breaking here.
-  // This would produce an array of arrays, or a list of arrays,
-  // or something like that. (one list/array per line)
 
   const nscoord contentBoxMainSize =
     ComputeFlexContainerMainSize(aReflowState, axisTracker, items);

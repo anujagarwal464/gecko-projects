@@ -226,10 +226,23 @@ Zone::discardJitCode(FreeOp *fop)
             script->resetUseCount();
         }
 
-        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next())
-            jit::FinishDiscardJitCode(fop, comp);
+        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next()) {
+            /* Free optimized baseline stubs. */
+            if (comp->jitCompartment())
+                comp->jitCompartment()->optimizedStubSpace()->free();
+
+            comp->types.clearCompilerOutputs(fop);
+        }
     }
 #endif
+}
+
+uint64_t
+Zone::gcNumber()
+{
+    // Zones in use by exclusive threads are not collected, and threads using
+    // them cannot access the main runtime's gcNumber without racing.
+    return usedByExclusiveThread ? 0 : runtimeFromMainThread()->gcNumber;
 }
 
 JS::Zone *

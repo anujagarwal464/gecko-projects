@@ -53,6 +53,23 @@ ContentHostBase::DestroyFrontHost()
 }
 
 void
+ContentHostBase::OnActorDestroy()
+{
+  if (mDeprecatedTextureHost) {
+    mDeprecatedTextureHost->OnActorDestroy();
+  }
+  if (mDeprecatedTextureHostOnWhite) {
+    mDeprecatedTextureHostOnWhite->OnActorDestroy();
+  }
+  if (mNewFrontHost) {
+    mNewFrontHost->OnActorDestroy();
+  }
+  if (mNewFrontHostOnWhite) {
+    mNewFrontHostOnWhite->OnActorDestroy();
+  }
+}
+
+void
 ContentHostBase::Composite(EffectChain& aEffectChain,
                            float aOpacity,
                            const gfx::Matrix4x4& aTransform,
@@ -409,19 +426,16 @@ ContentHostDoubleBuffered::DestroyTextures()
                "We won't be able to destroy our SurfaceDescriptor");
     mNewFrontHost = nullptr;
   }
-
   if (mNewFrontHostOnWhite) {
     MOZ_ASSERT(mNewFrontHostOnWhite->GetDeAllocator(),
                "We won't be able to destroy our SurfaceDescriptor");
     mNewFrontHostOnWhite = nullptr;
   }
-
   if (mBackHost) {
     MOZ_ASSERT(mBackHost->GetDeAllocator(),
                "We won't be able to destroy our SurfaceDescriptor");
     mBackHost = nullptr;
   }
-
   if (mBackHostOnWhite) {
     MOZ_ASSERT(mBackHostOnWhite->GetDeAllocator(),
                "We won't be able to destroy our SurfaceDescriptor");
@@ -429,6 +443,29 @@ ContentHostDoubleBuffered::DestroyTextures()
   }
 
   // don't touch mDeprecatedTextureHost, we might need it for compositing
+}
+
+void
+ContentHostDoubleBuffered::OnActorDestroy()
+{
+  if (mDeprecatedTextureHost) {
+    mDeprecatedTextureHost->OnActorDestroy();
+  }
+  if (mDeprecatedTextureHostOnWhite) {
+    mDeprecatedTextureHostOnWhite->OnActorDestroy();
+  }
+  if (mNewFrontHost) {
+    mNewFrontHost->OnActorDestroy();
+  }
+  if (mNewFrontHostOnWhite) {
+    mNewFrontHostOnWhite->OnActorDestroy();
+  }
+  if (mBackHost) {
+    mBackHost->OnActorDestroy();
+  }
+  if (mBackHostOnWhite) {
+    mBackHostOnWhite->OnActorDestroy();
+  }
 }
 
 void
@@ -495,6 +532,7 @@ ContentHostIncremental::EnsureDeprecatedTextureHostIncremental(ISurfaceAllocator
   mUpdateList.AppendElement(new TextureCreationRequest(aTextureInfo,
                                                        aBufferRect));
   mDeAllocator = aAllocator;
+  FlushUpdateQueue();
 }
 
 void
@@ -510,6 +548,20 @@ ContentHostIncremental::UpdateIncremental(TextureIdentifier aTextureId,
                                                      aUpdated,
                                                      aBufferRect,
                                                      aBufferRotation));
+  FlushUpdateQueue();
+}
+
+void
+ContentHostIncremental::FlushUpdateQueue()
+{
+  // If we're not compositing for some reason (the window being minimized
+  // is one example), then we never process these updates and it can consume
+  // huge amounts of memory. Instead we forcibly process the updates (during the
+  // transaction) if the list gets too long.
+  static const uint32_t kMaxUpdateCount = 6;
+  if (mUpdateList.Length() >= kMaxUpdateCount) {
+    ProcessTextureUpdates();
+  }
 }
 
 void
@@ -701,7 +753,6 @@ ContentHostIncremental::TextureUpdateRequest::Execute(ContentHostIncremental* aH
   }
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 void
 ContentHostSingleBuffered::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -748,7 +799,6 @@ ContentHostDoubleBuffered::PrintInfo(nsACString& aTo, const char* aPrefix)
     mBackHost->PrintInfo(aTo, prefix.get());
   }
 }
-#endif
 
 #ifdef MOZ_DUMP_PAINTING
 void

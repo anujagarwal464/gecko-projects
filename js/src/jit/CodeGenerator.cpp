@@ -377,7 +377,10 @@ CodeGenerator::visitFloat32ToInt32(LFloat32ToInt32 *lir)
 }
 
 void
-CodeGenerator::emitOOLTestObject(Register objreg, Label *ifTruthy, Label *ifFalsy, Register scratch)
+CodeGenerator::emitOOLTestObject(Register objreg,
+                                 Label *ifEmulatesUndefined,
+                                 Label *ifDoesntEmulateUndefined,
+                                 Register scratch)
 {
     saveVolatile(scratch);
     masm.setupUnalignedABICall(1, scratch);
@@ -386,8 +389,8 @@ CodeGenerator::emitOOLTestObject(Register objreg, Label *ifTruthy, Label *ifFals
     masm.storeCallResult(scratch);
     restoreVolatile(scratch);
 
-    masm.branchIfTrueBool(scratch, ifFalsy);
-    masm.jump(ifTruthy);
+    masm.branchIfTrueBool(scratch, ifEmulatesUndefined);
+    masm.jump(ifDoesntEmulateUndefined);
 }
 
 // Base out-of-line code generator for all tests of the truthiness of an
@@ -403,36 +406,39 @@ class OutOfLineTestObject : public OutOfLineCodeBase<CodeGenerator>
     Register objreg_;
     Register scratch_;
 
-    Label *ifTruthy_;
-    Label *ifFalsy_;
+    Label *ifEmulatesUndefined_;
+    Label *ifDoesntEmulateUndefined_;
 
 #ifdef DEBUG
-    bool initialized() { return ifTruthy_ != nullptr; }
+    bool initialized() { return ifEmulatesUndefined_ != nullptr; }
 #endif
 
   public:
     OutOfLineTestObject()
 #ifdef DEBUG
-      : ifTruthy_(nullptr), ifFalsy_(nullptr)
+      : ifEmulatesUndefined_(nullptr), ifDoesntEmulateUndefined_(nullptr)
 #endif
     { }
 
     bool accept(CodeGenerator *codegen) MOZ_FINAL MOZ_OVERRIDE {
         MOZ_ASSERT(initialized());
-        codegen->emitOOLTestObject(objreg_, ifTruthy_, ifFalsy_, scratch_);
+        codegen->emitOOLTestObject(objreg_, ifEmulatesUndefined_, ifDoesntEmulateUndefined_,
+                                   scratch_);
         return true;
     }
 
     // Specify the register where the object to be tested is found, labels to
     // jump to if the object is truthy or falsy, and a scratch register for
     // use in the out-of-line path.
-    void setInputAndTargets(Register objreg, Label *ifTruthy, Label *ifFalsy, Register scratch) {
+    void setInputAndTargets(Register objreg, Label *ifEmulatesUndefined, Label *ifDoesntEmulateUndefined,
+                            Register scratch)
+    {
         MOZ_ASSERT(!initialized());
-        MOZ_ASSERT(ifTruthy);
+        MOZ_ASSERT(ifEmulatesUndefined);
         objreg_ = objreg;
         scratch_ = scratch;
-        ifTruthy_ = ifTruthy;
-        ifFalsy_ = ifFalsy;
+        ifEmulatesUndefined_ = ifEmulatesUndefined;
+        ifDoesntEmulateUndefined_ = ifDoesntEmulateUndefined;
     }
 };
 
@@ -453,25 +459,51 @@ class OutOfLineTestObjectWithLabels : public OutOfLineTestObject
 };
 
 void
-CodeGenerator::testObjectTruthy(Register objreg, Label *ifTruthy, Label *ifFalsy, Register scratch,
-                                OutOfLineTestObject *ool)
+CodeGenerator::testObjectEmulatesUndefinedKernel(Register objreg,
+                                                 Label *ifEmulatesUndefined,
+                                                 Label *ifDoesntEmulateUndefined,
+                                                 Register scratch, OutOfLineTestObject *ool)
 {
-    ool->setInputAndTargets(objreg, ifTruthy, ifFalsy, scratch);
+    ool->setInputAndTargets(objreg, ifEmulatesUndefined, ifDoesntEmulateUndefined, scratch);
 
     // Perform a fast-path check of the object's class flags if the object's
     // not a proxy.  Let out-of-line code handle the slow cases that require
     // saving registers, making a function call, and restoring registers.
-    Assembler::Condition cond = masm.branchTestObjectTruthy(true, objreg, scratch, ool->entry());
-    masm.j(cond, ifTruthy);
-    masm.jump(ifFalsy);
+    Assembler::Condition cond = masm.branchTestObjectTruthy(false, objreg, scratch, ool->entry());
+    masm.j(cond, ifEmulatesUndefined);
 }
 
 void
-CodeGenerator::testValueTruthy(const ValueOperand &value,
-                               const LDefinition *scratch1, const LDefinition *scratch2,
-                               FloatRegister fr,
-                               Label *ifTruthy, Label *ifFalsy,
-                               OutOfLineTestObject *ool)
+CodeGenerator::branchTestObjectEmulatesUndefined(Register objreg,
+                                                 Label *ifEmulatesUndefined,
+                                                 Label *ifDoesntEmulateUndefined,
+                                                 Register scratch, OutOfLineTestObject *ool)
+{
+    MOZ_ASSERT(!ifDoesntEmulateUndefined->bound(),
+               "ifDoesntEmulateUndefined will be bound to the fallthrough path");
+
+    testObjectEmulatesUndefinedKernel(objreg, ifEmulatesUndefined, ifDoesntEmulateUndefined,
+                                      scratch, ool);
+    masm.bind(ifDoesntEmulateUndefined);
+}
+
+void
+CodeGenerator::testObjectEmulatesUndefined(Register objreg,
+                                           Label *ifEmulatesUndefined,
+                                           Label *ifDoesntEmulateUndefined,
+                                           Register scratch, OutOfLineTestObject *ool)
+{
+    testObjectEmulatesUndefinedKernel(objreg, ifEmulatesUndefined, ifDoesntEmulateUndefined,
+                                      scratch, ool);
+    masm.jump(ifDoesntEmulateUndefined);
+}
+
+void
+CodeGenerator::testValueTruthyKernel(const ValueOperand &value,
+                                     const LDefinition *scratch1, const LDefinition *scratch2,
+                                     FloatRegister fr,
+                                     Label *ifTruthy, Label *ifFalsy,
+                                     OutOfLineTestObject *ool)
 {
     Register tag = masm.splitTagForTest(value);
     Assembler::Condition cond;
@@ -502,7 +534,7 @@ CodeGenerator::testValueTruthy(const ValueOperand &value,
         masm.branchTestObject(Assembler::NotEqual, tag, &notObject);
 
         Register objreg = masm.extractObject(value, ToRegister(scratch1));
-        testObjectTruthy(objreg, ifTruthy, ifFalsy, ToRegister(scratch2), ool);
+        testObjectEmulatesUndefined(objreg, ifFalsy, ifTruthy, ToRegister(scratch2), ool);
 
         masm.bind(&notObject);
     } else {
@@ -521,6 +553,18 @@ CodeGenerator::testValueTruthy(const ValueOperand &value,
     masm.unboxDouble(value, fr);
     cond = masm.testDoubleTruthy(false, fr);
     masm.j(cond, ifFalsy);
+
+    // Fall through for truthy.
+}
+
+void
+CodeGenerator::testValueTruthy(const ValueOperand &value,
+                               const LDefinition *scratch1, const LDefinition *scratch2,
+                               FloatRegister fr,
+                               Label *ifTruthy, Label *ifFalsy,
+                               OutOfLineTestObject *ool)
+{
+    testValueTruthyKernel(value, scratch1, scratch2, fr, ifTruthy, ifFalsy, ool);
     masm.jump(ifTruthy);
 }
 
@@ -557,8 +601,8 @@ CodeGenerator::visitTestOAndBranch(LTestOAndBranch *lir)
     Label *truthy = getJumpLabelForBranch(lir->ifTruthy());
     Label *falsy = getJumpLabelForBranch(lir->ifFalsy());
 
-    testObjectTruthy(ToRegister(lir->input()), truthy, falsy,
-                     ToRegister(lir->temp()), ool);
+    testObjectEmulatesUndefined(ToRegister(lir->input()), falsy, truthy,
+                                ToRegister(lir->temp()), ool);
     return true;
 
 }
@@ -668,7 +712,7 @@ CodeGenerator::visitIntToString(LIntToString *lir)
     masm.branch32(Assembler::AboveOrEqual, input, Imm32(StaticStrings::INT_STATIC_LIMIT),
                   ool->entry());
 
-    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings.intStaticTable), output);
+    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings().intStaticTable), output);
     masm.loadPtr(BaseIndex(output, input, ScalePointer), output);
 
     masm.bind(ool->rejoin());
@@ -697,7 +741,7 @@ CodeGenerator::visitDoubleToString(LDoubleToString *lir)
     masm.branch32(Assembler::AboveOrEqual, temp, Imm32(StaticStrings::INT_STATIC_LIMIT),
                   ool->entry());
 
-    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings.intStaticTable), output);
+    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings().intStaticTable), output);
     masm.loadPtr(BaseIndex(output, temp, ScalePointer), output);
 
     masm.bind(ool->rejoin());
@@ -754,7 +798,6 @@ CodeGenerator::visitLambda(LLambda *lir)
     if (!ool)
         return false;
 
-    JS_ASSERT(gen->compartment == info.fun->compartment());
     JS_ASSERT(!info.singletonType);
 
     masm.newGCThing(output, info.fun, ool->entry());
@@ -1540,7 +1583,7 @@ CodeGenerator::visitPostWriteBarrierO(LPostWriteBarrierO *lir)
     if (!addOutOfLineCode(ool))
         return false;
 
-    Nursery &nursery = GetIonContext()->runtime->gcNursery;
+    const Nursery &nursery = GetIonContext()->runtime->gcNursery();
 
     if (lir->object()->isConstant()) {
         JS_ASSERT(!nursery.isInside(&lir->object()->toConstant()->toObject()));
@@ -1572,7 +1615,7 @@ CodeGenerator::visitPostWriteBarrierV(LPostWriteBarrierV *lir)
     ValueOperand value = ToValue(lir, LPostWriteBarrierV::Input);
     masm.branchTestObject(Assembler::NotEqual, value, ool->rejoin());
 
-    Nursery &nursery = GetIonContext()->runtime->gcNursery;
+    const Nursery &nursery = GetIonContext()->runtime->gcNursery();
 
     if (lir->object()->isConstant()) {
         JS_ASSERT(!nursery.isInside(&lir->object()->toConstant()->toObject()));
@@ -1601,7 +1644,7 @@ CodeGenerator::visitPostWriteBarrierAllSlots(LPostWriteBarrierAllSlots *lir)
     if (!addOutOfLineCode(ool))
         return false;
 
-    Nursery &nursery = GetIonContext()->runtime->gcNursery;
+    const Nursery &nursery = GetIonContext()->runtime->gcNursery();
 
     if (lir->object()->isConstant()) {
         JS_ASSERT(!nursery.isInside(&lir->object()->toConstant()->toObject()));
@@ -2455,11 +2498,9 @@ CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed *lir)
     // Ion may legally place frames very close to the limit. Calling additional
     // C functions may then violate the limit without any checking.
 
-    JSRuntime *rt = GetIonContext()->runtime;
-
     // Since Ion frames exist on the C stack, the stack limit may be
     // dynamically set by JS_SetThreadStackLimit() and JS_SetNativeStackQuota().
-    uintptr_t *limitAddr = &rt->mainThread.ionStackLimit;
+    const void *limitAddr = GetIonContext()->runtime->addressOfIonStackLimit();
 
     CheckOverRecursedFailure *ool = new CheckOverRecursedFailure(lir);
     if (!addOutOfLineCode(ool))
@@ -3822,7 +3863,7 @@ CodeGenerator::visitMathFunctionD(LMathFunctionD *ins)
     FloatRegister input = ToFloatRegister(ins->input());
     JS_ASSERT(ToFloatRegister(ins->output()) == ReturnFloatReg);
 
-    MathCache *mathCache = ins->mir()->cache();
+    const MathCache *mathCache = ins->mir()->cache();
 
     masm.setupUnalignedABICall(mathCache ? 2 : 1, temp);
     if (mathCache) {
@@ -4184,15 +4225,15 @@ CodeGenerator::visitIsNullOrLikeUndefined(LIsNullOrLikeUndefined *lir)
             masm.branchTestObject(Assembler::NotEqual, tag, notNullOrLikeUndefined);
 
             Register objreg = masm.extractObject(value, ToTempUnboxRegister(lir->tempToUnbox()));
-            testObjectTruthy(objreg, notNullOrLikeUndefined, nullOrLikeUndefined,
-                             ToRegister(lir->temp()), ool);
+            branchTestObjectEmulatesUndefined(objreg, nullOrLikeUndefined, notNullOrLikeUndefined,
+                                              ToRegister(lir->temp()), ool);
+            // fall through
         }
 
         Label done;
 
         // It's not null or undefined, and if it's an object it doesn't
         // emulate undefined, so it's not like undefined.
-        masm.bind(notNullOrLikeUndefined);
         masm.move32(Imm32(op == JSOP_NE), output);
         masm.jump(&done);
 
@@ -4264,7 +4305,8 @@ CodeGenerator::visitIsNullOrLikeUndefinedAndBranch(LIsNullOrLikeUndefinedAndBran
 
             // Objects that emulate undefined are loosely equal to null/undefined.
             Register objreg = masm.extractObject(value, ToTempUnboxRegister(lir->tempToUnbox()));
-            testObjectTruthy(objreg, ifFalseLabel, ifTrueLabel, ToRegister(lir->temp()), ool);
+            Register scratch = ToRegister(lir->temp());
+            testObjectEmulatesUndefined(objreg, ifTrueLabel, ifFalseLabel, scratch, ool);
         } else {
             masm.jump(ifFalseLabel);
         }
@@ -4304,11 +4346,11 @@ CodeGenerator::visitEmulatesUndefined(LEmulatesUndefined *lir)
 
     Register objreg = ToRegister(lir->input());
     Register output = ToRegister(lir->output());
-    testObjectTruthy(objreg, doesntEmulateUndefined, emulatesUndefined, output, ool);
+    branchTestObjectEmulatesUndefined(objreg, emulatesUndefined, doesntEmulateUndefined,
+                                      output, ool);
 
     Label done;
 
-    masm.bind(doesntEmulateUndefined);
     masm.move32(Imm32(op == JSOP_NE), output);
     masm.jump(&done);
 
@@ -4356,7 +4398,7 @@ CodeGenerator::visitEmulatesUndefinedAndBranch(LEmulatesUndefinedAndBranch *lir)
 
     Register objreg = ToRegister(lir->input());
 
-    testObjectTruthy(objreg, unequal, equal, ToRegister(lir->temp()), ool);
+    testObjectEmulatesUndefined(objreg, equal, unequal, ToRegister(lir->temp()), ool);
     return true;
 }
 
@@ -4375,7 +4417,7 @@ CodeGenerator::emitConcat(LInstruction *lir, Register lhs, Register rhs, Registe
         return false;
 
     ExecutionMode mode = gen->info().executionMode();
-    IonCode *stringConcatStub = gen->jitCompartment()->stringConcatStub(mode);
+    IonCode *stringConcatStub = gen->compartment->jitCompartment()->stringConcatStub(mode);
     masm.call(stringConcatStub);
     masm.branchTestPtr(Assembler::Zero, output, output, ool->entry());
 
@@ -4645,7 +4687,7 @@ CodeGenerator::visitFromCharCode(LFromCharCode *lir)
     masm.branch32(Assembler::AboveOrEqual, code, Imm32(StaticStrings::UNIT_STATIC_LIMIT),
                   ool->entry());
 
-    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings.unitStaticTable), output);
+    masm.movePtr(ImmPtr(&GetIonContext()->runtime->staticStrings().unitStaticTable), output);
     masm.loadPtr(BaseIndex(output, code, ScalePointer), output);
 
     masm.bind(ool->rejoin());
@@ -4696,20 +4738,21 @@ CodeGenerator::visitNotO(LNotO *lir)
     if (!addOutOfLineCode(ool))
         return false;
 
-    Label *ifTruthy = ool->label1();
-    Label *ifFalsy = ool->label2();
+    Label *ifEmulatesUndefined = ool->label1();
+    Label *ifDoesntEmulateUndefined = ool->label2();
 
     Register objreg = ToRegister(lir->input());
     Register output = ToRegister(lir->output());
-    testObjectTruthy(objreg, ifTruthy, ifFalsy, output, ool);
+    branchTestObjectEmulatesUndefined(objreg, ifEmulatesUndefined, ifDoesntEmulateUndefined,
+                                      output, ool);
+    // fall through
 
     Label join;
 
-    masm.bind(ifTruthy);
     masm.move32(Imm32(0), output);
     masm.jump(&join);
 
-    masm.bind(ifFalsy);
+    masm.bind(ifEmulatesUndefined);
     masm.move32(Imm32(1), output);
 
     masm.bind(&join);
@@ -4737,19 +4780,21 @@ CodeGenerator::visitNotV(LNotV *lir)
         ifFalsy = ifFalsyLabel.addr();
     }
 
-    testValueTruthy(ToValue(lir, LNotV::Input), lir->temp1(), lir->temp2(),
-                    ToFloatRegister(lir->tempFloat()),
-                    ifTruthy, ifFalsy, ool);
+    testValueTruthyKernel(ToValue(lir, LNotV::Input), lir->temp1(), lir->temp2(),
+                          ToFloatRegister(lir->tempFloat()),
+                          ifTruthy, ifFalsy, ool);
 
     Label join;
     Register output = ToRegister(lir->output());
 
-    masm.bind(ifFalsy);
-    masm.move32(Imm32(1), output);
-    masm.jump(&join);
-
+    // Note that the testValueTruthyKernel call above may choose to fall through
+    // to ifTruthy instead of branching there.
     masm.bind(ifTruthy);
     masm.move32(Imm32(0), output);
+    masm.jump(&join);
+
+    masm.bind(ifFalsy);
+    masm.move32(Imm32(1), output);
 
     // both branches meet here.
     masm.bind(&join);
@@ -5297,7 +5342,7 @@ CodeGenerator::visitIteratorStart(LIteratorStart *lir)
     JS_ASSERT(flags == JSITER_ENUMERATE);
 
     // Fetch the most recent iterator and ensure it's not nullptr.
-    masm.loadPtr(AbsoluteAddress(&GetIonContext()->runtime->nativeIterCache.last), output);
+    masm.loadPtr(AbsoluteAddress(GetIonContext()->runtime->addressOfLastCachedNativeIterator()), output);
     masm.branchTestPtr(Assembler::Zero, output, output, ool->entry());
 
     // Load NativeIterator.
@@ -5358,7 +5403,7 @@ CodeGenerator::visitIteratorStart(LIteratorStart *lir)
     masm.or32(Imm32(JSITER_ACTIVE), Address(niTemp, offsetof(NativeIterator, flags)));
 
     // Chain onto the active iterator stack.
-    masm.loadPtr(AbsoluteAddress(&gen->compartment->enumerators), temp1);
+    masm.loadPtr(AbsoluteAddress(gen->compartment->addressOfEnumerators()), temp1);
 
     // ni->next = list
     masm.storePtr(temp1, Address(niTemp, NativeIterator::offsetOfNext()));
@@ -5700,7 +5745,7 @@ CodeGenerator::generate()
             gen->info().script()->filename(),
             gen->info().script()->lineno);
 
-    if (!safepoints_.init(graph.totalSlotCount()))
+    if (!safepoints_.init(gen->alloc(), graph.totalSlotCount()))
         return false;
 
 #if JS_TRACE_LOGGING
@@ -5781,7 +5826,7 @@ CodeGenerator::link(JSContext *cx, types::CompilerConstraintList *constraints)
 
     // List of possible scripts that this graph may call. Currently this is
     // only tracked when compiling for parallel execution.
-    CallTargetVector callTargets;
+    CallTargetVector callTargets(alloc());
     if (executionMode == ParallelExecution)
         AddPossibleCallees(cx, graph.mir(), callTargets);
 
@@ -6685,7 +6730,7 @@ CodeGenerator::visitTypeOfV(LTypeOfV *lir)
     Register output = ToRegister(lir->output());
     Register tag = masm.splitTagForTest(value);
 
-    JSRuntime *rt = GetIonContext()->runtime;
+    const JSAtomState &names = GetIonContext()->runtime->names();
     Label done;
 
     OutOfLineTypeOfV *ool = nullptr;
@@ -6702,36 +6747,36 @@ CodeGenerator::visitTypeOfV(LTypeOfV *lir)
         // it's an object the result is always "object".
         Label notObject;
         masm.branchTestObject(Assembler::NotEqual, tag, &notObject);
-        masm.movePtr(ImmGCPtr(rt->atomState.object), output);
+        masm.movePtr(ImmGCPtr(names.object), output);
         masm.jump(&done);
         masm.bind(&notObject);
     }
 
     Label notNumber;
     masm.branchTestNumber(Assembler::NotEqual, tag, &notNumber);
-    masm.movePtr(ImmGCPtr(rt->atomState.number), output);
+    masm.movePtr(ImmGCPtr(names.number), output);
     masm.jump(&done);
     masm.bind(&notNumber);
 
     Label notUndefined;
     masm.branchTestUndefined(Assembler::NotEqual, tag, &notUndefined);
-    masm.movePtr(ImmGCPtr(rt->atomState.undefined), output);
+    masm.movePtr(ImmGCPtr(names.undefined), output);
     masm.jump(&done);
     masm.bind(&notUndefined);
 
     Label notNull;
     masm.branchTestNull(Assembler::NotEqual, tag, &notNull);
-    masm.movePtr(ImmGCPtr(rt->atomState.object), output);
+    masm.movePtr(ImmGCPtr(names.object), output);
     masm.jump(&done);
     masm.bind(&notNull);
 
     Label notBoolean;
     masm.branchTestBoolean(Assembler::NotEqual, tag, &notBoolean);
-    masm.movePtr(ImmGCPtr(rt->atomState.boolean), output);
+    masm.movePtr(ImmGCPtr(names.boolean), output);
     masm.jump(&done);
     masm.bind(&notBoolean);
 
-    masm.movePtr(ImmGCPtr(rt->atomState.string), output);
+    masm.movePtr(ImmGCPtr(names.string), output);
 
     masm.bind(&done);
     if (ool)

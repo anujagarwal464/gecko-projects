@@ -62,10 +62,6 @@ DEBUGGER_INFO = {
     "interactive": True,
     "args": "-q --args"
   },
-  "cgdb": {
-    "interactive": True,
-    "args": "-q --args"
-  },
 
   "lldb": {
     "interactive": True,
@@ -402,7 +398,7 @@ def systemMemory():
   """
   return int(os.popen("free").readlines()[1].split()[1])
 
-def environment(xrePath, env=None, crashreporter=True):
+def environment(xrePath, env=None, crashreporter=True, debugger=False):
   """populate OS environment variables for mochitest"""
 
   env = os.environ.copy() if env is None else env
@@ -430,7 +426,7 @@ def environment(xrePath, env=None, crashreporter=True):
   env['XRE_NO_WINDOWS_CRASH_DIALOG'] = '1'
   env['NS_TRACE_MALLOC_DISABLE_STACKS'] = '1'
 
-  if crashreporter:
+  if crashreporter and not debugger:
     env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
     env['MOZ_CRASHREPORTER'] = '1'
   else:
@@ -457,20 +453,13 @@ def environment(xrePath, env=None, crashreporter=True):
 
       totalMemory = systemMemory()
 
-      # Only 2 GB RAM or less available? Use custom ASan options to reduce
+      # Only 4 GB RAM or less available? Use custom ASan options to reduce
       # the amount of resources required to do the tests. Standard options
       # will otherwise lead to OOM conditions on the current test slaves.
-      #
-      # If we have more than 2 GB or RAM but still less than 4 GB, we need
-      # another set of options to prevent OOM in some memory-intensive
-      # tests.
       message = "INFO | runtests.py | ASan running in %s configuration"
-      if totalMemory <= 1024 * 1024 * 2:
+      if totalMemory <= 1024 * 1024 * 4:
         message = message % 'low-memory'
-        env["ASAN_OPTIONS"] = "quarantine_size=50331648:redzone=64"
-      elif totalMemory <= 1024 * 1024 * 4:
-        message = message % 'mid-memory'
-        env["ASAN_OPTIONS"] = "quarantine_size=80530636:redzone=64"
+        env["ASAN_OPTIONS"] = "quarantine_size=50331648"
       else:
         message = message % 'default memory'
     except OSError,err:

@@ -174,56 +174,6 @@
 #include "nsINode.h"
 
 /***************************************************************************/
-// Compile time switches for instrumentation and stuff....
-
-// Note that one would not normally turn *any* of these on in a non-DEBUG build.
-
-#if defined(DEBUG_jband) || defined(DEBUG_jst) || defined(DEBUG_dbradley) || defined(DEBUG_shaver_no) || defined(DEBUG_timeless)
-#define DEBUG_xpc_hacker
-#endif
-
-#if defined(DEBUG_brendan)
-#define DEBUG_XPCNativeWrapper 1
-#endif
-
-#ifdef DEBUG
-#define XPC_DETECT_LEADING_UPPERCASE_ACCESS_ERRORS
-#endif
-
-#if defined(DEBUG_xpc_hacker)
-#define XPC_DUMP_AT_SHUTDOWN
-#define XPC_TRACK_WRAPPER_STATS
-#define XPC_TRACK_SCOPE_STATS
-#define XPC_TRACK_PROTO_STATS
-#define XPC_TRACK_DEFERRED_RELEASES
-#define XPC_CHECK_WRAPPERS_AT_SHUTDOWN
-#define XPC_REPORT_SHADOWED_WRAPPED_NATIVE_MEMBERS
-#define XPC_CHECK_CLASSINFO_CLAIMS
-#if defined(DEBUG_jst)
-#define XPC_ASSERT_CLASSINFO_CLAIMS
-#endif
-//#define DEBUG_stats_jband 1
-//#define XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
-//#define XPC_REPORT_JSCLASS_FLUSHING
-//#define XPC_TRACK_AUTOMARKINGPTR_STATS
-#endif
-
-#if defined(DEBUG_dbaron) || defined(DEBUG_bzbarsky) // only part of DEBUG_xpc_hacker!
-#define XPC_DUMP_AT_SHUTDOWN
-#endif
-
-/***************************************************************************/
-// conditional forward declarations....
-
-#ifdef XPC_REPORT_SHADOWED_WRAPPED_NATIVE_MEMBERS
-void DEBUG_ReportShadowedMembers(XPCNativeSet* set,
-                                 XPCWrappedNative* wrapper,
-                                 XPCWrappedNativeProto* proto);
-#else
-#define DEBUG_ReportShadowedMembers(set, wrapper, proto) ((void)0)
-#endif
-
-/***************************************************************************/
 // default initial sizes for maps (hashtables)
 
 #define XPC_CONTEXT_MAP_SIZE                16
@@ -726,7 +676,8 @@ public:
     void TraverseAdditionalNativeRoots(nsCycleCollectionNoteRootCallback& cb) MOZ_OVERRIDE;
     void UnmarkSkippableJSHolders();
     void PrepareForForgetSkippable() MOZ_OVERRIDE;
-    void PrepareForCollection() MOZ_OVERRIDE;
+    void BeginCycleCollectionCallback() MOZ_OVERRIDE;
+    void EndCycleCollectionCallback(mozilla::CycleCollectorResults &aResults) MOZ_OVERRIDE;
     void DispatchDeferredDeletion(bool continuation) MOZ_OVERRIDE;
 
     void CustomGCCallback(JSGCStatus status) MOZ_OVERRIDE;
@@ -753,23 +704,6 @@ public:
 
     XPCReadableJSStringWrapper *NewStringWrapper(const PRUnichar *str, uint32_t len);
     void DeleteString(nsAString *string);
-
-#ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
-   void DEBUG_AddWrappedNative(nsIXPConnectWrappedNative* wrapper)
-        {XPCAutoLock lock(GetMapLock());
-         PLDHashEntryHdr *entry =
-            PL_DHashTableOperate(DEBUG_WrappedNativeHashtable,
-                                 wrapper, PL_DHASH_ADD);
-         if (entry) ((PLDHashEntryStub *)entry)->key = wrapper;}
-
-   void DEBUG_RemoveWrappedNative(nsIXPConnectWrappedNative* wrapper)
-        {XPCAutoLock lock(GetMapLock());
-         PL_DHashTableOperate(DEBUG_WrappedNativeHashtable,
-                              wrapper, PL_DHASH_REMOVE);}
-private:
-   PLDHashTable* DEBUG_WrappedNativeHashtable;
-public:
-#endif
 
     void AddGCCallback(xpcGCCallback cb);
     void RemoveGCCallback(xpcGCCallback cb);
@@ -2100,7 +2034,7 @@ protected:
               bool callPostCreatePrototype);
 
 private:
-#if defined(DEBUG_xpc_hacker) || defined(DEBUG)
+#ifdef DEBUG
     static int32_t gDEBUG_LiveProtoCount;
 #endif
 
@@ -2430,10 +2364,6 @@ public:
     void ASSERT_SetsNotMarked() const
         {mSet->ASSERT_NotMarked();
          if (HasProto()){GetProto()->ASSERT_SetNotMarked();}}
-
-    int DEBUG_CountOfTearoffChunks() const
-        {int i = 0; const XPCWrappedNativeTearOffChunk* to;
-         for (to = &mFirstChunk; to; to = to->mNextChunk) {i++;} return i;}
 #endif
 
     inline void SweepTearOffs();
@@ -2731,12 +2661,6 @@ public:
     bool IsAggregatedToNative() const {return mRoot->mOuter != nullptr;}
     nsISupports* GetAggregatedNativeObject() const {return mRoot->mOuter;}
 
-    void SetIsMainThreadOnly() {
-        MOZ_ASSERT(mMainThread);
-        mMainThreadOnly = true;
-    }
-    bool IsMainThreadOnly() const {return mMainThreadOnly;}
-
     void TraceJS(JSTracer* trc);
     static void GetTraceName(JSTracer* trc, char *buf, size_t bufsize);
 
@@ -2757,8 +2681,6 @@ private:
     nsXPCWrappedJS* mRoot;
     nsXPCWrappedJS* mNext;
     nsISupports* mOuter;    // only set in root
-    bool mMainThread;
-    bool mMainThreadOnly;
 };
 
 /***************************************************************************/
@@ -3112,6 +3034,7 @@ public:
         return mStack.IsEmpty() ? nullptr : mStack[mStack.Length() - 1].cx;
     }
 
+    JSContext *InitSafeJSContext();
     JSContext *GetSafeJSContext();
     bool HasJSContext(JSContext *cx);
 
@@ -3758,11 +3681,12 @@ public:
         LocationHintAddon
     };
 
-    CompartmentPrivate()
+    CompartmentPrivate(JSCompartment *c)
         : wantXrays(false)
         , universalXPConnectEnabled(false)
         , adoptedNode(false)
         , donatedNode(false)
+        , scriptability(c)
         , scope(nullptr)
     {
         MOZ_COUNT_CTOR(xpc::CompartmentPrivate);
@@ -3781,6 +3705,9 @@ public:
     // for telemetry. See bug 928476.
     bool adoptedNode;
     bool donatedNode;
+
+    // The scriptability of this compartment.
+    Scriptability scriptability;
 
     // Our XPCWrappedNativeScope. This is non-null if and only if this is an
     // XPConnect compartment.
@@ -3860,6 +3787,9 @@ GetObjectScope(JSObject *obj)
 {
     return EnsureCompartmentPrivate(obj)->scope;
 }
+
+// This returns null if a scope doesn't already exist.
+XPCWrappedNativeScope* MaybeGetObjectScope(JSObject *obj);
 
 extern bool gDebugMode;
 extern bool gDesiredDebugMode;

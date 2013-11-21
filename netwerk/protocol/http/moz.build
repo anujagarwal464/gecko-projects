@@ -21,8 +21,6 @@ XPIDL_SOURCES += [
 
 XPIDL_MODULE = 'necko_http'
 
-MODULE = 'necko'
-
 EXPORTS += [
     'nsHttp.h',
     'nsHttpAtomList.h',
@@ -39,7 +37,7 @@ EXPORTS.mozilla.net += [
     'PSpdyPush.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'ASpdySession.cpp',
     'ConnectionDiagnostics.cpp',
     'HttpBaseChannel.cpp',
@@ -59,7 +57,6 @@ SOURCES += [
     'nsHttpConnectionInfo.cpp',
     'nsHttpConnectionMgr.cpp',
     'nsHttpDigestAuth.cpp',
-    'nsHttpHandler.cpp',
     'nsHttpHeaderArray.cpp',
     'nsHttpNTLMAuth.cpp',
     'nsHttpPipeline.cpp',
@@ -75,9 +72,15 @@ SOURCES += [
     'SpdyStream31.cpp',
 ]
 
+# These files cannot be built in unified mode because of OS X headers.
+SOURCES += [
+    'nsHttpHandler.cpp',
+]
+
 IPDL_SOURCES += [
     'PHttpChannel.ipdl',
 ]
+
 EXTRA_JS_MODULES += [
     'UserAgentOverrides.jsm',
     'UserAgentUpdates.jsm',
@@ -90,11 +93,8 @@ EXTRA_COMPONENTS += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'nkhttp_s'
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'necko'

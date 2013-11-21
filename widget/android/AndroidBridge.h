@@ -228,7 +228,7 @@ public:
 
     // Switch Java to composite with the Gecko Compositor thread
     void RegisterCompositor(JNIEnv* env = nullptr);
-    EGLSurface ProvideEGLSurface();
+    EGLSurface CreateEGLSurfaceForCompositor();
 
     bool GetStaticStringField(const char *classID, const char *field, nsAString &result, JNIEnv* env = nullptr);
 
@@ -307,7 +307,6 @@ public:
 
     void ScheduleComposite();
 
-    void GetGfxInfoData(nsACString& aRet);
     nsresult GetProxyForURI(const nsACString & aSpec,
                             const nsACString & aScheme,
                             const nsACString & aHost,
@@ -420,7 +419,7 @@ public:
     void HandleDoubleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
     void HandleSingleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
     void HandleLongTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
-    void SendAsyncScrollDOMEvent(mozilla::layers::FrameMetrics::ViewID aScrollId,
+    void SendAsyncScrollDOMEvent(bool aIsRoot,
                                  const CSSRect& aContentRect,
                                  const CSSSize& aScrollableSize) MOZ_OVERRIDE;
     void PostDelayedTask(Task* aTask, int aDelayMs) MOZ_OVERRIDE;

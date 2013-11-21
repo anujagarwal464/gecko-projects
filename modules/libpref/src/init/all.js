@@ -196,6 +196,17 @@ pref("media.windows-media-foundation.play-stand-alone", true);
 #ifdef MOZ_DIRECTSHOW
 pref("media.directshow.enabled", true);
 #endif
+#ifdef MOZ_FMP4
+pref("media.fragmented-mp4.enabled", true);
+// Denotes that the fragmented MP4 parser can be created by <video> elements.
+// This is for testing, since the parser can't yet handle non-fragmented MP4,
+// so it will fail to play most MP4 files.
+pref("media.fragmented-mp4.exposed", false);
+// Specifies whether the fragmented MP4 parser uses a test decoder that
+// just outputs blank frames/audio instead of actually decoding. The blank
+// decoder works on all platforms.
+pref("media.fragmented-mp4.use-blank-decoder", false);
+#endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -969,6 +980,14 @@ pref("network.protocol-handler.external.disks", false);
 pref("network.protocol-handler.external.afp", false);
 pref("network.protocol-handler.external.moz-icon", false);
 
+// Don't allow  external protocol handlers for common typos
+pref("network.protocol-handler.external.ttp", false);  // http
+pref("network.protocol-handler.external.ttps", false); // https
+pref("network.protocol-handler.external.tps", false);  // https
+pref("network.protocol-handler.external.ps", false);   // https
+pref("network.protocol-handler.external.ile", false);  // file
+pref("network.protocol-handler.external.le", false);   // file
+
 // An exposed protocol handler is one that can be used in all contexts.  A
 // non-exposed protocol handler is one that can only be used internally by the
 // application.  For example, a non-exposed protocol would not be loaded by the
@@ -1035,7 +1054,16 @@ pref("network.http.request.max-start-delay", 10);
 
 // Headers
 pref("network.http.accept.default", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-pref("network.http.sendRefererHeader",      2); // 0=don't send any, 1=send only on clicks, 2=send on image requests as well
+
+// Prefs allowing granular control of referers
+// 0=don't send any, 1=send only on clicks, 2=send on image requests as well
+pref("network.http.sendRefererHeader",      2); 
+// false=real referer, true=spoof referer (use target URI as referer)                                              
+pref("network.http.referer.spoofSource", false); 
+// 0=full URI, 1=scheme+host+port+path, 2=scheme+host+port
+pref("network.http.referer.trimmingPolicy", 0); 
+// 0=always send, 1=send iff base domains match, 2=send iff hosts match
+pref("network.http.referer.XOriginPolicy", 0); 
 
 // Controls whether we send HTTPS referres to other HTTPS sites.
 // By default this is enabled for compatibility (see bug 141641)
@@ -2077,9 +2105,6 @@ pref("svg.marker-improvements.enabled", false);
 #else
 pref("svg.marker-improvements.enabled", true);
 #endif
-
-// Is support for the new SVG text implementation enabled?
-pref("svg.text.css-frames.enabled", true);
 
 pref("font.minimum-size.ar", 0);
 pref("font.minimum-size.x-armn", 0);
@@ -3393,8 +3418,8 @@ pref("font.alias-list", "sans,sans-serif,serif,monospace");
 // ar
 
 pref("font.name.serif.el", "Droid Serif");
-pref("font.name.sans-serif.el", "Fira Sans OT");
-pref("font.name.monospace.el", "Fira Mono OT");
+pref("font.name.sans-serif.el", "Roboto"); // To be updated once the Greek letters in Fira are revised
+pref("font.name.monospace.el", "Droid Sans Mono");
 
 pref("font.name.serif.he", "Charis SIL Compact");
 pref("font.name.sans-serif.he", "Fira Sans OT");
@@ -3967,6 +3992,8 @@ pref("ui.panel.default_level_parent", true);
 
 pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
+pref("ui.key.menuAccessKeyFocuses", true);
+
 # XP_UNIX
 #endif
 #endif
@@ -4189,6 +4216,7 @@ pref("layers.acceleration.force-enabled", false);
 
 pref("layers.acceleration.draw-fps", false);
 
+pref("layers.dump", false);
 pref("layers.draw-borders", false);
 pref("layers.draw-tile-borders", false);
 pref("layers.draw-bigimage-borders", false);
@@ -4356,6 +4384,9 @@ pref("dom.mozPermissionSettings.enabled", false);
 #ifdef XP_WIN
 pref("dom.w3c_touch_events.enabled", 2);
 #endif
+
+// W3C draft pointer events
+pref("dom.w3c_pointer_events.enabled", false);
 
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false);

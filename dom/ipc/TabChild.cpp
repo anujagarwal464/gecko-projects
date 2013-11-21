@@ -303,7 +303,6 @@ TabChild::HandleEvent(nsIDOMEvent* aEvent)
 
     ViewID viewId;
     uint32_t presShellId;
-    nsIScrollableFrame* scrollFrame = nullptr;
 
     nsCOMPtr<nsIContent> content;
     if (nsCOMPtr<nsIDocument> doc = do_QueryInterface(target))
@@ -317,27 +316,19 @@ TabChild::HandleEvent(nsIDOMEvent* aEvent)
     if (!nsLayoutUtils::FindIDFor(content, &viewId))
       return NS_ERROR_UNEXPECTED;
 
-    // Note that we cannot use FindScrollableFrameFor(ROOT_SCROLL_ID) because
-    // it might return the root element from a different page in the case where
-    // that page is in the bfcache and this page is not run through layout
-    // before being drawn to the screen. Hence the code blocks below treat
-    // ROOT_SCROLL_ID separately from the non-ROOT_SCROLL_ID case.
+    nsIScrollableFrame* scrollFrame = nsLayoutUtils::FindScrollableFrameFor(viewId);
+    if (!scrollFrame)
+      return NS_OK;
 
-    CSSIntPoint scrollOffset;
-    if (viewId != FrameMetrics::ROOT_SCROLL_ID) {
-      scrollFrame = nsLayoutUtils::FindScrollableFrameFor(viewId);
-      if (!scrollFrame) {
-        return NS_OK;
-      }
-      scrollOffset = scrollFrame->GetScrollPositionCSSPixels();
-    } else {
+    CSSIntPoint scrollOffset = scrollFrame->GetScrollPositionCSSPixels();
+
+    if (viewId == mLastMetrics.mScrollId) {
       // For the root frame, we store the last metrics, including the last
       // scroll offset, sent by APZC. (This is updated in ProcessUpdateFrame()).
       // We use this here to avoid sending APZC back a scroll event that
       // originally came from APZC (besides being unnecessary, the event might
       // be slightly out of date by the time it reaches APZC).
       // We should probably do this for subframes, too.
-      utils->GetScrollXY(false, &scrollOffset.x, &scrollOffset.y);
       if (RoundedToInt(mLastMetrics.mScrollOffset) == scrollOffset) {
         return NS_OK;
       }
@@ -347,6 +338,7 @@ TabChild::HandleEvent(nsIDOMEvent* aEvent)
       // gets a chance to update it.
       mLastMetrics.mScrollOffset = scrollOffset;
     }
+
     SendUpdateScrollOffset(presShellId, viewId, scrollOffset);
   }
 
@@ -362,18 +354,22 @@ TabChild::Observe(nsISupports *aSubject,
     nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aSubject));
     nsCOMPtr<nsITabChild> tabChild(TabChild::GetFrom(docShell));
     if (tabChild == this) {
-      CSSRect rect;
-      sscanf(NS_ConvertUTF16toUTF8(aData).get(),
-             "{\"x\":%f,\"y\":%f,\"w\":%f,\"h\":%f}",
-             &rect.x, &rect.y, &rect.width, &rect.height);
-      SendZoomToRect(rect);
+      nsCOMPtr<nsIDocument> doc(GetDocument());
+      uint32_t presShellId;
+      ViewID viewId;
+      if (APZCCallbackHelper::GetScrollIdentifiers(doc->GetDocumentElement(),
+                                                    &presShellId, &viewId)) {
+        CSSRect rect;
+        sscanf(NS_ConvertUTF16toUTF8(aData).get(),
+               "{\"x\":%f,\"y\":%f,\"w\":%f,\"h\":%f}",
+               &rect.x, &rect.y, &rect.width, &rect.height);
+        SendZoomToRect(presShellId, viewId, rect);
+      }
     }
   } else if (!strcmp(aTopic, BEFORE_FIRST_PAINT)) {
     if (IsAsyncPanZoomEnabled()) {
       nsCOMPtr<nsIDocument> subject(do_QueryInterface(aSubject));
-      nsCOMPtr<nsIDOMDocument> domDoc;
-      mWebNav->GetDocument(getter_AddRefs(domDoc));
-      nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+      nsCOMPtr<nsIDocument> doc(GetDocument());
 
       if (SameCOMIdentity(subject, doc)) {
         nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
@@ -533,8 +529,18 @@ TabChild::HandlePossibleViewportChange()
 
   nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
 
+  uint32_t presShellId;
+  ViewID viewId;
+  if (!APZCCallbackHelper::GetScrollIdentifiers(document->GetDocumentElement(),
+                                                &presShellId, &viewId)) {
+    return;
+  }
+
   nsViewportInfo viewportInfo = nsContentUtils::GetViewportInfo(document, mInnerSize);
-  SendUpdateZoomConstraints(viewportInfo.IsZoomAllowed(),
+  SendUpdateZoomConstraints(presShellId,
+                            viewId,
+                            /* isRoot = */ true,
+                            viewportInfo.IsZoomAllowed(),
                             viewportInfo.GetMinZoom(),
                             viewportInfo.GetMaxZoom());
 
@@ -1068,6 +1074,15 @@ TabChild::GetDOMWindowUtils()
   return utils.forget();
 }
 
+already_AddRefed<nsIDocument>
+TabChild::GetDocument()
+{
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  mWebNav->GetDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+  return doc.forget();
+}
+
 static nsInterfaceHashtable<nsPtrHashKey<PContentDialogChild>, nsIDialogParamBlock>* gActiveDialogs;
 
 NS_IMETHODIMP
@@ -1515,14 +1530,14 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
 {
   MOZ_ASSERT(aFrameMetrics.mScrollId != FrameMetrics::NULL_SCROLL_ID);
 
-  if (aFrameMetrics.mScrollId == FrameMetrics::ROOT_SCROLL_ID) {
+  if (aFrameMetrics.mIsRoot) {
     nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
     if (APZCCallbackHelper::HasValidPresShellId(utils, aFrameMetrics)) {
       return ProcessUpdateFrame(aFrameMetrics);
     }
   } else {
-    // aFrameMetrics.mScrollId is not FrameMetrics::ROOT_SCROLL_ID,
-    // so we are trying to update a subframe. This requires special handling.
+    // aFrameMetrics.mIsRoot is false, so we are trying to update a subframe.
+    // This requires special handling.
     nsCOMPtr<nsIContent> content = nsLayoutUtils::FindContentFor(
                                       aFrameMetrics.mScrollId);
     if (content) {
@@ -1854,7 +1869,8 @@ TabChild::CancelTapTracking()
 }
 
 bool
-TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent)
+TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
+                             const ScrollableLayerGuid& aGuid)
 {
   WidgetTouchEvent localEvent(aEvent);
   nsEventStatus status = DispatchWidgetEvent(localEvent);
@@ -1864,7 +1880,7 @@ TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent)
     nsCOMPtr<nsPIDOMWindow> innerWindow = outerWindow->GetCurrentInnerWindow();
 
     if (innerWindow && innerWindow->HasTouchEventListeners()) {
-      SendContentReceivedTouch(nsIPresShell::gPreventMouseEvents);
+      SendContentReceivedTouch(aGuid, nsIPresShell::gPreventMouseEvents);
     }
   } else {
     UpdateTapState(aEvent, status);
@@ -1874,9 +1890,10 @@ TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent)
 }
 
 bool
-TabChild::RecvRealTouchMoveEvent(const WidgetTouchEvent& aEvent)
+TabChild::RecvRealTouchMoveEvent(const WidgetTouchEvent& aEvent,
+                                 const ScrollableLayerGuid& aGuid)
 {
-  return RecvRealTouchEvent(aEvent);
+  return RecvRealTouchEvent(aEvent, aGuid);
 }
 
 bool
@@ -2459,8 +2476,7 @@ TabChild::GetFrom(nsIPresShell* aPresShell)
   if (!doc) {
       return nullptr;
   }
-  nsCOMPtr<nsISupports> container = doc->GetContainer();
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShell> docShell(doc->GetDocShell());
   return GetFrom(docShell);
 }
 

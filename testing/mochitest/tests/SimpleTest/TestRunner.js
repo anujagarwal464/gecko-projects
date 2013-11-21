@@ -409,6 +409,8 @@ TestRunner.testFinished = function(tests) {
     TestRunner._lastTestFinished = TestRunner._currentTest;
     TestRunner._loopIsRestarting = false;
 
+    MemoryStats.dump(TestRunner.log);
+
     function cleanUpCrashDumpFiles() {
         if (!SpecialPowers.removeExpectedCrashDumpFiles(TestRunner._expectingProcessCrash)) {
             TestRunner.error("TEST-UNEXPECTED-FAIL | " +

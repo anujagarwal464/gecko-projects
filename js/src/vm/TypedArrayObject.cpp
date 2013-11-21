@@ -335,7 +335,9 @@ bool
 ArrayBufferObject::neuterViews(JSContext *cx)
 {
     ArrayBufferViewObject *view;
+    size_t numViews = 0;
     for (view = GetViewList(this); view; view = view->nextView()) {
+        numViews++;
         view->neuter();
 
         // Notify compiled jit code that the base pointer has moved.
@@ -347,6 +349,25 @@ ArrayBufferObject::neuterViews(JSContext *cx)
     if (isAsmJSArrayBuffer()) {
         if (!ArrayBufferObject::neuterAsmJSArrayBuffer(cx, *this))
             return false;
+    }
+
+    // Remove buffer from the list of buffers with > 1 view.
+    if (numViews > 1 && GetViewList(this)->bufferLink() != UNSET_BUFFER_LINK) {
+        ArrayBufferObject *prev = compartment()->gcLiveArrayBuffers;
+        if (prev == this) {
+            compartment()->gcLiveArrayBuffers = GetViewList(prev)->bufferLink();
+        } else {
+            for (ArrayBufferObject *buf = GetViewList(prev)->bufferLink();
+                 buf;
+                 buf = GetViewList(buf)->bufferLink())
+            {
+                if (buf == this) {
+                    GetViewList(prev)->setBufferLink(GetViewList(buf)->bufferLink());
+                    break;
+                }
+                prev = buf;
+            }
+        }
     }
 
     return true;
@@ -4035,6 +4056,11 @@ JS_GetArrayBufferData(JSObject *obj)
 JS_FRIEND_API(bool)
 JS_NeuterArrayBuffer(JSContext *cx, HandleObject obj)
 {
+    if (!obj->is<ArrayBufferObject>()) {
+        JS_ReportError(cx, "ArrayBuffer object required");
+        return false;
+    }
+
     Rooted<ArrayBufferObject*> buffer(cx, &obj->as<ArrayBufferObject>());
     if (!buffer->neuterViews(cx))
         return false;

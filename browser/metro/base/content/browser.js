@@ -79,6 +79,7 @@ var Browser = {
     // Call InputSourceHelper first so global listeners get called before
     // we start processing input in TouchModule.
     InputSourceHelper.init();
+    ClickEventHandler.init();
 
     TouchModule.init();
     GestureModule.init();
@@ -213,6 +214,7 @@ var Browser = {
   shutdown: function shutdown() {
     APZCObserver.shutdown();
     BrowserUI.uninit();
+    ClickEventHandler.uninit();
     ContentAreaObserver.shutdown();
     Appbar.shutdown();
 
@@ -485,7 +487,7 @@ var Browser = {
     if (aBringFront)
       this.selectedTab = newTab;
 
-    this._announceNewTab(newTab, params, aBringFront);
+    this._announceNewTab(newTab);
     return newTab;
   },
 
@@ -511,7 +513,7 @@ var Browser = {
    * helper for addTab related methods. Fires events related to
    * new tab creation.
    */
-  _announceNewTab: function _announceNewTab(aTab, aParams, aBringFront) {
+  _announceNewTab: function (aTab) {
     let event = document.createEvent("UIEvents");
     event.initUIEvent("TabOpen", true, false, window, 0);
     aTab.chromeTab.dispatchEvent(event);
@@ -777,33 +779,6 @@ var Browser = {
   isSiteStarredAsync: function browser_isSiteStarredAsync(callback) {
     let uri = this.selectedBrowser.currentURI;
     Bookmarks.isURIBookmarked(uri, callback);
-  },
-
-  /** Rect should be in browser coordinates. */
-  _getZoomLevelForRect: function _getZoomLevelForRect(rect) {
-    const margin = 15;
-    return this.selectedTab.clampZoomLevel(ContentAreaObserver.width / (rect.width + margin * 2));
-  },
-
-  /**
-   * Find a good zoom rectangle for point that is specified in browser coordinates.
-   * @return Rect in viewport coordinates
-   */
-  _getZoomRectForPoint: function _getZoomRectForPoint(x, y, zoomLevel) {
-    let browser = getBrowser();
-    x = x * browser.scale;
-    y = y * browser.scale;
-
-    zoomLevel = Math.min(ZoomManager.MAX, zoomLevel);
-    let oldScale = browser.scale;
-    let zoomRatio = zoomLevel / oldScale;
-    let browserRect = browser.getBoundingClientRect();
-    let newVisW = browserRect.width / zoomRatio, newVisH = browserRect.height / zoomRatio;
-    let result = new Rect(x - newVisW / 2, y - newVisH / 2, newVisW, newVisH);
-
-    // Make sure rectangle doesn't poke out of viewport
-    return result.translateInside(new Rect(0, 0, browser.contentDocumentWidth * oldScale,
-                                                 browser.contentDocumentHeight * oldScale));
   },
 
   /**
@@ -1074,12 +1049,7 @@ nsBrowserAccess.prototype = {
 
     if (openAction == Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
       let owner = isExternal ? null : Browser.selectedTab;
-      let tab = Browser.addTab("about:blank", true, owner);
-      // Link clicks in content need to trigger peek tab functionality
-      ContextUI.peekTabs(kOpenInNewTabAnimationDelayMsec);
-      if (isExternal) {
-        tab.closeOnExit = true;
-      }
+      let tab = BrowserUI.openLinkInNewTab("about:blank", true, owner);
       browser = tab.browser;
     } else {
       browser = Browser.selectedBrowser;
@@ -1499,14 +1469,6 @@ Tab.prototype = {
     }
   },
 
-  /**
-   * Takes a scale and restricts it based on this tab's zoom limits.
-   * @param aScale The original scale.
-   */
-  clampZoomLevel: function clampZoomLevel(aScale) {
-    return Util.clamp(aScale, ZoomManager.MIN, ZoomManager.MAX);
-  },
-
   updateThumbnail: function updateThumbnail() {
     PageThumbs.captureToCanvas(this.browser.contentWindow, this._chromeTab.thumbnailCanvas);
   },
@@ -1579,4 +1541,69 @@ function rendererFactory(aBrowser, aCanvas) {
   }
 
   return wrapper;
+};
+
+// Based on ClickEventHandler from /browser/base/content/content.js
+let ClickEventHandler = {
+  init: function () {
+    gEventListenerService.addSystemEventListener(Elements.browsers, "click", this, true);
+  },
+
+  uninit: function () {
+    gEventListenerService.removeSystemEventListener(Elements.browsers, "click", this, true);
+  },
+
+  handleEvent: function (aEvent) {
+    if (!aEvent.isTrusted || aEvent.defaultPrevented) {
+      return;
+    }
+    let [href, node] = this._hrefAndLinkNodeForClickEvent(aEvent);
+    if (href && (aEvent.button == 1 || aEvent.ctrlKey)) {
+      // Open link in a new tab for middle-click or ctrl-click
+      BrowserUI.openLinkInNewTab(href, aEvent.shiftKey, Browser.selectedTab);
+    }
+  },
+
+  /**
+   * Extracts linkNode and href for the current click target.
+   *
+   * @param event
+   *        The click event.
+   * @return [href, linkNode].
+   *
+   * @note linkNode will be null if the click wasn't on an anchor
+   *       element (or XLink).
+   */
+  _hrefAndLinkNodeForClickEvent: function(event) {
+    function isHTMLLink(aNode) {
+      return ((aNode instanceof content.HTMLAnchorElement && aNode.href) ||
+              (aNode instanceof content.HTMLAreaElement && aNode.href) ||
+              aNode instanceof content.HTMLLinkElement);
+    }
+
+    let node = event.target;
+    while (node && !isHTMLLink(node)) {
+      node = node.parentNode;
+    }
+
+    if (node)
+      return [node.href, node];
+
+    // If there is no linkNode, try simple XLink.
+    let href, baseURI;
+    node = event.target;
+    while (node && !href) {
+      if (node.nodeType == content.Node.ELEMENT_NODE) {
+        href = node.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+        if (href)
+          baseURI = node.ownerDocument.baseURIObject;
+      }
+      node = node.parentNode;
+    }
+
+    // In case of XLink, we don't return the node we got href from since
+    // callers expect <a>-like elements.
+    // Note: makeURI() will throw if aUri is not a valid URI.
+    return [href ? Services.io.newURI(href, null, baseURI).spec : null, null];
+  }
 };

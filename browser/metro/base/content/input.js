@@ -93,7 +93,6 @@ var TouchModule = {
 
     // capture phase events
     window.addEventListener("CancelTouchSequence", this, true);
-    window.addEventListener("dblclick", this, true);
     window.addEventListener("keydown", this, true);
     window.addEventListener("MozMouseHittest", this, true);
 
@@ -144,26 +143,21 @@ var TouchModule = {
           case "touchend":
             this._onTouchEnd(aEvent);
             break;
-          case "dblclick":
-            // XXX This will get picked up somewhere below us for "double tap to zoom"
-            // once we get omtc and the apzc. Currently though dblclick is delivered to
-            // content and triggers selection of text, so fire up the SelectionHelperUI
-            // once selection is present.
-            if (!InputSourceHelper.isPrecise &&
-                !SelectionHelperUI.isActive &&
-                !FindHelperUI.isActive) {
-              setTimeout(function () {
-                SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
-                                                    aEvent.clientX, aEvent.clientY);
-              }, 50);
-            }
-            break;
           case "keydown":
             this._handleKeyDown(aEvent);
             break;
           case "MozMouseHittest":
-            // Used by widget to hit test chrome vs content
-            if (aEvent.target.ownerDocument == document) {
+            // Used by widget to hit test chrome vs content. Make sure the XUl scrollbars
+            // are counted as "chrome". Since the XUL scrollbars have sub-elements we walk
+            // the parent chain to ensure we catch all of those as well.
+            let onScrollbar = false;
+            for (let node = aEvent.originalTarget; node instanceof XULElement; node = node.parentNode) {
+              if (node.tagName == 'scrollbar') {
+                onScrollbar = true;
+                break;
+              }
+            }
+            if (onScrollbar || aEvent.target.ownerDocument == document) {
               aEvent.preventDefault();
             }
             aEvent.stopPropagation();

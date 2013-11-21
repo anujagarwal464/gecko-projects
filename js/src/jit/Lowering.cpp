@@ -2274,7 +2274,7 @@ LIRGenerator::visitNot(MNot *ins)
     // - object: false if it never emulates undefined, else LNotO(x)
     switch (op->type()) {
       case MIRType_Boolean: {
-        MConstant *cons = MConstant::New(Int32Value(1));
+        MConstant *cons = MConstant::New(alloc(), Int32Value(1));
         ins->block()->insertBefore(ins, cons);
         return lowerForALU(new LBitOpI(JSOP_BITXOR), ins, op, cons);
       }
@@ -3209,7 +3209,7 @@ LIRGenerator::visitFunctionBoundary(MFunctionBoundary *ins)
         return false;
     // If slow assertions are enabled, then this node will result in a callVM
     // out to a C++ function for the assertions, so we will need a safepoint.
-    return !GetIonContext()->runtime->spsProfiler.slowAssertionsEnabled() ||
+    return !GetIonContext()->runtime->spsProfiler().slowAssertionsEnabled() ||
            assignSafepoint(lir, ins);
 }
 
@@ -3545,7 +3545,7 @@ LIRGenerator::generate()
         if (gen->shouldCancel("Lowering (preparation loop)"))
             return false;
 
-        current = LBlock::New(*block);
+        current = LBlock::New(alloc(), *block);
         if (!current)
             return false;
         if (!lirGraph_.addBlock(current))

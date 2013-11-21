@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'memory'
-
 EXPORTS += [
     'mozmemory.h',
     'mozmemory_wrap.h',
@@ -16,21 +14,24 @@ if CONFIG['MOZ_REPLACE_MALLOC']:
         'malloc_decls.h',
         'replace_malloc.h',
     ]
-SOURCES += [
+UNIFIED_SOURCES += [
     'jemalloc_config.c',
     'mozmemory_wrap.c',
 ]
 
 if CONFIG['MOZ_JEMALLOC3']:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'mozjemalloc_compat.c',
     ]
 
 if CONFIG['MOZ_REPLACE_MALLOC']:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'replace_malloc.c',
     ]
 
 LIBRARY_NAME = 'memory'
 
-FORCE_STATIC_LIB = True
+# Keep jemalloc separated when mozglue is statically linked
+if CONFIG['MOZ_MEMORY'] and (CONFIG['OS_TARGET'] in ('WINNT', 'Darwin', 'Android') or
+                             CONFIG['MOZ_NATIVE_JEMALLOC']):
+    FINAL_LIBRARY = 'mozglue'

@@ -782,8 +782,11 @@ Chunk::allocateArena(Zone *zone, AllocKind thingKind)
 
     rt->gcBytes += ArenaSize;
     zone->gcBytes += ArenaSize;
-    if (zone->gcBytes >= zone->gcTriggerBytes)
+
+    if (zone->gcBytes >= zone->gcTriggerBytes) {
+        AutoUnlockGC unlock(rt);
         TriggerZoneGC(zone, JS::gcreason::ALLOC_TRIGGER);
+    }
 
     return aheader;
 }
@@ -947,11 +950,6 @@ js_InitGC(JSRuntime *rt, uint32_t maxbytes)
     if (!rt->gcRootsHash.init(256))
         return false;
 
-#ifdef JS_THREADSAFE
-    rt->gcLock = PR_NewLock();
-    if (!rt->gcLock)
-        return false;
-#endif
     if (!rt->gcHelperThread.init())
         return false;
 
@@ -1524,7 +1522,7 @@ template <AllowGC allowGC>
 ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
 {
     JS_ASSERT(cx->allocator()->arenas.freeLists[thingKind].isEmpty());
-    JS_ASSERT(!cx->isHeapBusy());
+    JS_ASSERT_IF(cx->isJSContext(), !cx->asJSContext()->runtime()->isHeapBusy());
 
     Zone *zone = cx->allocator()->zone_;
 
@@ -1532,31 +1530,53 @@ ArenaLists::refillFreeList(ThreadSafeContext *cx, AllocKind thingKind)
                  cx->asJSContext()->runtime()->gcIncrementalState != NO_INCREMENTAL &&
                  zone->gcBytes > zone->gcTriggerBytes;
 
+#ifdef JS_THREADSAFE
+    JS_ASSERT_IF(cx->isJSContext() && allowGC,
+                 !cx->asJSContext()->runtime()->currentThreadHasExclusiveAccess());
+#endif
+
     for (;;) {
         if (JS_UNLIKELY(runGC)) {
             if (void *thing = RunLastDitchGC(cx->asJSContext(), zone, thingKind))
                 return thing;
         }
 
-        /*
-         * allocateFromArena may fail while the background finalization still
-         * run. If we aren't in a fork join, we want to wait for it to finish
-         * and restart. However, checking for that is racy as the background
-         * finalization could free some things after allocateFromArena decided
-         * to fail but at this point it may have already stopped. To avoid
-         * this race we always try to allocate twice.
-         *
-         * If we're in a fork join, we simply try it once and return whatever
-         * value we get.
-         */
-        for (bool secondAttempt = false; ; secondAttempt = true) {
-            void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind);
-            if (JS_LIKELY(!!thing) || !cx->isJSContext())
-                return thing;
-            if (secondAttempt)
-                break;
+        if (cx->isJSContext()) {
+            /*
+             * allocateFromArena may fail while the background finalization still
+             * run. If we are on the main thread, we want to wait for it to finish
+             * and restart. However, checking for that is racy as the background
+             * finalization could free some things after allocateFromArena decided
+             * to fail but at this point it may have already stopped. To avoid
+             * this race we always try to allocate twice.
+             */
+            for (bool secondAttempt = false; ; secondAttempt = true) {
+                void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind);
+                if (JS_LIKELY(!!thing))
+                    return thing;
+                if (secondAttempt)
+                    break;
 
-            cx->asJSContext()->runtime()->gcHelperThread.waitBackgroundSweepEnd();
+                cx->asJSContext()->runtime()->gcHelperThread.waitBackgroundSweepEnd();
+            }
+        } else {
+#ifdef JS_WORKER_THREADS
+            /*
+             * If we're off the main thread, we try to allocate once and return
+             * whatever value we get. First, though, we need to ensure the main
+             * thread is not in a GC session.
+             */
+            JSRuntime *rt = zone->runtimeFromAnyThread();
+            AutoLockWorkerThreadState lock(*rt->workerThreadState);
+            while (rt->isHeapBusy())
+                rt->workerThreadState->wait(WorkerThreadState::PRODUCER);
+
+            void *thing = cx->allocator()->arenas.allocateFromArenaInline(zone, thingKind);
+            if (thing)
+                return thing;
+#else
+            MOZ_CRASH();
+#endif
         }
 
         if (!cx->allowGC() || !allowGC)
@@ -1656,9 +1676,9 @@ GCMarker::GCMarker(JSRuntime *rt)
 }
 
 bool
-GCMarker::init()
+GCMarker::init(JSGCMode gcMode)
 {
-    return stack.init(MARK_STACK_LENGTH);
+    return stack.init(gcMode);
 }
 
 void
@@ -1780,10 +1800,9 @@ GCMarker::markDelayedChildren(ArenaHeader *aheader)
 bool
 GCMarker::markDelayedChildren(SliceBudget &budget)
 {
-    gcstats::Phase phase = runtime->gcIncrementalState == MARK
-                         ? gcstats::PHASE_MARK_DELAYED
-                         : gcstats::PHASE_SWEEP_MARK_DELAYED;
-    gcstats::AutoPhase ap(runtime->gcStats, phase);
+    gcstats::MaybeAutoPhase ap;
+    if (runtime->gcIncrementalState == MARK)
+        ap.construct(runtime->gcStats, gcstats::PHASE_MARK_DELAYED);
 
     JS_ASSERT(unmarkedArenaStackTop);
     do {
@@ -1917,7 +1936,7 @@ void
 js::SetMarkStackLimit(JSRuntime *rt, size_t limit)
 {
     JS_ASSERT(!rt->isHeapBusy());
-    rt->gcMarker.setSizeLimit(limit);
+    rt->gcMarker.setMaxCapacity(limit);
 }
 
 void
@@ -2319,6 +2338,16 @@ GCHelperThread::threadMain(void *arg)
 }
 
 void
+GCHelperThread::wait(PRCondVar *which)
+{
+    rt->gcLockOwner = nullptr;
+    PR_WaitCondVar(which, PR_INTERVAL_NO_TIMEOUT);
+#ifdef DEBUG
+    rt->gcLockOwner = PR_GetCurrentThread();
+#endif
+}
+
+void
 GCHelperThread::threadLoop()
 {
     AutoLockGC lock(rt);
@@ -2337,7 +2366,7 @@ GCHelperThread::threadLoop()
           case SHUTDOWN:
             return;
           case IDLE:
-            PR_WaitCondVar(wakeup, PR_INTERVAL_NO_TIMEOUT);
+            wait(wakeup);
             break;
           case SWEEPING:
 #if JS_TRACE_LOGGING
@@ -2445,7 +2474,7 @@ GCHelperThread::waitBackgroundSweepEnd()
 #ifdef JS_THREADSAFE
     AutoLockGC lock(rt);
     while (state == SWEEPING)
-        PR_WaitCondVar(done, PR_INTERVAL_NO_TIMEOUT);
+        wait(done);
     if (rt->gcIncrementalState == NO_INCREMENTAL)
         AssertBackgroundSweepingFinished(rt);
 #endif /* JS_THREADSAFE */
@@ -2464,7 +2493,7 @@ GCHelperThread::waitBackgroundSweepOrAllocEnd()
     if (state == ALLOCATING)
         state = CANCEL_ALLOCATION;
     while (state == SWEEPING || state == CANCEL_ALLOCATION)
-        PR_WaitCondVar(done, PR_INTERVAL_NO_TIMEOUT);
+        wait(done);
     if (rt->gcIncrementalState == NO_INCREMENTAL)
         AssertBackgroundSweepingFinished(rt);
 #endif /* JS_THREADSAFE */
@@ -2662,10 +2691,7 @@ PurgeRuntime(JSRuntime *rt)
     rt->sourceDataCache.purge();
     rt->evalCache.clear();
 
-    bool activeCompilations = false;
-    for (ThreadDataIter iter(rt); !iter.done(); iter.next())
-        activeCompilations |= iter->activeCompilations;
-    if (!activeCompilations)
+    if (!rt->hasActiveCompilations())
         rt->parseMapPool().purgeAll();
 }
 
@@ -2832,26 +2858,18 @@ BeginMarkPhase(JSRuntime *rt)
      * zones that are not being collected, we are not allowed to collect
      * atoms. Otherwise, the non-collected zones could contain pointers
      * to atoms that we would miss.
+     *
+     * keepAtoms() will only change on the main thread, which we are currently
+     * on. If the value of keepAtoms() changes between GC slices, then we'll
+     * cancel the incremental GC. See IsIncrementalGCSafe.
      */
-    Zone *atomsZone = rt->atomsCompartment()->zone();
-
-    bool keepAtoms = false;
-    for (ThreadDataIter iter(rt); !iter.done(); iter.next())
-        keepAtoms |= iter->gcKeepAtoms;
-
-    /*
-     * We don't scan the stacks of exclusive threads, so we need to avoid
-     * collecting their objects in another way. The only GC thing pointers they
-     * have are to their exclusive compartment (which is not collected) or to
-     * the atoms compartment. Therefore, we avoid collecting the atoms
-     * compartment when exclusive threads are running.
-     */
-    keepAtoms |= rt->exclusiveThreadsPresent();
-
-    if (atomsZone->isGCScheduled() && rt->gcIsFull && !keepAtoms) {
-        JS_ASSERT(!atomsZone->isCollecting());
-        atomsZone->setGCState(Zone::Mark);
-        any = true;
+    if (rt->gcIsFull && !rt->keepAtoms()) {
+        Zone *atomsZone = rt->atomsCompartment()->zone();
+        if (atomsZone->isGCScheduled()) {
+            JS_ASSERT(!atomsZone->isCollecting());
+            atomsZone->setGCState(Zone::Mark);
+            any = true;
+        }
     }
 
     /* Check that at least one zone is scheduled for collection. */
@@ -3158,10 +3176,14 @@ js::gc::MarkingValidator::nonIncrementalMark()
         MarkRuntime(gcmarker, true);
     }
 
-    SliceBudget budget;
-    runtime->gcIncrementalState = MARK;
-    runtime->gcMarker.drainMarkStack(budget);
+    {
+        gcstats::AutoPhase ap1(runtime->gcStats, gcstats::PHASE_MARK);
+        SliceBudget budget;
+        runtime->gcIncrementalState = MARK;
+        runtime->gcMarker.drainMarkStack(budget);
+    }
 
+    runtime->gcIncrementalState = SWEEP;
     {
         gcstats::AutoPhase ap(runtime->gcStats, gcstats::PHASE_SWEEP);
         MarkAllWeakReferences(runtime, gcstats::PHASE_SWEEP_MARK_WEAK);
@@ -4099,7 +4121,6 @@ namespace {
 class AutoGCSession
 {
     JSRuntime *runtime;
-    AutoPauseWorkersForTracing pause;
     AutoTraceSession session;
     bool canceled;
 
@@ -4114,24 +4135,55 @@ class AutoGCSession
 
 /* Start a new heap session. */
 AutoTraceSession::AutoTraceSession(JSRuntime *rt, js::HeapState heapState)
-  : runtime(rt),
+  : lock(rt),
+    runtime(rt),
     prevState(rt->heapState)
 {
     JS_ASSERT(!rt->noGCOrAllocationCheck);
     JS_ASSERT(!rt->isHeapBusy());
     JS_ASSERT(heapState != Idle);
-    rt->heapState = heapState;
+
+    // Threads with an exclusive context can hit refillFreeList while holding
+    // the exclusive access lock. To avoid deadlocking when we try to acquire
+    // this lock during GC and the other thread is waiting, make sure we hold
+    // the exclusive access lock during GC sessions.
+    JS_ASSERT(rt->currentThreadHasExclusiveAccess());
+
+    if (rt->exclusiveThreadsPresent()) {
+        // Lock the worker thread state when changing the heap state in the
+        // presence of exclusive threads, to avoid racing with refillFreeList.
+#ifdef JS_WORKER_THREADS
+        AutoLockWorkerThreadState lock(*rt->workerThreadState);
+        rt->heapState = heapState;
+#else
+        MOZ_CRASH();
+#endif
+    } else {
+        rt->heapState = heapState;
+    }
 }
 
 AutoTraceSession::~AutoTraceSession()
 {
     JS_ASSERT(runtime->isHeapBusy());
-    runtime->heapState = prevState;
+
+    if (runtime->exclusiveThreadsPresent()) {
+#ifdef JS_WORKER_THREADS
+        AutoLockWorkerThreadState lock(*runtime->workerThreadState);
+        runtime->heapState = prevState;
+
+        // Notify any worker threads waiting for the trace session to end.
+        runtime->workerThreadState->notifyAll(WorkerThreadState::PRODUCER);
+#else
+        MOZ_CRASH();
+#endif
+    } else {
+        runtime->heapState = prevState;
+    }
 }
 
 AutoGCSession::AutoGCSession(JSRuntime *rt)
   : runtime(rt),
-    pause(rt),
     session(rt, MajorCollecting),
     canceled(false)
 {
@@ -4140,12 +4192,9 @@ AutoGCSession::AutoGCSession(JSRuntime *rt)
 
     runtime->gcNumber++;
 
-#ifdef DEBUG
-    // Threads with an exclusive context should never pause while they are in
-    // the middle of a suppressGC.
-    for (ThreadDataIter iter(rt); !iter.done(); iter.next())
-        JS_ASSERT(!iter->suppressGC);
-#endif
+    // It's ok if threads other than the main thread have suppressGC set, as
+    // they are operating on zones which will not be collected from here.
+    JS_ASSERT(!runtime->mainThread.suppressGC);
 }
 
 AutoGCSession::~AutoGCSession()
@@ -4193,16 +4242,13 @@ class AutoCopyFreeListToArenasForGC
 
   public:
     AutoCopyFreeListToArenasForGC(JSRuntime *rt) : runtime(rt) {
-        for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
-            //if (zone->canCollect())
-                zone->allocator.arenas.copyFreeListsToArenas();
-        }
+        JS_ASSERT(rt->currentThreadHasExclusiveAccess());
+        for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next())
+            zone->allocator.arenas.copyFreeListsToArenas();
     }
     ~AutoCopyFreeListToArenasForGC() {
-        for (ZonesIter zone(runtime, WithAtoms); !zone.done(); zone.next()) {
-            //if (zone->canCollect())
-                zone->allocator.arenas.clearFreeListsInArenas();
-        }
+        for (ZonesIter zone(runtime, WithAtoms); !zone.done(); zone.next())
+            zone->allocator.arenas.clearFreeListsInArenas();
     }
 };
 
@@ -4359,6 +4405,8 @@ IncrementalCollectSlice(JSRuntime *rt,
                         JS::gcreason::Reason reason,
                         JSGCInvocationKind gckind)
 {
+    JS_ASSERT(rt->currentThreadHasExclusiveAccess());
+
     AutoCopyFreeListToArenasForGC copy(rt);
     AutoGCSlice slice(rt);
 
@@ -4485,14 +4533,8 @@ gc::IsIncrementalGCSafe(JSRuntime *rt)
 {
     JS_ASSERT(!rt->mainThread.suppressGC);
 
-    bool keepAtoms = false;
-    for (ThreadDataIter iter(rt); !iter.done(); iter.next())
-        keepAtoms |= iter->gcKeepAtoms;
-
-    keepAtoms |= rt->exclusiveThreadsPresent();
-
-    if (keepAtoms)
-        return IncrementalSafety::Unsafe("gcKeepAtoms set");
+    if (rt->keepAtoms())
+        return IncrementalSafety::Unsafe("keepAtoms set");
 
     if (!rt->gcIncrementalEnabled)
         return IncrementalSafety::Unsafe("incremental permanently disabled");
@@ -4511,7 +4553,7 @@ BudgetIncrementalGC(JSRuntime *rt, int64_t *budget)
         return;
     }
 
-    if (rt->gcMode != JSGC_MODE_INCREMENTAL) {
+    if (rt->gcMode() != JSGC_MODE_INCREMENTAL) {
         ResetIncrementalGC(rt, "GC mode change");
         *budget = SliceBudget::Unlimited;
         rt->gcStats.nonincremental("GC mode");
@@ -4593,7 +4635,6 @@ GCCycle(JSRuntime *rt, bool incremental, int64_t budget,
     }
 
     IncrementalCollectSlice(rt, budget, reason, gckind);
-
     return false;
 }
 
@@ -4620,8 +4661,13 @@ ShouldCleanUpEverything(JSRuntime *rt, JS::gcreason::Reason reason, JSGCInvocati
     // During shutdown, we must clean everything up, for the sake of leak
     // detection. When a runtime has no contexts, or we're doing a GC before a
     // shutdown CC, those are strong indications that we're shutting down.
+    //
+    // DEBUG_MODE_GC indicates we're discarding code because the debug mode
+    // has changed; debug mode affects the results of bytecode analysis, so
+    // we need to clear everything away.
     return reason == JS::gcreason::DESTROY_RUNTIME ||
            reason == JS::gcreason::SHUTDOWN_CC ||
+           reason == JS::gcreason::DEBUG_MODE_GC ||
            gckind == GC_SHRINK;
 }
 
@@ -4698,7 +4744,7 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
     int compartmentCount = 0;
     int collectedCount = 0;
     for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
-        if (rt->gcMode == JSGC_MODE_GLOBAL)
+        if (rt->gcMode() == JSGC_MODE_GLOBAL)
             zone->scheduleGC();
 
         /* This is a heuristic to avoid resets. */
@@ -4853,7 +4899,6 @@ AutoFinishGC::AutoFinishGC(JSRuntime *rt)
 
 AutoPrepareForTracing::AutoPrepareForTracing(JSRuntime *rt, ZoneSelector selector)
   : finish(rt),
-    pause(rt),
     session(rt),
     copy(rt, selector)
 {
@@ -4911,6 +4956,7 @@ void
 gc::MergeCompartments(JSCompartment *source, JSCompartment *target)
 {
     JSRuntime *rt = source->runtimeFromMainThread();
+
     AutoPrepareForTracing prepare(rt, SkipAtoms);
 
     // Cleanup tables and other state in the source compartment that will be

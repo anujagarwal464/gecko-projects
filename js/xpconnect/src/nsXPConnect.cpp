@@ -180,19 +180,8 @@ nsXPConnect::ReleaseXPConnectSingleton()
             }
         }
 #endif
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        // NOTE: to see really interesting stuff turn on the prlog stuff.
-        // See the comment at the top of XPCLog.h to see how to do that.
-        xpc->DebugDump(7);
-#endif
         nsrefcnt cnt;
         NS_RELEASE2(xpc, cnt);
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        if (0 != cnt)
-            printf("*** dangling reference to nsXPConnect: refcnt=%d\n", cnt);
-        else
-            printf("+++ XPConnect had no dangling references.\n");
-#endif
     }
 }
 
@@ -526,19 +515,12 @@ nsXPConnect::InitClassesWithNewWrappedGlobal(JSContext * aJSContext,
     MOZ_ASSERT(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL);
 
     // Init WebIDL binding constructors wanted on all XPConnect globals.
-    // Additional bindings may be created lazily, see BackstagePass::NewResolve.
     //
     // XXX Please do not add any additional classes here without the approval of
     //     the XPConnect module owner.
     if (!TextDecoderBinding::GetConstructorObject(aJSContext, global) ||
         !TextEncoderBinding::GetConstructorObject(aJSContext, global) ||
         !DOMErrorBinding::GetConstructorObject(aJSContext, global)) {
-        return UnexpectedFailure(NS_ERROR_FAILURE);
-    }
-
-    if (nsContentUtils::IsSystemPrincipal(aPrincipal) &&
-        !IndexedDatabaseManager::DefineIndexedDBLazyGetter(aJSContext,
-                                                           global)) {
         return UnexpectedFailure(NS_ERROR_FAILURE);
     }
 
@@ -1296,6 +1278,13 @@ JSContext*
 nsXPConnect::GetCurrentJSContext()
 {
     return GetRuntime()->GetJSContextStack()->Peek();
+}
+
+/* virtual */
+JSContext*
+nsXPConnect::InitSafeJSContext()
+{
+    return GetRuntime()->GetJSContextStack()->InitSafeJSContext();
 }
 
 /* virtual */

@@ -10,6 +10,7 @@
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layers/ImageBridgeChild.h"
+#include "mozilla/layers/ISurfaceAllocator.h"     // for GfxMemoryImageReporter
 
 #include "prlog.h"
 
@@ -497,6 +498,8 @@ gfxPlatform::Init()
         gPlatform->mMemoryPressureObserver = new MemoryPressureObserver();
         obs->AddObserver(gPlatform->mMemoryPressureObserver, "memory-pressure", false);
     }
+
+    NS_RegisterMemoryReporter(new GfxMemoryImageReporter());
 }
 
 void
@@ -2027,7 +2030,8 @@ static bool sPrefLayersAccelerationForceEnabled = false;
 static bool sPrefLayersAccelerationDisabled = false;
 static bool sPrefLayersPreferOpenGL = false;
 static bool sPrefLayersPreferD3D9 = false;
-static bool sLayersSupportsD3D9 = true;
+static bool sPrefLayersDump = false;
+static bool sLayersSupportsD3D9 = false;
 static int  sPrefLayoutFrameRate = -1;
 static bool sBufferRotationEnabled = false;
 static bool sComponentAlphaEnabled = true;
@@ -2047,20 +2051,27 @@ InitLayersAccelerationPrefs()
     sPrefLayersAccelerationDisabled = Preferences::GetBool("layers.acceleration.disabled", false);
     sPrefLayersPreferOpenGL = Preferences::GetBool("layers.prefer-opengl", false);
     sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
+    sPrefLayersDump = Preferences::GetBool("layers.dump", false);
     sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
     sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
     sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
     sPrefBrowserTabsRemote = Preferences::GetBool("browser.tabs.remote", false);
 
-    nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
-    if (gfxInfo) {
-      int32_t status;
-      if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS, &status))) {
-        if (status != nsIGfxInfo::FEATURE_NO_INFO && !sPrefLayersAccelerationForceEnabled) {
-          sLayersSupportsD3D9 = false;
+#ifdef XP_WIN
+    if (sPrefLayersAccelerationForceEnabled) {
+      sLayersSupportsD3D9 = true;
+    } else {
+      nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
+      if (gfxInfo) {
+        int32_t status;
+        if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS, &status))) {
+          if (status == nsIGfxInfo::FEATURE_NO_INFO) {
+            sLayersSupportsD3D9 = true;
+          }
         }
       }
     }
+#endif
 
     sLayersAccelerationPrefsInitialized = true;
   }
@@ -2130,6 +2141,13 @@ gfxPlatform::GetPrefLayoutFrameRate()
 {
   InitLayersAccelerationPrefs();
   return sPrefLayoutFrameRate;
+}
+
+bool
+gfxPlatform::GetPrefLayersDump()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefLayersDump;
 }
 
 bool

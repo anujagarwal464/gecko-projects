@@ -402,7 +402,10 @@ Parser<ParseHandler>::Parser(ExclusiveContext *cx, LifoAlloc *alloc,
     isUnexpectedEOF_(false),
     handler(cx, *alloc, tokenStream, foldConstants, syntaxParser, lazyOuterFunction)
 {
-    cx->perThreadData->activeCompilations++;
+    {
+        AutoLockForExclusiveAccess lock(cx);
+        cx->perThreadData->addActiveCompilation();
+    }
 
     // The Mozilla specific JSOPTION_EXTRA_WARNINGS option adds extra warnings
     // which are not generated if functions are parsed lazily. Note that the
@@ -416,8 +419,6 @@ Parser<ParseHandler>::Parser(ExclusiveContext *cx, LifoAlloc *alloc,
 template <typename ParseHandler>
 Parser<ParseHandler>::~Parser()
 {
-    context->perThreadData->activeCompilations--;
-
     alloc.release(tempPoolMark);
 
     /*
@@ -426,6 +427,11 @@ Parser<ParseHandler>::~Parser()
      * next GC) to avoid unnecessary OOMs.
      */
     alloc.freeAllIfHugeAndUnused();
+
+    {
+        AutoLockForExclusiveAccess lock(context);
+        context->perThreadData->removeActiveCompilation();
+    }
 }
 
 template <typename ParseHandler>
@@ -2121,9 +2127,6 @@ Parser<FullParseHandler>::functionArgsAndBody(ParseNode *pn, HandleFunction fun,
             // Advance this parser over tokens processed by the syntax parser.
             parser->tokenStream.tell(&position);
             tokenStream.seek(position, parser->tokenStream);
-
-            // Update the end position of the parse node.
-            pn->pn_pos.end = tokenStream.currentToken().pos.end;
         }
 
         if (!addFreeVariablesFromLazyFunction(fun, pc))
@@ -2247,8 +2250,6 @@ Parser<ParseHandler>::functionArgsAndBodyGeneric(Node pn, HandleFunction fun, Fu
     // Given a properly initialized parse context, try to parse an actual
     // function without concern for conversion to strict mode, use of lazy
     // parsing and such.
-
-    context->maybePause();
 
     Node prelude = null();
     bool hasRest;
@@ -6301,7 +6302,6 @@ Parser<FullParseHandler>::generatorExpr(ParseNode *kid)
     pn->setInParens(true);
     pn->pn_pos = kid->pn_pos;
     pn->pn_kid = kid;
-    pn->pn_hidden = true;
 
     /* Make a new node for the desugared generator function. */
     ParseNode *genfn = CodeNode::create(PNK_FUNCTION, &handler);

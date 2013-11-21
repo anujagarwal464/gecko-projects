@@ -23,6 +23,7 @@ Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
 Cu.import("resource://gre/modules/Timer.jsm");
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+Cu.importGlobalProperties(["indexedDB"]);
 
 XPCOMUtils.defineLazyModuleGetter(this, "AlarmService",
                                   "resource://gre/modules/AlarmService.jsm");
@@ -1434,8 +1435,8 @@ this.PushService = {
       return;
     }
 
-    this._udpServer = Cc["@mozilla.org/network/socket-udp;1"]
-                        .createInstance(Ci.nsIUDPServerSocket);
+    this._udpServer = Cc["@mozilla.org/network/udp-socket;1"]
+                        .createInstance(Ci.nsIUDPSocket);
     this._udpServer.init(-1, false);
     this._udpServer.asyncListen(this);
     debug("listenForUDPWakeup listening on " + this._udpPort);

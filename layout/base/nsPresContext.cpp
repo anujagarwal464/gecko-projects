@@ -143,7 +143,8 @@ nsPresContext::IsDOMPaintEventPending()
 int
 nsPresContext::PrefChangedCallback(const char* aPrefName, void* instance_data)
 {
-  nsPresContext*  presContext = (nsPresContext*)instance_data;
+  nsRefPtr<nsPresContext>  presContext =
+    static_cast<nsPresContext*>(instance_data);
 
   NS_ASSERTION(nullptr != presContext, "bad instance data");
   if (nullptr != presContext) {
@@ -806,7 +807,9 @@ nsPresContext::AppUnitsPerDevPixelChanged()
 {
   InvalidateThebesLayers();
 
-  mDeviceContext->FlushFontCache();
+  if (mDeviceContext) {
+    mDeviceContext->FlushFontCache();
+  }
 
   if (HasCachedStyleData()) {
     // All cached style data must be recomputed.
@@ -824,10 +827,14 @@ nsPresContext::PreferenceChanged(const char* aPrefName)
       prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
     int32_t oldAppUnitsPerDevPixel = AppUnitsPerDevPixel();
     if (mDeviceContext->CheckDPIChange() && mShell) {
+      nsCOMPtr<nsIPresShell> shell = mShell;
       // Re-fetch the view manager's window dimensions in case there's a deferred
       // resize which hasn't affected our mVisibleArea yet
       nscoord oldWidthAppUnits, oldHeightAppUnits;
-      nsViewManager* vm = mShell->GetViewManager();
+      nsRefPtr<nsViewManager> vm = shell->GetViewManager();
+      if (!vm) {
+        return;
+      }
       vm->GetWindowDimensions(&oldWidthAppUnits, &oldHeightAppUnits);
       float oldWidthDevPixels = oldWidthAppUnits/oldAppUnitsPerDevPixel;
       float oldHeightDevPixels = oldHeightAppUnits/oldAppUnitsPerDevPixel;
@@ -951,9 +958,7 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
                    "How did we get a presshell?");
 
       // We don't have our container set yet at this point
-      nsCOMPtr<nsISupports> ourContainer = mDocument->GetContainer();
-
-      nsCOMPtr<nsIDocShellTreeItem> ourItem = do_QueryInterface(ourContainer);
+      nsCOMPtr<nsIDocShellTreeItem> ourItem = mDocument->GetDocShell();
       if (ourItem) {
         nsCOMPtr<nsIDocShellTreeItem> parentItem;
         ourItem->GetSameTypeParent(getter_AddRefs(parentItem));

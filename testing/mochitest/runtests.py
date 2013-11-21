@@ -353,7 +353,7 @@ class MochitestUtilsMixin(object):
       manifest = TestManifest(strict=False)
       manifest.read(options.manifestFile)
       # Bug 883858 - return all tests including disabled tests
-      tests = manifest.active_tests(disabled=False, **mozinfo.info)
+      tests = manifest.active_tests(disabled=True, **mozinfo.info)
       paths = []
       for test in tests:
         tp = test['path'].split(self.getTestRoot(options), 1)[1].strip('/')
@@ -434,15 +434,6 @@ class MochitestUtilsMixin(object):
       else:
         log.warning("runtests.py | Failed to copy %s to profile", abspath)
 
-  def copyTestsJarToProfile(self, options):
-    """ copy tests.jar to the profile directory so we can auto register it in the .xul harness """
-    testsJarFile = os.path.join(SCRIPT_DIR, "tests.jar")
-    if not os.path.isfile(testsJarFile):
-      return False
-
-    shutil.copy2(testsJarFile, options.profilePath)
-    return True
-
   def installChromeJar(self, chrome, options):
     """
       copy mochijar directory to profile as an extension so we have chrome://mochikit for all harness code
@@ -472,18 +463,13 @@ toolbar#nav-bar {
     with open(os.path.join(options.profilePath, "userChrome.css"), "a") as chromeFile:
       chromeFile.write(chrome)
 
-    # Call copyTestsJarToProfile(), Write tests.manifest.
     manifest = os.path.join(options.profilePath, "tests.manifest")
     with open(manifest, "w") as manifestFile:
-      if self.copyTestsJarToProfile(options):
-        # Register tests.jar.
-        manifestFile.write("content mochitests jar:tests.jar!/content/\n");
-      else:
-        # Register chrome directory.
-        chrometestDir = os.path.abspath(".") + "/"
-        if mozinfo.isWin:
-          chrometestDir = "file:///" + chrometestDir.replace("\\", "/")
-        manifestFile.write("content mochitests %s contentaccessible=yes\n" % chrometestDir)
+      # Register chrome directory.
+      chrometestDir = os.path.abspath(".") + "/"
+      if mozinfo.isWin:
+        chrometestDir = "file:///" + chrometestDir.replace("\\", "/")
+      manifestFile.write("content mochitests %s contentaccessible=yes\n" % chrometestDir)
 
       if options.testingModulesDir is not None:
         manifestFile.write("resource testing-common file:///%s\n" %
@@ -633,9 +619,9 @@ class Mochitest(MochitestUtilsMixin):
     self.copyExtraFilesToProfile(options)
     return manifest
 
-  def buildBrowserEnv(self, options):
+  def buildBrowserEnv(self, options, debugger=False):
     """build the environment variables for the specific test and operating system"""
-    browserEnv = self.environment(xrePath=options.xrePath)
+    browserEnv = self.environment(xrePath=options.xrePath, debugger=debugger)
 
     # These variables are necessary for correct application startup; change
     # via the commandline at your own risk.
@@ -955,7 +941,7 @@ class Mochitest(MochitestUtilsMixin):
 
     self.leak_report_file = os.path.join(options.profilePath, "runtests_leaks.log")
 
-    browserEnv = self.buildBrowserEnv(options)
+    browserEnv = self.buildBrowserEnv(options, debuggerInfo is not None)
     if browserEnv is None:
       return 1
 

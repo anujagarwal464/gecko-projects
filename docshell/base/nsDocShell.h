@@ -18,6 +18,7 @@
 #include "nsIContentViewerContainer.h"
 #include "nsIDOMStorageManager.h"
 #include "nsDocLoader.h"
+#include "mozilla/WeakPtr.h"
 
 // Helper Classes
 #include "nsCOMPtr.h"
@@ -137,7 +138,8 @@ class nsDocShell : public nsDocLoader,
                    public nsIWebShellServices,
                    public nsILinkHandler,
                    public nsIClipboardCommands,
-                   public nsIDOMStorageManager
+                   public nsIDOMStorageManager,
+                   public mozilla::SupportsWeakPtr<nsDocShell>
 {
     friend class nsDSURIContentListener;
 
@@ -812,6 +814,12 @@ protected:
     bool                       mUseGlobalHistory;
     bool                       mInPrivateBrowsing;
     bool                       mDeviceSizeIsPageSize;
+
+    // Because scriptability depends on the mAllowJavascript values of our
+    // ancestors, we cache the effective scriptability and recompute it when
+    // it might have changed;
+    bool                       mCanExecuteScripts;
+    void RecomputeCanExecuteScripts();
 
     // This boolean is set to true right before we fire pagehide and generally
     // unset when we embed a new content viewer.  While it's true no navigation

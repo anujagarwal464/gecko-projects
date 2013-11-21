@@ -34,6 +34,7 @@ from ..frontend.data import (
     InstallationTarget,
     IPDLFile,
     JavaJarData,
+    LibraryDefinition,
     LocalInclude,
     PreprocessedTestWebIDLFile,
     PreprocessedWebIDLFile,
@@ -349,6 +350,7 @@ class RecursiveMakeBackend(CommonBackend):
         elif isinstance(obj, VariablePassthru):
             unified_suffixes = dict(
                 UNIFIED_CSRCS='c',
+                UNIFIED_CMMSRCS='mm',
                 UNIFIED_CPPSRCS='cpp',
             )
             # Sorted so output is consistent and we don't bump mtimes.
@@ -447,6 +449,9 @@ class RecursiveMakeBackend(CommonBackend):
                 self._process_java_jar_data(obj.wrapped, backend_file)
             else:
                 return
+
+        elif isinstance(obj, LibraryDefinition):
+            self._process_library_definition(obj, backend_file)
 
         else:
             return
@@ -1054,13 +1059,27 @@ class RecursiveMakeBackend(CommonBackend):
                 (target, ' '.join(jar.sources)))
         if jar.generated_sources:
             backend_file.write('%s_PP_JAVAFILES := %s\n' %
-                (target, ' '.join(jar.generated_sources)))
+                (target, ' '.join(os.path.join('generated', f) for f in jar.generated_sources)))
         if jar.extra_jars:
             backend_file.write('%s_EXTRA_JARS := %s\n' %
                 (target, ' '.join(jar.extra_jars)))
         if jar.javac_flags:
             backend_file.write('%s_JAVAC_FLAGS := %s\n' %
-                (target, jar.javac_flags))
+                (target, ' '.join(jar.javac_flags)))
+
+    def _process_library_definition(self, libdef, backend_file):
+        backend_file.write('LIBRARY_NAME = %s\n' % libdef.basename)
+        thisobjdir = libdef.objdir
+        topobjdir = libdef.topobjdir.replace(os.sep, '/')
+        for objdir, basename in libdef.static_libraries:
+            # If this is an external objdir (i.e., comm-central), use the other
+            # directory instead of $(DEPTH).
+            if objdir.startswith(topobjdir + '/'):
+                relpath = '$(DEPTH)/%s' % mozpath.relpath(objdir, topobjdir)
+            else:
+                relpath = mozpath.relpath(objdir, thisobjdir)
+            backend_file.write('SHARED_LIBRARY_LIBS += %s/$(LIB_PREFIX)%s.$(LIB_SUFFIX)\n'
+                               % (relpath, basename))
 
     def _write_manifests(self, dest, manifests):
         man_dir = os.path.join(self.environment.topobjdir, '_build_manifests',

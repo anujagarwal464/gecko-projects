@@ -45,7 +45,6 @@ void AndroidBridge::InitStubs(JNIEnv *jEnv) {
     jGetDensity = getStaticMethod("getDensity", "()F");
     jGetDpiWrapper = getStaticMethod("getDpi", "()I");
     jGetExtensionFromMimeTypeWrapper = getStaticMethod("getExtensionFromMimeType", "(Ljava/lang/String;)Ljava/lang/String;");
-    jGetGfxInfoDataWrapper = getStaticMethod("getGfxInfoData", "()Ljava/lang/String;");
     jGetHandlersForMimeTypeWrapper = getStaticMethod("getHandlersForMimeType", "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;");
     jGetHandlersForURLWrapper = getStaticMethod("getHandlersForURL", "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;");
     jGetIconForExtensionWrapper = getStaticMethod("getIconForExtension", "(Ljava/lang/String;I)[B");
@@ -67,6 +66,7 @@ void AndroidBridge::InitStubs(JNIEnv *jEnv) {
     jLockScreenOrientation = getStaticMethod("lockScreenOrientation", "(I)V");
     jMarkURIVisited = getStaticMethod("markUriVisited", "(Ljava/lang/String;)V");
     jMoveTaskToBack = getStaticMethod("moveTaskToBack", "()V");
+    jNetworkLinkType = getStaticMethod("networkLinkType", "()I");
     jNotifyDefaultPrevented = getStaticMethod("notifyDefaultPrevented", "(Z)V");
     jNotifyIME = getStaticMethod("notifyIME", "(I)V");
     jNotifyIMEChange = getStaticMethod("notifyIMEChange", "(Ljava/lang/String;III)V");
@@ -109,7 +109,7 @@ void AndroidBridge::InitStubs(JNIEnv *jEnv) {
     jSendThumbnail = getStaticMethod("notifyThumbnail", "(Ljava/nio/ByteBuffer;IZ)V");
 
     mGLControllerClass = getClassGlobalRef("org/mozilla/gecko/gfx/GLController");
-    jProvideEGLSurfaceWrapper = getMethod("provideEGLSurface", "()Ljavax/microedition/khronos/egl/EGLSurface;");
+    jCreateEGLSurfaceForCompositorWrapper = getMethod("createEGLSurfaceForCompositor", "()Ljavax/microedition/khronos/egl/EGLSurface;");
 
     mLayerViewClass = getClassGlobalRef("org/mozilla/gecko/gfx/LayerView");
     jRegisterCompositorWrapper = getStaticMethod("registerCxxCompositor", "()Lorg/mozilla/gecko/gfx/GLController;");
@@ -866,33 +866,6 @@ jstring AndroidBridge::GetExtensionFromMimeTypeWrapper(const nsAString& a0) {
     return ret;
 }
 
-jstring AndroidBridge::GetGfxInfoDataWrapper() {
-    JNIEnv *env = GetJNIEnv();
-    if (!env) {
-        ALOG_BRIDGE("Aborted: No env - %s", __PRETTY_FUNCTION__);
-        return nullptr;
-    }
-
-    if (env->PushLocalFrame(1) != 0) {
-        ALOG_BRIDGE("Exceptional exit of: %s", __PRETTY_FUNCTION__);
-        env->ExceptionDescribe();
-        env->ExceptionClear();
-        return nullptr;
-    }
-
-    jobject temp = env->CallStaticObjectMethod(mGeckoAppShellClass, jGetGfxInfoDataWrapper);
-
-    if (env->ExceptionCheck()) {
-        ALOG_BRIDGE("Exceptional exit of: %s", __PRETTY_FUNCTION__);
-        env->ExceptionDescribe();
-        env->ExceptionClear();
-        env->PopLocalFrame(NULL);
-        return nullptr;
-    }
-    jstring ret = static_cast<jstring>(env->PopLocalFrame(temp));
-    return ret;
-}
-
 jobjectArray AndroidBridge::GetHandlersForMimeTypeWrapper(const nsAString& a0, const nsAString& a1) {
     JNIEnv *env = GetJNIEnv();
     if (!env) {
@@ -1477,6 +1450,33 @@ void AndroidBridge::MoveTaskToBack() {
         return;
     }
     env->PopLocalFrame(NULL);
+}
+
+int32_t AndroidBridge::NetworkLinkType() {
+    JNIEnv *env = GetJNIEnv();
+    if (!env) {
+        ALOG_BRIDGE("Aborted: No env - %s", __PRETTY_FUNCTION__);
+        return 0;
+    }
+
+    if (env->PushLocalFrame(0) != 0) {
+        ALOG_BRIDGE("Exceptional exit of: %s", __PRETTY_FUNCTION__);
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        return 0;
+    }
+
+    int32_t temp = env->CallStaticIntMethod(mGeckoAppShellClass, jNetworkLinkType);
+
+    if (env->ExceptionCheck()) {
+        ALOG_BRIDGE("Exceptional exit of: %s", __PRETTY_FUNCTION__);
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        env->PopLocalFrame(NULL);
+        return 0;
+    }
+    env->PopLocalFrame(NULL);
+    return temp;
 }
 
 void AndroidBridge::NotifyDefaultPrevented(bool a0) {
@@ -2497,7 +2497,7 @@ void AndroidBridge::SendThumbnail(jobject a0, int32_t a1, bool a2) {
     env->PopLocalFrame(NULL);
 }
 
-jobject AndroidBridge::ProvideEGLSurfaceWrapper(jobject aTarget) {
+jobject AndroidBridge::CreateEGLSurfaceForCompositorWrapper(jobject aTarget) {
     JNIEnv *env = GetJNIForThread();
     if (!env) {
         ALOG_BRIDGE("Aborted: No env - %s", __PRETTY_FUNCTION__);
@@ -2511,7 +2511,7 @@ jobject AndroidBridge::ProvideEGLSurfaceWrapper(jobject aTarget) {
         return nullptr;
     }
 
-    jobject temp = env->CallObjectMethod(aTarget, jProvideEGLSurfaceWrapper);
+    jobject temp = env->CallObjectMethod(aTarget, jCreateEGLSurfaceForCompositorWrapper);
 
     if (env->ExceptionCheck()) {
         ALOG_BRIDGE("Exceptional exit of: %s", __PRETTY_FUNCTION__);
