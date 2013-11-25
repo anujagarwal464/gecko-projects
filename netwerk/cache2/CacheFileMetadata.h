@@ -14,10 +14,19 @@
 namespace mozilla {
 namespace net {
 
+// The FRECENCY_PRECISION_FACTOR value affects persistence, when it's modified
+// the entry version must be changed!
+#define FRECENCY_PRECISION_FACTOR 20000.0
+#define FRECENCY2INT(aFrecency) \
+  ((uint32_t)(aFrecency * FRECENCY_PRECISION_FACTOR))
+#define INT2FRECENCY(aInt) \
+  ((double)(aInt) / FRECENCY_PRECISION_FACTOR)
+
 typedef struct {
   uint32_t        mFetchCount;
   uint32_t        mLastFetched;
   uint32_t        mLastModified;
+  uint32_t        mFrecency;
   uint32_t        mExpirationTime;
   uint32_t        mKeySize;
 } CacheFileMetadataHeader;
@@ -74,6 +83,8 @@ public:
   nsresult GetExpirationTime(uint32_t *_retval);
   nsresult SetLastModified(uint32_t aLastModified);
   nsresult GetLastModified(uint32_t *_retval);
+  nsresult SetFrecency(uint32_t aFrecency);
+  nsresult GetFrecency(uint32_t *_retval);
   nsresult GetLastFetched(uint32_t *_retval);
   nsresult GetFetchCount(uint32_t *_retval);
 
