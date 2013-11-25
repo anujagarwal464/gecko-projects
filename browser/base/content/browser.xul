@@ -266,9 +266,19 @@
            position="topcenter topright"/>
 
     <menupopup id="toolbar-context-menu"
-               onpopupshowing="onViewToolbarsPopupShowing(event);">
+               onpopupshowing="onViewToolbarsPopupShowing(event, document.getElementById('viewToolbarsMenuSeparator'));">
+      <menuitem oncommand="gCustomizeMode.addToPanel(document.popupNode)"
+                accesskey="&customizeMenu.addToPanel.accesskey;"
+                label="&customizeMenu.addToPanel.label;"
+                class="customize-context-addToPanel"/>
+      <menuitem oncommand="gCustomizeMode.removeFromArea(document.popupNode)"
+                accesskey="&customizeMenu.removeFromToolbar.accesskey;"
+                label="&customizeMenu.removeFromToolbar.label;"
+                class="customize-context-removeFromToolbar"/>
       <menuseparator/>
+      <menuseparator id="viewToolbarsMenuSeparator"/>
       <menuitem command="cmd_CustomizeToolbars"
+                class="viewCustomizeToolbar"
                 label="&viewCustomizeToolbar.label;"
                 accesskey="&viewCustomizeToolbar.accesskey;"/>
     </menupopup>
@@ -423,11 +433,7 @@
 <vbox id="titlebar">
   <hbox id="titlebar-content">
     <spacer id="titlebar-spacer" flex="1"/>
-    <hbox id="titlebar-buttonbox-container" align="start"
-#ifdef XP_MACOSX
-          ordinal="0"
-#endif
-    >
+    <hbox id="titlebar-buttonbox-container">
       <hbox id="titlebar-buttonbox">
         <toolbarbutton class="titlebar-button" id="titlebar-min" oncommand="window.minimize();"/>
         <toolbarbutton class="titlebar-button" id="titlebar-max" oncommand="onTitlebarMaxClick();"/>
@@ -435,7 +441,7 @@
       </hbox>
     </hbox>
 #ifdef XP_MACOSX
-    <hbox id="titlebar-fullscreen-button" ordinal="1000"/>
+    <hbox id="titlebar-fullscreen-button"/>
 #endif
   </hbox>
 </vbox>
@@ -958,7 +964,7 @@
     </toolbar>
 
     <!-- This is a shim which will go away ASAP. See bug 749804 for details -->
-    <toolbar id="addon-bar" toolbar-delegate="nav-bar">
+    <toolbar id="addon-bar" toolbar-delegate="nav-bar" mode="icons" iconsize="small">
       <hbox id="addonbar-closebutton"/>
       <statusbar id="status-bar"/>
     </toolbar>

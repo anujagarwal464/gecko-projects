@@ -1082,17 +1082,17 @@ CanvasRenderingContext2D::GetInputStream(const char *aMimeType,
                                          const PRUnichar *aEncoderOptions,
                                          nsIInputStream **aStream)
 {
-  nsAutoArrayPtr<uint8_t> imageBuffer;
-  int32_t format = 0;
-  GetImageBuffer(getter_Transfers(imageBuffer), &format);
-  if (!imageBuffer) {
-    return NS_ERROR_FAILURE;
-  }
-
   nsCString enccid("@mozilla.org/image/encoder;2?type=");
   enccid += aMimeType;
   nsCOMPtr<imgIEncoder> encoder = do_CreateInstance(enccid.get());
   if (!encoder) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoArrayPtr<uint8_t> imageBuffer;
+  int32_t format = 0;
+  GetImageBuffer(getter_Transfers(imageBuffer), &format);
+  if (!imageBuffer) {
     return NS_ERROR_FAILURE;
   }
 
@@ -2208,11 +2208,13 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
 
   fontStyle->mFont.AddFontFeaturesToStyle(&style);
 
+  nsPresContext *c = presShell->GetPresContext();
   CurrentState().fontGroup =
       gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.name,
                                                   &style,
-                                                  presShell->GetPresContext()->GetUserFontSet());
+                                                  c->GetUserFontSet());
   NS_ASSERTION(CurrentState().fontGroup, "Could not get font group");
+  CurrentState().fontGroup->SetTextPerfMetrics(c->GetTextPerfMetrics());
 
   // The font getter is required to be reserialized based on what we
   // parsed (including having line-height removed).  (Older drafts of
@@ -2806,6 +2808,12 @@ gfxFontGroup *CanvasRenderingContext2D::GetCurrentFontStyle()
                                                     nullptr);
       if (CurrentState().fontGroup) {
         CurrentState().font = kDefaultFontStyle;
+
+        nsIPresShell* presShell = GetPresShell();
+        if (presShell) {
+          CurrentState().fontGroup->SetTextPerfMetrics(
+            presShell->GetPresContext()->GetTextPerfMetrics());
+        }
       } else {
         NS_ERROR("Default canvas font is invalid");
       }

@@ -48,6 +48,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
 #include "ActiveLayerTracker.h"
+#include "nsContentUtils.h"
 
 #include <stdint.h>
 #include <algorithm>
@@ -712,6 +713,13 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
   }
 
   metrics.mPresShellId = presShell->GetPresShellId();
+
+  // If the scroll frame's content is marked 'scrollgrab', record this
+  // in the FrameMetrics so APZ knows to provide the scroll grabbing
+  // behaviour.
+  if (aScrollFrame && nsContentUtils::HasScrollgrab(aScrollFrame->GetContent())) {
+    metrics.mHasScrollgrab = true;
+  }
 
   aRoot->SetFrameMetrics(metrics);
 }
@@ -2226,7 +2234,7 @@ nsDisplayThemedBackground::~nsDisplayThemedBackground()
 void
 nsDisplayThemedBackground::WriteDebugInfo(FILE *aOutput)
 {
-  fprintf(aOutput, "(themed, appearance:%d) ", mAppearance);
+  fprintf_stderr(aOutput, "(themed, appearance:%d) ", mAppearance);
 }
 #endif
 
@@ -4705,32 +4713,32 @@ nsDisplaySVGEffects::PrintEffects(FILE* aOutput)
   bool isOK = true;
   nsSVGClipPathFrame *clipPathFrame = effectProperties.GetClipPathFrame(&isOK);
   bool first = true;
-  fprintf(aOutput, " effects=(");
+  fprintf_stderr(aOutput, " effects=(");
   if (mFrame->StyleDisplay()->mOpacity != 1.0f) {
     first = false;
-    fprintf(aOutput, "opacity(%f)", mFrame->StyleDisplay()->mOpacity);
+    fprintf_stderr(aOutput, "opacity(%f)", mFrame->StyleDisplay()->mOpacity);
   }
   if (clipPathFrame) {
     if (!first) {
-      fprintf(aOutput, ", ");
+      fprintf_stderr(aOutput, ", ");
     }
-    fprintf(aOutput, "clip(%s)", clipPathFrame->IsTrivial() ? "trivial" : "non-trivial");
+    fprintf_stderr(aOutput, "clip(%s)", clipPathFrame->IsTrivial() ? "trivial" : "non-trivial");
     first = false;
   }
   if (effectProperties.GetFilterFrame(&isOK)) {
     if (!first) {
-      fprintf(aOutput, ", ");
+      fprintf_stderr(aOutput, ", ");
     }
-    fprintf(aOutput, "filter");
+    fprintf_stderr(aOutput, "filter");
     first = false;
   }
   if (effectProperties.GetMaskFrame(&isOK)) {
     if (!first) {
-      fprintf(aOutput, ", ");
+      fprintf_stderr(aOutput, ", ");
     }
-    fprintf(aOutput, "mask");
+    fprintf_stderr(aOutput, "mask");
   }
-  fprintf(aOutput, ")");
+  fprintf_stderr(aOutput, ")");
 }
 #endif
 

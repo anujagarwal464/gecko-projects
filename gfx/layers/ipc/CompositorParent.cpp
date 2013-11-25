@@ -322,6 +322,15 @@ CompositorParent::RecvFlushRendering()
   return true;
 }
 
+bool
+CompositorParent::RecvNotifyRegionInvalidated(const nsIntRegion& aRegion)
+{
+  if (mLayerManager) {
+    mLayerManager->AddInvalidRegion(aRegion);
+  }
+  return true;
+}
+
 void
 CompositorParent::ActorDestroy(ActorDestroyReason why)
 {
@@ -545,8 +554,8 @@ CompositorParent::CompositeInTransaction()
 #ifdef MOZ_DUMP_PAINTING
   static bool gDumpCompositorTree = false;
   if (gDumpCompositorTree) {
-    fprintf(stdout, "Painting --- compositing layer tree:\n");
-    mLayerManager->Dump(stdout, "", false);
+    printf_stderr("Painting --- compositing layer tree:\n");
+    mLayerManager->Dump();
   }
 #endif
   mLayerManager->EndEmptyTransaction();
@@ -663,7 +672,7 @@ CompositorParent::InitializeLayerManager(const nsTArray<LayersBackend>& aBackend
         new LayerManagerComposite(new CompositorD3D11(mWidget));
     } else if (aBackendHints[i] == LAYERS_D3D9) {
       layerManager =
-        new LayerManagerComposite(new CompositorD3D9(mWidget));
+        new LayerManagerComposite(new CompositorD3D9(this, mWidget));
 #endif
     }
 
@@ -896,6 +905,7 @@ public:
                                 SurfaceDescriptor* aOutSnapshot)
   { return true; }
   virtual bool RecvFlushRendering() MOZ_OVERRIDE { return true; }
+  virtual bool RecvNotifyRegionInvalidated(const nsIntRegion& aRegion) { return true; }
 
   virtual PLayerTransactionParent*
     AllocPLayerTransactionParent(const nsTArray<LayersBackend>& aBackendHints,

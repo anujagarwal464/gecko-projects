@@ -75,6 +75,7 @@ const char* const XPCJSRuntime::mStrings[] = {
     "__proto__",            // IDX_PROTO
     "__iterator__",         // IDX_ITERATOR
     "__exposedProps__",     // IDX_EXPOSEDPROPS
+    "eval",                 // IDX_EVAL
 };
 
 /***************************************************************************/
@@ -592,7 +593,7 @@ WindowGlobalOrNull(JSObject *aObj)
     // at which point it will do the right thing.
     if (!IS_WN_CLASS(js::GetObjectClass(glob))) {
         nsGlobalWindow* win = nullptr;
-        UNWRAP_OBJECT(Window, nullptr, glob, win);
+        UNWRAP_OBJECT(Window, glob, win);
         return win;
     }
 

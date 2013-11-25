@@ -3,8 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE_NAME = xpconnect_test
-
 componentdir = js/xpconnect/tests/components/native
 
 MANIFEST = xpctest.manifest
@@ -14,7 +12,6 @@ PP_TARGETS += MANIFEST
 EXTRA_DSO_LDOPTS += \
   $(XPCOM_GLUE_LDOPTS) \
   $(MOZ_COMPONENT_LIBS) \
-  $(MOZ_JS_LIBS) \
   $(NULL)
 
 DEFINES += -DLIBRARY_FILENAME="$(SHARED_LIBRARY)"

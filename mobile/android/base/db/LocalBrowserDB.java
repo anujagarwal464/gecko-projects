@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko.db;
 
+import org.mozilla.gecko.AboutPages;
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserContract.ExpirePriority;
@@ -250,7 +251,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                                              Combined.HISTORY_ID },
                               "",
                               limit,
-                              BrowserDB.ABOUT_PAGES_URL_FILTER,
+                              AboutPages.URL_FILTER,
                               selection,
                               selectionArgs);
     }
@@ -402,10 +403,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             c = cr.query(mBookmarksUriWithProfile,
                          DEFAULT_BOOKMARK_COLUMNS,
                          Bookmarks.PARENT + " = ? AND " +
-                         "(" + Bookmarks.TYPE + " = ? OR " + Bookmarks.TYPE + " = ?)",
+                         "(" + Bookmarks.TYPE + " = ? OR " +
+                            "(" + Bookmarks.TYPE + " = ? AND " + Bookmarks.URL + " IS NOT NULL))",
                          new String[] { String.valueOf(folderId),
-                                        String.valueOf(Bookmarks.TYPE_BOOKMARK),
-                                        String.valueOf(Bookmarks.TYPE_FOLDER) },
+                                        String.valueOf(Bookmarks.TYPE_FOLDER),
+                                        String.valueOf(Bookmarks.TYPE_BOOKMARK) },
                          null);
         }
 

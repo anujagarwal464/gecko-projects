@@ -31,9 +31,6 @@ const kNSXUL = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 const kSpecialWidgetPfx = "customizableui-special-";
 
-const kCustomizationContextMenu = "customizationContextMenu";
-
-
 const kPrefCustomizationState        = "browser.uiCustomization.state";
 const kPrefCustomizationAutoAdd      = "browser.uiCustomization.autoAdd";
 const kPrefCustomizationDebug        = "browser.uiCustomization.debug";
@@ -397,7 +394,7 @@ let CustomizableUIInternal = {
         }
       }
 
-      this.ensureButtonContextMenu(node, aArea == CustomizableUI.AREA_PANEL);
+      this.ensureButtonContextMenu(node, aAreaNode);
       if (node.localName == "toolbarbutton" && aArea == CustomizableUI.AREA_PANEL) {
         node.setAttribute("tabindex", "0");
         if (!node.hasAttribute("type")) {
@@ -483,15 +480,21 @@ let CustomizableUIInternal = {
     }
   },
 
-  ensureButtonContextMenu: function(aNode, aShouldHaveCustomizationMenu) {
+  ensureButtonContextMenu: function(aNode, aAreaNode) {
+    const kPanelItemContextMenu = "customizationPanelItemContextMenu";
+
     let currentContextMenu = aNode.getAttribute("context") ||
                              aNode.getAttribute("contextmenu");
-    if (aShouldHaveCustomizationMenu) {
-      if (!currentContextMenu)
-        aNode.setAttribute("context", kCustomizationContextMenu);
-    } else {
-      if (currentContextMenu == kCustomizationContextMenu)
-        aNode.removeAttribute("context");
+    let place = CustomizableUI.getPlaceForItem(aAreaNode);
+    let contextMenuForPlace = place == "panel" ?
+                                kPanelItemContextMenu :
+                                null;
+    if (contextMenuForPlace && !currentContextMenu) {
+      aNode.setAttribute("context", contextMenuForPlace);
+    } else if (currentContextMenu == kPanelItemContextMenu &&
+               contextMenuForPlace != kPanelItemContextMenu) {
+      aNode.removeAttribute("context");
+      aNode.removeAttribute("contextmenu");
     }
   },
 
@@ -556,14 +559,6 @@ let CustomizableUIInternal = {
 
     let document = aPanel.ownerDocument;
 
-    for (let btn of aPanel.querySelectorAll("toolbarbutton")) {
-      btn.setAttribute("tabindex", "0");
-      this.ensureButtonContextMenu(btn, true);
-      if (!btn.hasAttribute("type")) {
-        btn.setAttribute("type", "wrap");
-      }
-    }
-
     aPanel.toolbox = document.getElementById("navigator-toolbox");
     aPanel.customizationTarget = aPanel;
 
@@ -571,6 +566,14 @@ let CustomizableUIInternal = {
 
     let placements = gPlacements.get(CustomizableUI.AREA_PANEL);
     this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanel);
+    for (let btn of aPanel.querySelectorAll("toolbarbutton")) {
+      btn.setAttribute("tabindex", "0");
+      this.ensureButtonContextMenu(btn, aPanel);
+      if (!btn.hasAttribute("type")) {
+        btn.setAttribute("type", "wrap");
+      }
+    }
+
     this.registerBuildArea(CustomizableUI.AREA_PANEL, aPanel);
   },
 
@@ -749,7 +752,7 @@ let CustomizableUIInternal = {
 
     let areaId = aAreaNode.id;
     if (isNew) {
-      this.ensureButtonContextMenu(widgetNode, areaId == CustomizableUI.AREA_PANEL);
+      this.ensureButtonContextMenu(widgetNode, aAreaNode);
       if (widgetNode.localName == "toolbarbutton" && areaId == CustomizableUI.AREA_PANEL) {
         widgetNode.setAttribute("tabindex", "0");
         if (!widgetNode.hasAttribute("type")) {
@@ -867,24 +870,27 @@ let CustomizableUIInternal = {
     if (node) {
       let parent = node.parentNode;
       while (parent && !(parent.customizationTarget ||
-                         parent.localName == "toolbarpaletteitem")) {
+                         parent == aWindow.gNavToolbox.palette)) {
         parent = parent.parentNode;
       }
 
-      if (parent && ((parent.customizationTarget == node.parentNode &&
-                      gBuildWindows.get(aWindow).has(parent.toolbox)) ||
-                     parent.localName == "toolbarpaletteitem")) {
-        // Normalize the removable attribute. For backwards compat, if
-        // the widget is not defined in a toolbox palette then absence
-        // of the "removable" attribute means it is not removable.
-        if (!node.hasAttribute("removable")) {
-          parent = parent.localName == "toolbarpaletteitem" ? parent.parentNode : parent;
-          // If we first see this in customization mode, it may be in the
-          // customization palette instead of the toolbox palette.
-          node.setAttribute("removable", !parent.customizationTarget);
+      if (parent) {
+        let nodeInArea = node.parentNode.localName == "toolbarpaletteitem" ?
+                         node.parentNode : node;
+        // Check if we're in a customization target, or in the palette:
+        if ((parent.customizationTarget == nodeInArea.parentNode &&
+             gBuildWindows.get(aWindow).has(parent.toolbox)) ||
+            aWindow.gNavToolbox.palette == nodeInArea.parentNode) {
+          // Normalize the removable attribute. For backwards compat, if
+          // the widget is not located in a toolbox palette then absence
+          // of the "removable" attribute means it is not removable.
+          if (!node.hasAttribute("removable")) {
+            // If we first see this in customization mode, it may be in the
+            // customization palette instead of the toolbox palette.
+            node.setAttribute("removable", !parent.customizationTarget);
+          }
+          return node;
         }
-
-        return node;
       }
     }
 
@@ -896,8 +902,8 @@ let CustomizableUIInternal = {
         let node = toolbox.palette.querySelector(idToSelector(aId));
         if (node) {
           // Normalize the removable attribute. For backwards compat, this
-          // is optional if the widget is defined in the toolbox palette,
-          // and defaults to *true*, unlike if it was defined elsewhere.
+          // is optional if the widget is located in the toolbox palette,
+          // and defaults to *true*, unlike if it was located elsewhere.
           if (!node.hasAttribute("removable")) {
             node.setAttribute("removable", true);
           }
@@ -1911,6 +1917,7 @@ let CustomizableUIInternal = {
 
       let currentPlacements = gPlacements.get(areaId);
       // We're excluding all of the placement IDs for items that do not exist,
+      // and items that have removable="false",
       // because we don't want to consider them when determining if we're
       // in the default state. This way, if an add-on introduces a widget
       // and is then uninstalled, the leftover placement doesn't cause us to
@@ -1918,20 +1925,24 @@ let CustomizableUIInternal = {
       let buildAreaNodes = gBuildAreas.get(areaId);
       if (buildAreaNodes && buildAreaNodes.size) {
         let container = [...buildAreaNodes][0];
+        let removableOrDefault = (itemNodeOrItem) => {
+          let item = (itemNodeOrItem && itemNodeOrItem.id) || itemNodeOrItem;
+          let isRemovable = this.isWidgetRemovable(itemNodeOrItem);
+          let isInDefault = defaultPlacements.indexOf(item) != -1;
+          return isRemovable || isInDefault;
+        };
         // Toolbars have a currentSet property which also deals correctly with overflown
         // widgets (if any) - use that instead:
         if (props.get("type") == CustomizableUI.TYPE_TOOLBAR) {
           currentPlacements = container.currentSet.split(',');
+          currentPlacements = currentPlacements.filter(removableOrDefault);
         } else {
           // Clone the array so we don't modify the actual placements...
           currentPlacements = [...currentPlacements];
-          // Loop backwards through the placements so we can easily remove items:
-          let itemIndex = currentPlacements.length;
-          while (itemIndex--) {
-            if (!container.querySelector(idToSelector(currentPlacements[itemIndex]))) {
-              currentPlacements.splice(itemIndex, 1);
-            }
-          }
+          currentPlacements = currentPlacements.filter((item) => {
+            let itemNode = container.querySelector(idToSelector(item));
+            return itemNode && removableOrDefault(itemNode || item);
+          });
         }
       }
       LOG("Checking default state for " + areaId + ":\n" + currentPlacements.join(",") +
@@ -2102,6 +2113,21 @@ this.CustomizableUI = {
     return area ? area.get("type") == this.TYPE_TOOLBAR && area.get("overflowable")
                 : false;
   },
+  getPlaceForItem: function(aElement) {
+    let place;
+    let node = aElement;
+    while (node && !place) {
+      if (node.localName == "toolbar")
+        place = "toolbar";
+      else if (node.id == CustomizableUI.AREA_PANEL)
+        place = "panel";
+      else if (node.id == "customization-palette")
+        place = "palette";
+
+      node = node.parentNode;
+    }
+    return place;
+  }
 };
 Object.freeze(this.CustomizableUI);
 

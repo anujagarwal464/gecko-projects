@@ -2536,7 +2536,7 @@ class CastableObjectUnwrapper():
         codeOnFailure = self.substitution["codeOnFailure"] % {'securityError': 'rv == NS_ERROR_XPC_SECURITY_MANAGER_VETO'}
         return string.Template(
 """{
-  nsresult rv = UnwrapObject<${protoID}, ${type}>(cx, ${source}, ${target});
+  nsresult rv = UnwrapObject<${protoID}, ${type}>(${source}, ${target});
   if (NS_FAILED(rv)) {
 ${codeOnFailure}
   }
@@ -10070,7 +10070,19 @@ class CGJSImplClass(CGBindingImplClass):
                       descriptor.name)
             constructorBody = "SetIsDOMBinding();"
             extradefinitions= string.Template(
-                "NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_2(${ifaceName}, mImpl, mParent)\n"
+                "NS_IMPL_CYCLE_COLLECTION_CLASS(${ifaceName})\n"
+                "NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(${ifaceName})\n"
+                "  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImpl)\n"
+                "  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)\n"
+                "  NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER\n"
+                "  tmp->ClearWeakReferences();\n"
+                "NS_IMPL_CYCLE_COLLECTION_UNLINK_END\n"
+                "NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(${ifaceName})\n"
+                "  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImpl)\n"
+                "  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParent)\n"
+                "  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS\n"
+                "NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END\n"
+                "NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(${ifaceName})\n"
                 "NS_IMPL_CYCLE_COLLECTING_ADDREF(${ifaceName})\n"
                 "NS_IMPL_CYCLE_COLLECTING_RELEASE(${ifaceName})\n"
                 "NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(${ifaceName})\n"

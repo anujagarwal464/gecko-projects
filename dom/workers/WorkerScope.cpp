@@ -22,9 +22,9 @@
 
 #include "RuntimeService.h" // For WorkersDumpEnabled().
 
-#define UNWRAP_WORKER_OBJECT(Interface, cx, obj, value)                       \
+#define UNWRAP_WORKER_OBJECT(Interface, obj, value)                           \
   UnwrapObject<prototypes::id::Interface##_workers,                           \
-    mozilla::dom::Interface##Binding_workers::NativeType>(cx, obj, value)
+    mozilla::dom::Interface##Binding_workers::NativeType>(obj, value)
 
 using namespace mozilla::dom;
 USING_WORKERS_NAMESPACE
@@ -234,10 +234,7 @@ WorkerGlobalScope::Dump(const Optional<nsAString>& aString) const
     return;
   }
 
-  RuntimeService* runtimeService = RuntimeService::GetService();
-  MOZ_ASSERT(runtimeService);
-
-  if (!runtimeService->WorkersDumpEnabled()) {
+  if (!mWorkerPrivate->DumpEnabled()) {
     return;
   }
 
@@ -259,7 +256,7 @@ DedicatedWorkerGlobalScope::DedicatedWorkerGlobalScope(WorkerPrivate* aWorkerPri
 DedicatedWorkerGlobalScope::Visible(JSContext* aCx, JSObject* aObj)
 {
   DedicatedWorkerGlobalScope* self = nullptr;
-  nsresult rv = UNWRAP_WORKER_OBJECT(DedicatedWorkerGlobalScope, aCx, aObj, self);
+  nsresult rv = UNWRAP_WORKER_OBJECT(DedicatedWorkerGlobalScope, aObj, self);
   return NS_SUCCEEDED(rv) && self;
 }
 
@@ -299,7 +296,7 @@ SharedWorkerGlobalScope::SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
 SharedWorkerGlobalScope::Visible(JSContext* aCx, JSObject* aObj)
 {
   SharedWorkerGlobalScope* self = nullptr;
-  nsresult rv = UNWRAP_WORKER_OBJECT(SharedWorkerGlobalScope, aCx, aObj, self);
+  nsresult rv = UNWRAP_WORKER_OBJECT(SharedWorkerGlobalScope, aObj, self);
   return NS_SUCCEEDED(rv) && self;
 }
 

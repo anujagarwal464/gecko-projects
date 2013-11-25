@@ -131,7 +131,7 @@ CPPSRCS += $(CPP_UNIT_TESTS)
 CPP_UNIT_TEST_BINS := $(CPP_UNIT_TESTS:.cpp=$(BIN_SUFFIX))
 SIMPLE_PROGRAMS += $(CPP_UNIT_TEST_BINS)
 INCLUDES += -I$(DIST)/include/testing
-LIBS += $(XPCOM_GLUE_LDOPTS) $(NSPR_LIBS) $(MOZ_JS_LIBS) $(if $(JS_SHARED_LIBRARY),,$(MOZ_ZLIB_LIBS))
+LIBS += $(XPCOM_GLUE_LDOPTS) $(NSPR_LIBS) $(if $(JS_SHARED_LIBRARY),,$(MOZ_ZLIB_LIBS))
 
 ifndef MOZ_PROFILE_GENERATE
 libs:: $(CPP_UNIT_TEST_BINS) $(call mkdir_deps,$(DIST)/cppunittests)
@@ -455,20 +455,6 @@ endif
 ifdef IS_COMPONENT
 EXTRA_DSO_LDOPTS += $(MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS)
 endif # IS_COMPONENT
-
-#
-# Enforce the requirement that MODULE_NAME must be set
-# for components in static builds
-#
-ifdef IS_COMPONENT
-ifdef EXPORT_LIBRARY
-ifndef FORCE_SHARED_LIB
-ifndef MODULE_NAME
-$(error MODULE_NAME is required for components which may be used in static builds)
-endif
-endif
-endif
-endif
 
 #
 # MacOS X specific stuff
@@ -1723,3 +1709,7 @@ include $(topsrcdir)/config/makefiles/autotargets.mk
 ifneq ($(NULL),$(AUTO_DEPS))
   default all libs tools export:: $(AUTO_DEPS)
 endif
+
+export:: $(GENERATED_FILES)
+
+GARBAGE += $(GENERATED_FILES)
