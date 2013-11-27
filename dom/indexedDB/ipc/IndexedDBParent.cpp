@@ -53,7 +53,7 @@ AutoSetCurrentTransaction::AutoSetCurrentTransaction(
 
 AutoSetCurrentTransaction::~AutoSetCurrentTransaction()
 {
-  AsyncConnectionHelper::SetCurrentTransaction(NULL);
+  AsyncConnectionHelper::SetCurrentTransaction(nullptr);
 }
 
 /*******************************************************************************
@@ -415,7 +415,7 @@ IndexedDBDatabaseParent::HandleRequestEvent(nsIDOMEvent* aEvent,
   MOZ_ASSERT(!JSVAL_IS_PRIMITIVE(result));
 
   IDBDatabase *database;
-  rv = UNWRAP_OBJECT(IDBDatabase, cx, &result.toObject(), database);
+  rv = UNWRAP_OBJECT(IDBDatabase, &result.toObject(), database);
   if (NS_FAILED(rv)) {
     NS_WARNING("Didn't get the object we expected!");
     return rv;
@@ -567,7 +567,7 @@ void
 IndexedDBDatabaseParent::ActorDestroy(ActorDestroyReason aWhy)
 {
   if (mDatabase) {
-    mDatabase->SetActor(static_cast<IndexedDBDatabaseParent*>(NULL));
+    mDatabase->SetActor(static_cast<IndexedDBDatabaseParent*>(nullptr));
     mDatabase->Invalidate();
   }
 }
@@ -746,7 +746,7 @@ IndexedDBTransactionParent::ActorDestroy(ActorDestroyReason aWhy)
       mArtificialRequestCount = false;
 #endif
     }
-    mTransaction->SetActor(static_cast<IndexedDBTransactionParent*>(NULL));
+    mTransaction->SetActor(static_cast<IndexedDBTransactionParent*>(nullptr));
   }
 }
 
@@ -998,7 +998,7 @@ void
 IndexedDBCursorParent::ActorDestroy(ActorDestroyReason aWhy)
 {
   MOZ_ASSERT(mCursor);
-  mCursor->SetActor(static_cast<IndexedDBCursorParent*>(NULL));
+  mCursor->SetActor(static_cast<IndexedDBCursorParent*>(nullptr));
 }
 
 bool
@@ -1075,7 +1075,7 @@ void
 IndexedDBObjectStoreParent::ActorDestroy(ActorDestroyReason aWhy)
 {
   if (mObjectStore) {
-    mObjectStore->SetActor(static_cast<IndexedDBObjectStoreParent*>(NULL));
+    mObjectStore->SetActor(static_cast<IndexedDBObjectStoreParent*>(nullptr));
   }
 }
 
@@ -1359,7 +1359,7 @@ void
 IndexedDBIndexParent::ActorDestroy(ActorDestroyReason aWhy)
 {
   if (mIndex) {
-    mIndex->SetActor(static_cast<IndexedDBIndexParent*>(NULL));
+    mIndex->SetActor(static_cast<IndexedDBIndexParent*>(nullptr));
   }
 }
 
@@ -1460,7 +1460,7 @@ void
 IndexedDBRequestParentBase::ActorDestroy(ActorDestroyReason aWhy)
 {
   if (mRequest) {
-    mRequest->SetActor(NULL);
+    mRequest->SetActor(nullptr);
   }
 }
 

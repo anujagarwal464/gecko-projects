@@ -40,10 +40,13 @@
 #include "nsContentUtils.h"
 
 #include "ssl.h"
+#include "sslproto.h"
 #include "secerr.h"
 #include "sslerr.h"
 #include "secder.h"
 #include "keyhi.h"
+
+#include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::psm;
@@ -62,8 +65,6 @@ namespace {
 
 NSSCleanupAutoPtrClass(void, PR_FREEIF)
 
-static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
-
 void
 getSiteKey(const nsACString & hostName, uint16_t port,
            /*out*/ nsCSubstring & key)
@@ -75,6 +76,37 @@ getSiteKey(const nsACString & hostName, uint16_t port,
 
 /* SSM_UserCertChoice: enum for cert choice info */
 typedef enum {ASK, AUTO} SSM_UserCertChoice;
+
+// Forward secrecy provides us with a proof of posession of the private key
+// from the server. Without of proof of posession of the private key of the
+// server, any MitM can force us to false start in a connection that the real
+// server never participates in, since with RSA key exchange a MitM can
+// complete the server's first round of the handshake without knowing the
+// server's public key This would be used, for example, to greatly accelerate
+// the attacks on RC4 or other attacks that allow a MitM to decrypt encrypted
+// data without having the server's private key. Without false start, such
+// attacks are naturally rate limited by network latency and may also be rate
+// limited explicitly by the server's DoS or other security mechanisms.
+// Further, because the server that has the private key must participate in the
+// handshake, the server could detect these kinds of attacks if they they are
+// repeated rapidly and/or frequently, by noticing lots of invalid or
+// incomplete handshakes.
+//
+// With this in mind, when we choose not to require forward secrecy (when the
+// pref's value is false), then we will still only false start for RSA key
+// exchange only if the most recent handshake we've previously done used RSA
+// key exchange. This way, we prevent any (EC)DHE-to-RSA downgrade attacks for
+// servers that consistently choose (EC)DHE key exchange. In order to prevent
+// downgrade from ECDHE_*_GCM cipher suites, we need to also consider downgrade
+// from TLS 1.2 to earlier versions (bug 861310).
+static const bool FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT = true;
+
+// XXX(perf bug 940787): We currently require NPN because there is a very
+// high (perfect so far) correlation between servers that are false-start-
+// tolerant and servers that support NPN, according to Google. Without this, we
+// will run into interop issues with a small percentage of servers that stop
+// responding when we attempt to false start.
+static const bool FALSE_START_REQUIRE_NPN_DEFAULT = true;
 
 } // unnamed namespace
 
@@ -92,6 +124,8 @@ nsNSSSocketInfo::nsNSSSocketInfo(SharedSSLState& aState, uint32_t providerFlags)
     mRememberClientAuthCertificate(false),
     mPreliminaryHandshakeDone(false),
     mNPNCompleted(false),
+    mFalseStartCallbackCalled(false),
+    mFalseStarted(false),
     mIsFullHandshake(false),
     mHandshakeCompleted(false),
     mJoined(false),
@@ -99,8 +133,6 @@ nsNSSSocketInfo::nsNSSSocketInfo(SharedSSLState& aState, uint32_t providerFlags)
     mNotedTimeUntilReady(false),
     mKEAUsed(nsISSLSocketControl::KEY_EXCHANGE_UNKNOWN),
     mKEAExpected(nsISSLSocketControl::KEY_EXCHANGE_UNKNOWN),
-    mSymmetricCipherUsed(nsISSLSocketControl::SYMMETRIC_CIPHER_UNKNOWN),
-    mSymmetricCipherExpected(nsISSLSocketControl::SYMMETRIC_CIPHER_UNKNOWN),
     mProviderFlags(providerFlags),
     mSocketCreationTimestamp(TimeStamp::Now()),
     mPlaintextBytesRead(0)
@@ -138,27 +170,6 @@ NS_IMETHODIMP
 nsNSSSocketInfo::SetKEAExpected(int16_t aKea)
 {
   mKEAExpected = aKea;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSSocketInfo::GetSymmetricCipherUsed(int16_t *aSymmetricCipher)
-{
-  *aSymmetricCipher = mSymmetricCipherUsed;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSSocketInfo::GetSymmetricCipherExpected(int16_t *aSymmetricCipher)
-{
-  *aSymmetricCipher = mSymmetricCipherExpected;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSSocketInfo::SetSymmetricCipherExpected(int16_t aSymmetricCipher)
-{
-  mSymmetricCipherExpected = aSymmetricCipher;
   return NS_OK;
 }
 
@@ -255,16 +266,32 @@ nsNSSSocketInfo::NoteTimeUntilReady()
 }
 
 void
-nsNSSSocketInfo::SetHandshakeCompleted(bool aResumedSession)
+nsNSSSocketInfo::SetHandshakeCompleted()
 {
   if (!mHandshakeCompleted) {
+    enum HandshakeType {
+      Resumption = 1,
+      FalseStarted = 2,
+      ChoseNotToFalseStart = 3,
+      NotAllowedToFalseStart = 4,
+    };
+
+    HandshakeType handshakeType = !IsFullHandshake() ? Resumption
+                                : mFalseStarted ? FalseStarted
+                                : mFalseStartCallbackCalled ? ChoseNotToFalseStart
+                                : NotAllowedToFalseStart;
+
     // This will include TCP and proxy tunnel wait time
     Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_HANDSHAKE_FINISHED,
                                    mSocketCreationTimestamp, TimeStamp::Now());
 
     // If the handshake is completed for the first time from just 1 callback
     // that means that TLS session resumption must have been used.
-    Telemetry::Accumulate(Telemetry::SSL_RESUMED_SESSION, aResumedSession);
+    Telemetry::Accumulate(Telemetry::SSL_RESUMED_SESSION,
+                          handshakeType == Resumption);
+    Telemetry::Accumulate(Telemetry::SSL_HANDSHAKE_TYPE, handshakeType);
+  }
+
 
     // Remove the plain text layer as it is not needed anymore.
     // The plain text layer is not always present - so its not a fatal error
@@ -282,7 +309,6 @@ nsNSSSocketInfo::SetHandshakeCompleted(bool aResumedSession)
            ("[%p] nsNSSSocketInfo::SetHandshakeCompleted\n", (void*)mFd));
 
     mIsFullHandshake = false; // reset for next handshake on this connection
-  }
 }
 
 void
@@ -887,61 +913,6 @@ nsDumpBuffer(unsigned char *buf, int len)
 #define DEBUG_DUMP_BUFFER(buf,len)
 #endif
 
-static bool
-isNonSSLErrorThatWeAllowToRetry(int32_t err, bool withInitialCleartext)
-{
-  switch (err)
-  {
-    case PR_CONNECT_RESET_ERROR:
-      if (!withInitialCleartext)
-        return true;
-      break;
-    
-    case PR_END_OF_FILE_ERROR:
-      return true;
-  }
-
-  return false;
-}
-
-static bool
-isTLSIntoleranceError(int32_t err, bool withInitialCleartext)
-{
-  // This function is supposed to decide, which error codes should
-  // be used to conclude server is TLS intolerant.
-  // Note this only happens during the initial SSL handshake.
-  // 
-  // When not using a proxy we'll see a connection reset error.
-  // When using a proxy, we'll see an end of file error.
-  // In addition check for some error codes where it is reasonable
-  // to retry without TLS.
-
-  if (isNonSSLErrorThatWeAllowToRetry(err, withInitialCleartext))
-    return true;
-
-  switch (err)
-  {
-    case SSL_ERROR_BAD_MAC_ALERT:
-    case SSL_ERROR_BAD_MAC_READ:
-    case SSL_ERROR_HANDSHAKE_FAILURE_ALERT:
-    case SSL_ERROR_HANDSHAKE_UNEXPECTED_ALERT:
-    case SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE:
-    case SSL_ERROR_ILLEGAL_PARAMETER_ALERT:
-    case SSL_ERROR_NO_CYPHER_OVERLAP:
-    case SSL_ERROR_BAD_SERVER:
-    case SSL_ERROR_BAD_BLOCK_PADDING:
-    case SSL_ERROR_UNSUPPORTED_VERSION:
-    case SSL_ERROR_PROTOCOL_VERSION_ALERT:
-    case SSL_ERROR_RX_MALFORMED_FINISHED:
-    case SSL_ERROR_BAD_HANDSHAKE_HASH_VALUE:
-    case SSL_ERROR_DECODE_ERROR_ALERT:
-    case SSL_ERROR_RX_UNKNOWN_ALERT:
-      return true;
-  }
-  
-  return false;
-}
-
 class SSLErrorRunnable : public SyncRunnableBase
 {
  public:
@@ -966,10 +937,106 @@ class SSLErrorRunnable : public SyncRunnableBase
 
 namespace {
 
+bool
+retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
+{
+  // This function is supposed to decide which error codes should
+  // be used to conclude server is TLS intolerant.
+  // Note this only happens during the initial SSL handshake.
+
+  SSLVersionRange range = socketInfo->GetTLSVersionRange();
+
+  uint32_t reason;
+  switch (err)
+  {
+    case SSL_ERROR_BAD_MAC_ALERT: reason = 1; break;
+    case SSL_ERROR_BAD_MAC_READ: reason = 2; break;
+    case SSL_ERROR_HANDSHAKE_FAILURE_ALERT: reason = 3; break;
+    case SSL_ERROR_HANDSHAKE_UNEXPECTED_ALERT: reason = 4; break;
+    case SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE: reason = 5; break;
+    case SSL_ERROR_ILLEGAL_PARAMETER_ALERT: reason = 6; break;
+    case SSL_ERROR_NO_CYPHER_OVERLAP: reason = 7; break;
+    case SSL_ERROR_BAD_SERVER: reason = 8; break;
+    case SSL_ERROR_BAD_BLOCK_PADDING: reason = 9; break;
+    case SSL_ERROR_UNSUPPORTED_VERSION: reason = 10; break;
+    case SSL_ERROR_PROTOCOL_VERSION_ALERT: reason = 11; break;
+    case SSL_ERROR_RX_MALFORMED_FINISHED: reason = 12; break;
+    case SSL_ERROR_BAD_HANDSHAKE_HASH_VALUE: reason = 13; break;
+    case SSL_ERROR_DECODE_ERROR_ALERT: reason = 14; break;
+    case SSL_ERROR_RX_UNKNOWN_ALERT: reason = 15; break;
+
+    case PR_CONNECT_RESET_ERROR: reason = 16; goto conditional;
+    case PR_END_OF_FILE_ERROR: reason = 17; goto conditional;
+
+      // When not using a proxy we'll see a connection reset error.
+      // When using a proxy, we'll see an end of file error.
+      // In addition check for some error codes where it is reasonable
+      // to retry without TLS.
+
+      // Don't allow STARTTLS connections to fall back on connection resets or
+      // EOF. Also, don't fall back from TLS 1.0 to SSL 3.0 for those errors,
+      // because connection resets and EOF have too many false positives,
+      // and we want to maximize how often we send TLS 1.0+ with extensions
+      // if at all reasonable. Unfortunately, it appears we have to allow
+      // fallback from TLS 1.2 and TLS 1.1 for those errors due to bad
+      // intermediaries.
+    conditional:
+      if (range.max <= SSL_LIBRARY_VERSION_TLS_1_0 ||
+          socketInfo->GetHasCleartextPhase()) {
+        return false;
+      }
+      break;
+
+    default:
+      return false;
+  }
+
+  Telemetry::ID pre;
+  Telemetry::ID post;
+  switch (range.max) {
+    case SSL_LIBRARY_VERSION_TLS_1_2:
+      pre = Telemetry::SSL_TLS12_INTOLERANCE_REASON_PRE;
+      post = Telemetry::SSL_TLS12_INTOLERANCE_REASON_POST;
+      break;
+    case SSL_LIBRARY_VERSION_TLS_1_1:
+      pre = Telemetry::SSL_TLS11_INTOLERANCE_REASON_PRE;
+      post = Telemetry::SSL_TLS11_INTOLERANCE_REASON_POST;
+      break;
+    case SSL_LIBRARY_VERSION_TLS_1_0:
+      pre = Telemetry::SSL_TLS10_INTOLERANCE_REASON_PRE;
+      post = Telemetry::SSL_TLS10_INTOLERANCE_REASON_POST;
+      break;
+    case SSL_LIBRARY_VERSION_3_0:
+      pre = Telemetry::SSL_SSL30_INTOLERANCE_REASON_PRE;
+      post = Telemetry::SSL_SSL30_INTOLERANCE_REASON_POST;
+      break;
+    default:
+      MOZ_CRASH("impossible TLS version");
+      return false;
+  }
+
+  // The difference between _PRE and _POST represents how often we avoided
+  // TLS intolerance fallback due to remembered tolerance.
+  Telemetry::Accumulate(pre, reason);
+
+  if (!socketInfo->SharedState().IOLayerHelpers()
+                 .rememberIntolerantAtVersion(socketInfo->GetHostName(),
+                                              socketInfo->GetPort(),
+                                              range.min, range.max)) {
+    return false;
+  }
+
+  Telemetry::Accumulate(post, reason);
+
+  return true;
+}
+
 int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
                        PRFileDesc* ssl_layer_fd,
                        nsNSSSocketInfo *socketInfo)
 {
+  PRErrorCode err = PR_GetError();
+
   // This is where we work around all of those SSL servers that don't 
   // conform to the SSL spec and shutdown a connection when we request
   // SSL v3.1 (aka TLS).  The spec says the client says what version
@@ -994,22 +1061,13 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
   bool wantRetry = false;
 
   if (0 > bytesTransfered) {
-    int32_t err = PR_GetError();
-
     if (handleHandshakeResultNow) {
       if (PR_WOULD_BLOCK_ERROR == err) {
+        PR_SetError(err, 0);
         return bytesTransfered;
       }
 
-      if (!wantRetry // no decision yet
-          && isTLSIntoleranceError(err, socketInfo->GetHasCleartextPhase()))
-      {
-        SSLVersionRange range = socketInfo->GetTLSVersionRange();
-        wantRetry = socketInfo->SharedState().IOLayerHelpers()
-                      .rememberIntolerantAtVersion(socketInfo->GetHostName(),
-                                                   socketInfo->GetPort(),
-                                                   range.min, range.max);
-      }
+      wantRetry = retryDueToTLSIntolerance(err, socketInfo);
     }
     
     // This is the common place where we trigger non-cert-errors on a SSL
@@ -1033,15 +1091,7 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
   {
     if (handleHandshakeResultNow)
     {
-      if (!wantRetry // no decision yet
-          && !socketInfo->GetHasCleartextPhase()) // mirror PR_CONNECT_RESET_ERROR treament
-      {
-        SSLVersionRange range = socketInfo->GetTLSVersionRange();
-        wantRetry = socketInfo->SharedState().IOLayerHelpers()
-                        .rememberIntolerantAtVersion(socketInfo->GetHostName(),
-                                                     socketInfo->GetPort(),
-                                                     range.min, range.max);
-      }
+      wantRetry = retryDueToTLSIntolerance(PR_END_OF_FILE_ERROR, socketInfo);
     }
   }
 
@@ -1050,7 +1100,7 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
            ("[%p] checkHandshake: will retry with lower max TLS version\n",
             ssl_layer_fd));
     // We want to cause the network layer to retry the connection.
-    PR_SetError(PR_CONNECT_RESET_ERROR, 0);
+    err = PR_CONNECT_RESET_ERROR;
     if (wasReading)
       bytesTransfered = -1;
   }
@@ -1062,6 +1112,10 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
     socketInfo->SetHandshakeNotPending();
   }
   
+  if (bytesTransfered < 0) {
+    PR_SetError(err, 0);
+  }
+
   return bytesTransfered;
 }
 
@@ -1315,11 +1369,13 @@ PrefObserver::Observe(nsISupports *aSubject, const char *aTopic,
       Preferences::GetInt("security.ssl.warn_missing_rfc5746", &warnLevel);
       mOwner->setWarnLevelMissingRFC5746(warnLevel);
     } else if (prefName.Equals("security.ssl.false_start.require-npn")) {
-      Preferences::GetBool("security.ssl.false_start.require-npn",
-                           &mOwner->mFalseStartRequireNPN);
+      mOwner->mFalseStartRequireNPN =
+        Preferences::GetBool("security.ssl.false_start.require-npn",
+                             FALSE_START_REQUIRE_NPN_DEFAULT);
     } else if (prefName.Equals("security.ssl.false_start.require-forward-secrecy")) {
-      Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
-                           &mOwner->mFalseStartRequireForwardSecrecy);
+      mOwner->mFalseStartRequireForwardSecrecy =
+        Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
+                             FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT);
     }
   }
   return NS_OK;
@@ -1420,10 +1476,12 @@ nsresult nsSSLIOLayerHelpers::Init()
   Preferences::GetInt("security.ssl.warn_missing_rfc5746", &warnLevel);
   setWarnLevelMissingRFC5746(warnLevel);
 
-  Preferences::GetBool("security.ssl.false_start.require-npn",
-                       &mFalseStartRequireNPN);
-  Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
-                       &mFalseStartRequireForwardSecrecy);
+  mFalseStartRequireNPN =
+    Preferences::GetBool("security.ssl.false_start.require-npn",
+                         FALSE_START_REQUIRE_NPN_DEFAULT);
+  mFalseStartRequireForwardSecrecy =
+    Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
+                         FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT);
 
   mPrefObserver = new PrefObserver(this);
   Preferences::AddStrongObserver(mPrefObserver,

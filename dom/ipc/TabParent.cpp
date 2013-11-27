@@ -8,6 +8,7 @@
 
 #include "TabParent.h"
 
+#include "AppProcessChecker.h"
 #include "IDBFactory.h"
 #include "IndexedDBParent.h"
 #include "mozIApplication.h"
@@ -52,6 +53,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "private/pprio.h"
+#include "PermissionMessageUtils.h"
 #include "StructuredCloneUtils.h"
 #include "JavaScriptParent.h"
 #include "TabChild.h"
@@ -128,6 +130,8 @@ private:
 
         nsRefPtr<TabParent> tabParent;
         mTabParent.swap(tabParent);
+
+        using mozilla::ipc::FileDescriptor;
 
         FileDescriptor::PlatformHandleType handle =
             FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
@@ -299,7 +303,8 @@ TabParent::ActorDestroy(ActorDestroyReason why)
   if (frameLoader) {
     fmm = frameLoader->GetFrameMessageManager();
     nsCOMPtr<Element> frameElement(mFrameElement);
-    ReceiveMessage(CHILD_PROCESS_SHUTDOWN_MESSAGE, false, nullptr, nullptr);
+    ReceiveMessage(CHILD_PROCESS_SHUTDOWN_MESSAGE, false, nullptr, nullptr,
+                   nullptr);
     frameLoader->DestroyChild();
 
     if (why == AbnormalShutdown && os) {
@@ -491,21 +496,22 @@ TabParent::UpdateFrame(const FrameMetrics& aFrameMetrics)
   }
 }
 
-void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint)
+void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
   if (!mIsDestroyed) {
     unused << SendHandleDoubleTap(aPoint);
   }
 }
 
-void TabParent::HandleSingleTap(const CSSIntPoint& aPoint)
+void TabParent::HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
+  // TODO Send the modifier data to TabChild for use in mouse events.
   if (!mIsDestroyed) {
     unused << SendHandleSingleTap(aPoint);
   }
 }
 
-void TabParent::HandleLongTap(const CSSIntPoint& aPoint)
+void TabParent::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
   if (!mIsDestroyed) {
     unused << SendHandleLongTap(aPoint);
@@ -646,7 +652,7 @@ bool TabParent::SendRealMouseEvent(WidgetMouseEvent& event)
     return false;
   }
   WidgetMouseEvent e(event);
-  MaybeForwardEventToRenderFrame(event, &e);
+  MaybeForwardEventToRenderFrame(event, nullptr, &e);
   if (!MapEventCoordinatesForChildProcess(&e)) {
     return false;
   }
@@ -659,7 +665,7 @@ bool TabParent::SendMouseWheelEvent(WidgetWheelEvent& event)
     return false;
   }
   WidgetWheelEvent e(event);
-  MaybeForwardEventToRenderFrame(event, &e);
+  MaybeForwardEventToRenderFrame(event, nullptr, &e);
   if (!MapEventCoordinatesForChildProcess(&e)) {
     return false;
   }
@@ -672,7 +678,7 @@ bool TabParent::SendRealKeyEvent(WidgetKeyboardEvent& event)
     return false;
   }
   WidgetKeyboardEvent e(event);
-  MaybeForwardEventToRenderFrame(event, &e);
+  MaybeForwardEventToRenderFrame(event, nullptr, &e);
   if (!MapEventCoordinatesForChildProcess(&e)) {
     return false;
   }
@@ -717,13 +723,14 @@ bool TabParent::SendRealTouchEvent(WidgetTouchEvent& event)
     }
   }
 
-  MaybeForwardEventToRenderFrame(event, &e);
+  ScrollableLayerGuid guid;
+  MaybeForwardEventToRenderFrame(event, &guid, &e);
 
   MapEventCoordinatesForChildProcess(mChildProcessOffsetAtTouchStart, &e);
 
   return (e.message == NS_TOUCH_MOVE) ?
-    PBrowserParent::SendRealTouchMoveEvent(e) :
-    PBrowserParent::SendRealTouchEvent(e);
+    PBrowserParent::SendRealTouchMoveEvent(e, guid) :
+    PBrowserParent::SendRealTouchEvent(e, guid);
 }
 
 /*static*/ TabParent*
@@ -765,32 +772,56 @@ bool
 TabParent::RecvSyncMessage(const nsString& aMessage,
                            const ClonedMessageData& aData,
                            const InfallibleTArray<CpowEntry>& aCpows,
+                           const IPC::Principal& aPrincipal,
                            InfallibleTArray<nsString>* aJSONRetVal)
 {
+  nsIPrincipal* principal = aPrincipal;
+  ContentParent* parent = static_cast<ContentParent*>(Manager());
+  if (!Preferences::GetBool("geo.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
+    return false;
+  }
+
   StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-  CpowIdHolder cpows(static_cast<ContentParent*>(Manager())->GetCPOWManager(), aCpows);
-  return ReceiveMessage(aMessage, true, &cloneData, &cpows, aJSONRetVal);
+  CpowIdHolder cpows(parent->GetCPOWManager(), aCpows);
+  return ReceiveMessage(aMessage, true, &cloneData, &cpows, aPrincipal, aJSONRetVal);
 }
 
 bool
 TabParent::AnswerRpcMessage(const nsString& aMessage,
                             const ClonedMessageData& aData,
                             const InfallibleTArray<CpowEntry>& aCpows,
+                            const IPC::Principal& aPrincipal,
                             InfallibleTArray<nsString>* aJSONRetVal)
 {
+  nsIPrincipal* principal = aPrincipal;
+  ContentParent* parent = static_cast<ContentParent*>(Manager());
+  if (!Preferences::GetBool("geo.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
+    return false;
+  }
+
   StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-  CpowIdHolder cpows(static_cast<ContentParent*>(Manager())->GetCPOWManager(), aCpows);
-  return ReceiveMessage(aMessage, true, &cloneData, &cpows, aJSONRetVal);
+  CpowIdHolder cpows(parent->GetCPOWManager(), aCpows);
+  return ReceiveMessage(aMessage, true, &cloneData, &cpows, aPrincipal, aJSONRetVal);
 }
 
 bool
 TabParent::RecvAsyncMessage(const nsString& aMessage,
                             const ClonedMessageData& aData,
-                            const InfallibleTArray<CpowEntry>& aCpows)
+                            const InfallibleTArray<CpowEntry>& aCpows,
+                            const IPC::Principal& aPrincipal)
 {
+  nsIPrincipal* principal = aPrincipal;
+  ContentParent* parent = static_cast<ContentParent*>(Manager());
+  if (!Preferences::GetBool("geo.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
+    return false;
+  }
+
   StructuredCloneData cloneData = ipc::UnpackClonedMessageDataForParent(aData);
-  CpowIdHolder cpows(static_cast<ContentParent*>(Manager())->GetCPOWManager(), aCpows);
-  return ReceiveMessage(aMessage, false, &cloneData, &cpows, nullptr);
+  CpowIdHolder cpows(parent->GetCPOWManager(), aCpows);
+  return ReceiveMessage(aMessage, false, &cloneData, &cpows, aPrincipal, nullptr);
 }
 
 bool
@@ -817,10 +848,7 @@ TabParent::RecvSetStatus(const uint32_t& aType, const nsString& aStatus)
 {
   nsCOMPtr<nsIContent> frame = do_QueryInterface(mFrameElement);
   if (frame) {
-    nsCOMPtr<nsISupports> container = frame->OwnerDoc()->GetContainer();
-    if (!container)
-      return true;
-    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
+    nsCOMPtr<nsIDocShell> docShell = frame->OwnerDoc()->GetDocShell();
     if (!docShell)
       return true;
     nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
@@ -1214,6 +1242,7 @@ TabParent::ReceiveMessage(const nsString& aMessage,
                           bool aSync,
                           const StructuredCloneData* aCloneData,
                           CpowHolder* aCpows,
+                          nsIPrincipal* aPrincipal,
                           InfallibleTArray<nsString>* aJSONRetVal)
 {
   nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
@@ -1226,6 +1255,7 @@ TabParent::ReceiveMessage(const nsString& aMessage,
                             aSync,
                             aCloneData,
                             aCpows,
+                            aPrincipal,
                             aJSONRetVal);
   }
   return true;
@@ -1550,10 +1580,11 @@ TabParent::UseAsyncPanZoom()
 
 void
 TabParent::MaybeForwardEventToRenderFrame(const WidgetInputEvent& aEvent,
+                                          ScrollableLayerGuid* aOutTargetGuid,
                                           WidgetInputEvent* aOutEvent)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->NotifyInputEvent(aEvent, aOutEvent);
+    rfp->NotifyInputEvent(aEvent, aOutTargetGuid, aOutEvent);
   }
 }
 
@@ -1587,21 +1618,26 @@ TabParent::RecvPRenderFrameConstructor(PRenderFrameParent* actor,
 }
 
 bool
-TabParent::RecvZoomToRect(const CSSRect& aRect)
+TabParent::RecvZoomToRect(const uint32_t& aPresShellId,
+                          const ViewID& aViewId,
+                          const CSSRect& aRect)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->ZoomToRect(aRect);
+    rfp->ZoomToRect(aPresShellId, aViewId, aRect);
   }
   return true;
 }
 
 bool
-TabParent::RecvUpdateZoomConstraints(const bool& aAllowZoom,
+TabParent::RecvUpdateZoomConstraints(const uint32_t& aPresShellId,
+                                     const ViewID& aViewId,
+                                     const bool& aIsRoot,
+                                     const bool& aAllowZoom,
                                      const CSSToScreenScale& aMinZoom,
                                      const CSSToScreenScale& aMaxZoom)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->UpdateZoomConstraints(aAllowZoom, aMinZoom, aMaxZoom);
+    rfp->UpdateZoomConstraints(aPresShellId, aViewId, aIsRoot, aAllowZoom, aMinZoom, aMaxZoom);
   }
   return true;
 }
@@ -1618,10 +1654,11 @@ TabParent::RecvUpdateScrollOffset(const uint32_t& aPresShellId,
 }
 
 bool
-TabParent::RecvContentReceivedTouch(const bool& aPreventDefault)
+TabParent::RecvContentReceivedTouch(const ScrollableLayerGuid& aGuid,
+                                    const bool& aPreventDefault)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->ContentReceivedTouch(aPreventDefault);
+    rfp->ContentReceivedTouch(aGuid, aPreventDefault);
   }
   return true;
 }

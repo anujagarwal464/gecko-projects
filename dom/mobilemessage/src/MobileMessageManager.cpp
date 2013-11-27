@@ -38,6 +38,8 @@
 #define FAILED_EVENT_NAME           NS_LITERAL_STRING("failed")
 #define DELIVERY_SUCCESS_EVENT_NAME NS_LITERAL_STRING("deliverysuccess")
 #define DELIVERY_ERROR_EVENT_NAME   NS_LITERAL_STRING("deliveryerror")
+#define READ_SUCCESS_EVENT_NAME     NS_LITERAL_STRING("readsuccess")
+#define READ_ERROR_EVENT_NAME       NS_LITERAL_STRING("readerror")
 
 using namespace mozilla::dom::mobilemessage;
 
@@ -62,6 +64,8 @@ NS_IMPL_EVENT_HANDLER(MobileMessageManager, sent)
 NS_IMPL_EVENT_HANDLER(MobileMessageManager, failed)
 NS_IMPL_EVENT_HANDLER(MobileMessageManager, deliverysuccess)
 NS_IMPL_EVENT_HANDLER(MobileMessageManager, deliveryerror)
+NS_IMPL_EVENT_HANDLER(MobileMessageManager, readsuccess)
+NS_IMPL_EVENT_HANDLER(MobileMessageManager, readerror)
 
 void
 MobileMessageManager::Init(nsPIDOMWindow *aWindow)
@@ -81,6 +85,8 @@ MobileMessageManager::Init(nsPIDOMWindow *aWindow)
   obs->AddObserver(this, kSmsFailedObserverTopic, false);
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
+  obs->AddObserver(this, kSmsReadSuccessObserverTopic, false);
+  obs->AddObserver(this, kSmsReadErrorObserverTopic, false);
 }
 
 void
@@ -99,6 +105,8 @@ MobileMessageManager::Shutdown()
   obs->RemoveObserver(this, kSmsFailedObserverTopic);
   obs->RemoveObserver(this, kSmsDeliverySuccessObserverTopic);
   obs->RemoveObserver(this, kSmsDeliveryErrorObserverTopic);
+  obs->RemoveObserver(this, kSmsReadSuccessObserverTopic);
+  obs->RemoveObserver(this, kSmsReadErrorObserverTopic);
 }
 
 NS_IMETHODIMP
@@ -206,24 +214,38 @@ MobileMessageManager::Send(const JS::Value& aNumber_,
   JS::Rooted<JSObject*> numbers(aCx, &aNumber.toObject());
 
   uint32_t size;
-  JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, numbers, &size));
+  if (!JS_GetArrayLength(aCx, numbers, &size)) {
+    return NS_ERROR_FAILURE;
+  }
 
-  JS::Value* requests = new JS::Value[size];
+  JS::AutoValueVector requests(aCx);
+  if (!requests.resize(size)) {
+    return NS_ERROR_FAILURE;
+  }
 
   JS::Rooted<JS::Value> number(aCx);
+  JS::Rooted<JSString*> str(aCx);
   for (uint32_t i = 0; i < size; ++i) {
     if (!JS_GetElement(aCx, numbers, i, &number)) {
       return NS_ERROR_INVALID_ARG;
     }
 
-    JS::Rooted<JSString*> str(aCx, number.toString());
+    str = JS::ToString(aCx, number);
+    if (!str) {
+      return NS_ERROR_FAILURE;
+    }
+
     nsresult rv = Send(aCx, global, serviceId, str, aMessage, &requests[i]);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  aReturn->setObjectOrNull(JS_NewArrayObject(aCx, size, requests));
-  NS_ENSURE_TRUE(aReturn->isObject(), NS_ERROR_FAILURE);
+  JS::Rooted<JSObject*> obj(aCx);
+  obj = JS_NewArrayObject(aCx, requests.length(), requests.begin());
+  if (!obj) {
+    return NS_ERROR_FAILURE;
+  }
 
+  aReturn->setObject(*obj);
   return NS_OK;
 }
 
@@ -520,6 +542,14 @@ MobileMessageManager::Observe(nsISupports* aSubject, const char* aTopic,
 
   if (!strcmp(aTopic, kSmsDeliveryErrorObserverTopic)) {
     return DispatchTrustedSmsEventToSelf(aTopic, DELIVERY_ERROR_EVENT_NAME, aSubject);
+  }
+
+  if (!strcmp(aTopic, kSmsReadSuccessObserverTopic)) {
+    return DispatchTrustedSmsEventToSelf(aTopic, READ_SUCCESS_EVENT_NAME, aSubject);
+  }
+
+  if (!strcmp(aTopic, kSmsReadErrorObserverTopic)) {
+    return DispatchTrustedSmsEventToSelf(aTopic, READ_ERROR_EVENT_NAME, aSubject);
   }
 
   return NS_OK;

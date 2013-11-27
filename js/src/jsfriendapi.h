@@ -48,6 +48,9 @@ JS_SetGrayGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data);
 extern JS_FRIEND_API(JSString *)
 JS_GetAnonymousString(JSRuntime *rt);
 
+extern JS_FRIEND_API(void)
+JS_SetIsWorkerRuntime(JSRuntime *rt);
+
 extern JS_FRIEND_API(JSObject *)
 JS_FindCompilationScope(JSContext *cx, JSObject *obj);
 
@@ -177,7 +180,8 @@ js_DumpChars(const jschar *s, size_t n);
  * Copies all own properties from |obj| to |target|. |obj| must be a "native"
  * object (that is to say, normal-ish - not an Array or a Proxy).
  *
- * On entry, |cx| must be in the compartment of |target|.
+ * This function immediately enters a compartment, and does not impose any
+ * restrictions on the compartment of |cx|.
  */
 extern JS_FRIEND_API(bool)
 JS_CopyPropertiesFrom(JSContext *cx, JSObject *target, JSObject *obj);
@@ -185,6 +189,8 @@ JS_CopyPropertiesFrom(JSContext *cx, JSObject *target, JSObject *obj);
 /*
  * Single-property version of the above. This function asserts that an |own|
  * property of the given name exists on |obj|.
+ *
+ * On entry, |cx| must be same-compartment with |obj|.
  */
 extern JS_FRIEND_API(bool)
 JS_CopyPropertyFrom(JSContext *cx, JS::HandleId id, JS::HandleObject target,
@@ -405,6 +411,10 @@ struct Object {
             return fixedSlots()[slot];
         return slots[slot - nfixed];
     }
+
+    // Reserved slots with index < MAX_FIXED_SLOTS are guaranteed to
+    // be fixed slots.
+    static const uint32_t MAX_FIXED_SLOTS = 16;
 };
 
 struct Function {
@@ -541,6 +551,10 @@ SetFunctionNativeReserved(JSObject *fun, size_t which, const JS::Value &val);
 JS_FRIEND_API(bool)
 GetObjectProto(JSContext *cx, JS::Handle<JSObject*> obj, JS::MutableHandle<JSObject*> proto);
 
+JS_FRIEND_API(bool)
+GetOriginalEval(JSContext *cx, JS::HandleObject scope,
+                JS::MutableHandleObject eval);
+
 inline void *
 GetObjectPrivate(JSObject *obj)
 {
@@ -665,11 +679,19 @@ GetNativeStackLimit(JSContext *cx)
  * extra space so that we can ensure that crucial code is able to run.
  */
 
-#define JS_CHECK_RECURSION(cx, onerror)                              \
+#define JS_CHECK_RECURSION(cx, onerror)                                         \
     JS_BEGIN_MACRO                                                              \
         int stackDummy_;                                                        \
         if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(cx), &stackDummy_)) {  \
             js_ReportOverRecursed(cx);                                          \
+            onerror;                                                            \
+        }                                                                       \
+    JS_END_MACRO
+
+#define JS_CHECK_RECURSION_DONT_REPORT(cx, onerror)                             \
+    JS_BEGIN_MACRO                                                              \
+        int stackDummy_;                                                        \
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(cx), &stackDummy_)) {  \
             onerror;                                                            \
         }                                                                       \
     JS_END_MACRO
@@ -1290,6 +1312,33 @@ JS_GetDataViewByteLength(JSObject *obj);
 JS_FRIEND_API(void *)
 JS_GetDataViewData(JSObject *obj);
 
+namespace js {
+
+/*
+ * Add a watchpoint -- in the Object.prototype.watch sense -- to |obj| for the
+ * property |id|, using the callable object |callable| as the function to be
+ * called for notifications.
+ *
+ * This is an internal function exposed -- temporarily -- only so that DOM
+ * proxies can be watchable.  Don't use it!  We'll soon kill off the
+ * Object.prototype.{,un}watch functions, at which point this will go too.
+ */
+extern JS_FRIEND_API(bool)
+WatchGuts(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleObject callable);
+
+/*
+ * Remove a watchpoint -- in the Object.prototype.watch sense -- from |obj| for
+ * the property |id|.
+ *
+ * This is an internal function exposed -- temporarily -- only so that DOM
+ * proxies can be watchable.  Don't use it!  We'll soon kill off the
+ * Object.prototype.{,un}watch functions, at which point this will go too.
+ */
+extern JS_FRIEND_API(bool)
+UnwatchGuts(JSContext *cx, JS::HandleObject obj, JS::HandleId id);
+
+} // namespace js
+
 /*
  * A class, expected to be passed by value, which represents the CallArgs for a
  * JSJitGetterOp.
@@ -1395,11 +1444,33 @@ struct JSJitInfo {
         OpType_None
     };
 
+    enum ArgType {
+        // Basic types
+        String = (1 << 0),
+        Integer = (1 << 1), // Only 32-bit or less
+        Double = (1 << 2), // Maybe we want to add Float sometime too
+        Boolean = (1 << 3),
+        Object = (1 << 4),
+        Null = (1 << 5),
+
+        // And derived types
+        Numeric = Integer | Double,
+        // Should "Primitive" use the WebIDL definition, which
+        // excludes string and null, or the typical JS one that includes them?
+        Primitive = Numeric | Boolean | Null | String,
+        ObjectOrNull = Object | Null,
+        Any = ObjectOrNull | Primitive,
+
+        // Our sentinel value.
+        ArgTypeListEnd = (1 << 31)
+    };
+
     union {
         JSJitGetterOp getter;
         JSJitSetterOp setter;
         JSJitMethodOp method;
     };
+
     uint32_t protoID;
     uint32_t depth;
     OpType type;
@@ -1408,14 +1479,38 @@ struct JSJitInfo {
     bool isPure;            /* As long as no non-pure DOM things happen, will
                                keep returning the same value for the given
                                "this" object" */
+    // XXXbz should we have a JSGetterJitInfo subclass or something?
+    // XXXbz should we have a JSValueType for the type of the member?
+    bool isInSlot;          /* True if this is a getter that can get a member
+                               from a slot of the "this" object directly. */
+    size_t slotIndex;       /* If isMember is true, the index of the slot to get
+                               the value from.  Otherwise 0. */
     JSValueType returnType; /* The return type tag.  Might be JSVAL_TYPE_UNKNOWN */
+
+    const ArgType* const argTypes; /* For a method, a list of sets of types that
+                                      the function expects.  This can be used,
+                                      for example, to figure out when argument
+                                      coercions can have side-effects. nullptr
+                                      if we have no type information for
+                                      arguments. */
 
     /* An alternative native that's safe to call in parallel mode. */
     JSParallelNative parallelNative;
+
+private:
+    static void staticAsserts()
+    {
+        JS_STATIC_ASSERT(Any & String);
+        JS_STATIC_ASSERT(Any & Integer);
+        JS_STATIC_ASSERT(Any & Double);
+        JS_STATIC_ASSERT(Any & Boolean);
+        JS_STATIC_ASSERT(Any & Object);
+        JS_STATIC_ASSERT(Any & Null);
+    }
 };
 
 #define JS_JITINFO_NATIVE_PARALLEL(op)                                         \
-    {{nullptr},0,0,JSJitInfo::OpType_None,false,false,false,JSVAL_TYPE_MISSING,op}
+    {{nullptr},0,0,JSJitInfo::OpType_None,false,false,false,false,0,JSVAL_TYPE_MISSING,nullptr,op}
 
 static JS_ALWAYS_INLINE const JSJitInfo *
 FUNCTION_VALUE_TO_JITINFO(const JS::Value& v)

@@ -98,7 +98,8 @@ function registerSelf() {
 
   if (register[0]) {
     listenerId = register[0].id;
-    importedScripts = FileUtils.getFile('TmpD', ['marionetteContentScripts']);
+    importedScripts = FileUtils.getDir('TmpD', [], false);
+    importedScripts.append('marionetteContentScripts');
     startListeners();
   }
 }
@@ -1937,7 +1938,8 @@ function screenShot(msg) {
 
   // Return the Base64 String back to the client bindings and they can manage
   // saving the file to disk if it is required
-  sendResponse({value:canvas.toDataURL("image/png","")}, msg.json.command_id);
+  var data_url = canvas.toDataURL("image/png","");
+  sendResponse({value: data_url.substring(data_url.indexOf(",") + 1)}, msg.json.command_id);
 }
 
 //call register self when we get loaded

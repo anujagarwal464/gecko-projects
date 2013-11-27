@@ -315,9 +315,8 @@ nsChangeHint nsStyleMargin::CalcDifference(const nsStyleMargin& aOther) const
   }
   // Margin differences can't affect descendant intrinsic sizes and
   // don't need to force children to reflow.
-  return NS_SubtractHint(NS_STYLE_HINT_REFLOW,
-                         NS_CombineHint(nsChangeHint_ClearDescendantIntrinsics,
-                                        nsChangeHint_NeedDirtyReflow));
+  return NS_CombineHint(nsChangeHint_NeedReflow,
+                        nsChangeHint_ClearAncestorIntrinsics);
 }
 
 nsStylePadding::nsStylePadding() {
@@ -758,7 +757,8 @@ nsChangeHint nsStyleXUL::CalcDifference(const nsStyleXUL& aOther) const
       mBoxFlex == aOther.mBoxFlex &&
       mBoxOrient == aOther.mBoxOrient &&
       mBoxPack == aOther.mBoxPack &&
-      mBoxOrdinal == aOther.mBoxOrdinal)
+      mBoxOrdinal == aOther.mBoxOrdinal &&
+      mStretchStack == aOther.mStretchStack)
     return NS_STYLE_HINT_NONE;
   if (mBoxOrdinal != aOther.mBoxOrdinal)
     return NS_STYLE_HINT_FRAMECHANGE;
@@ -944,8 +944,21 @@ nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aOther) const
   }
 
   if (mFill != aOther.mFill ||
-      mStroke != aOther.mStroke) {
+      mStroke != aOther.mStroke ||
+      mFillOpacity != aOther.mFillOpacity ||
+      mStrokeOpacity != aOther.mStrokeOpacity) {
     NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+    if (HasStroke() != aOther.HasStroke() ||
+        (!HasStroke() && HasFill() != aOther.HasFill())) {
+      // Frame bounds and overflow rects depend on whether we "have" fill or
+      // stroke. Whether we have stroke or not just changed, or else we have no
+      // stroke (in which case whether we have fill or not is significant to frame
+      // bounds) and whether we have fill or not just changed. In either case we
+      // need to reflow so the frame rect is updated.
+      // XXXperf this is a waste on non nsSVGPathGeometryFrames.
+      NS_UpdateHint(hint, nsChangeHint_NeedReflow);
+      NS_UpdateHint(hint, nsChangeHint_NeedDirtyReflow); // XXX remove me: bug 876085
+    }
     if (PaintURIChanged(mFill, aOther.mFill) ||
         PaintURIChanged(mStroke, aOther.mStroke)) {
       NS_UpdateHint(hint, nsChangeHint_UpdateEffects);
@@ -975,8 +988,6 @@ nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aOther) const
   }
 
   if ( mStrokeDashoffset      != aOther.mStrokeDashoffset      ||
-       mFillOpacity           != aOther.mFillOpacity           ||
-       mStrokeOpacity         != aOther.mStrokeOpacity         ||
        mClipRule              != aOther.mClipRule              ||
        mColorInterpolation    != aOther.mColorInterpolation    ||
        mColorInterpolationFilters != aOther.mColorInterpolationFilters ||
@@ -1904,6 +1915,7 @@ nsStyleBackground::nsStyleBackground()
   , mPositionCount(1)
   , mImageCount(1)
   , mSizeCount(1)
+  , mBlendModeCount(1)
   , mBackgroundColor(NS_RGBA(0, 0, 0, 0))
   , mBackgroundInlinePolicy(NS_STYLE_BG_INLINE_POLICY_CONTINUOUS)
 {
@@ -1921,6 +1933,7 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
   , mPositionCount(aSource.mPositionCount)
   , mImageCount(aSource.mImageCount)
   , mSizeCount(aSource.mSizeCount)
+  , mBlendModeCount(aSource.mBlendModeCount)
   , mLayers(aSource.mLayers) // deep copy
   , mBackgroundColor(aSource.mBackgroundColor)
   , mBackgroundInlinePolicy(aSource.mBackgroundInlinePolicy)
@@ -1937,6 +1950,7 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
     mPositionCount = std::max(mPositionCount, count);
     mImageCount = std::max(mImageCount, count);
     mSizeCount = std::max(mSizeCount, count);
+    mBlendModeCount = std::max(mSizeCount, count);
   }
 }
 
@@ -2144,6 +2158,7 @@ nsStyleBackground::Layer::SetInitialValues()
   mClip = NS_STYLE_BG_CLIP_BORDER;
   mOrigin = NS_STYLE_BG_ORIGIN_PADDING;
   mRepeat.SetInitialValues();
+  mBlendMode = NS_STYLE_BLEND_NORMAL;
   mPosition.SetInitialValues();
   mSize.SetInitialValues();
   mImage.SetNull();
@@ -2168,6 +2183,7 @@ nsStyleBackground::Layer::operator==(const Layer& aOther) const
          mClip == aOther.mClip &&
          mOrigin == aOther.mOrigin &&
          mRepeat == aOther.mRepeat &&
+         mBlendMode == aOther.mBlendMode &&
          mPosition == aOther.mPosition &&
          mSize == aOther.mSize &&
          mImage == aOther.mImage;

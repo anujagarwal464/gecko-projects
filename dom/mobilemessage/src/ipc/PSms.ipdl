@@ -118,6 +118,10 @@ child:
 
   NotifyReceivedSilentMessage(MobileMessageData aMessageData);
 
+  NotifyReadSuccessMessage(MobileMessageData aMessageData);
+
+  NotifyReadErrorMessage(MobileMessageData aMessageData);
+
 parent:
   /**
    * Sent when the child no longer needs to use sms.
@@ -133,9 +137,6 @@ parent:
    * Sent when the child makes an asynchronous cursor to the parent.
    */
   PMobileMessageCursor(IPCMobileMessageCursor request);
-
-  sync HasSupport()
-      returns (bool aHasSupport);
 
   AddSilentNumber(nsString aNumber);
   RemoveSilentNumber(nsString aNumber);

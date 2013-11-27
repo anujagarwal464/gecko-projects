@@ -24,8 +24,8 @@
 using namespace js;
 using namespace js::jit;
 
-BaselineCompiler::BaselineCompiler(JSContext *cx, HandleScript script)
-  : BaselineCompilerSpecific(cx, script),
+BaselineCompiler::BaselineCompiler(JSContext *cx, TempAllocator &alloc, HandleScript script)
+  : BaselineCompilerSpecific(cx, alloc, script),
     modifiesArguments_(false)
 {
 }
@@ -33,7 +33,7 @@ BaselineCompiler::BaselineCompiler(JSContext *cx, HandleScript script)
 bool
 BaselineCompiler::init()
 {
-    if (!analysis_.init(cx->runtime()->gsnCache))
+    if (!analysis_.init(alloc_, cx->runtime()->gsnCache))
         return false;
 
     if (!labels_.init(script->length))
@@ -108,7 +108,7 @@ BaselineCompiler::compile()
         return Method_Error;
 
     Linker linker(masm);
-    IonCode *code = linker.newCode(cx, JSC::BASELINE_CODE);
+    IonCode *code = linker.newCode<CanGC>(cx, JSC::BASELINE_CODE);
     if (!code)
         return Method_Error;
 
@@ -250,6 +250,9 @@ BaselineCompiler::compile()
         // searches for the sought entry when queries are in linear order.
         bytecodeMap[script->nTypeSets] = 0;
     }
+
+    if (script->compartment()->debugMode())
+        baselineScript->setDebugMode();
 
     return Method_Compiled;
 }
@@ -489,7 +492,14 @@ BaselineCompiler::emitStackCheck(bool earlyCheck)
     pushArg(Imm32(tolerance));
     masm.loadBaselineFramePtr(BaselineFrameReg, R1.scratchReg());
     pushArg(R1.scratchReg());
-    if (!callVM(CheckOverRecursedWithExtraInfo, /*preInitialize=*/earlyCheck))
+
+    CallVMPhase phase = POST_INITIALIZE;
+    if (earlyCheck)
+        phase = PRE_INITIALIZE;
+    else if (needsEarlyStackCheck())
+        phase = CHECK_OVER_RECURSED;
+
+    if (!callVM(CheckOverRecursedWithExtraInfo, phase))
         return false;
 
     masm.bind(&skipCall);
@@ -536,6 +546,10 @@ static const VMFunction HeavyweightFunPrologueInfo =
 bool
 BaselineCompiler::initScopeChain()
 {
+    CallVMPhase phase = POST_INITIALIZE;
+    if (needsEarlyStackCheck())
+        phase = CHECK_OVER_RECURSED;
+
     RootedFunction fun(cx, function());
     if (fun) {
         // Use callee->environment as scope chain. Note that we do
@@ -554,7 +568,7 @@ BaselineCompiler::initScopeChain()
             masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
             pushArg(R0.scratchReg());
 
-            if (!callVM(HeavyweightFunPrologueInfo))
+            if (!callVM(HeavyweightFunPrologueInfo, phase))
                 return false;
         }
     } else {
@@ -568,7 +582,7 @@ BaselineCompiler::initScopeChain()
             masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
             pushArg(R0.scratchReg());
 
-            if (!callVM(StrictEvalPrologueInfo))
+            if (!callVM(StrictEvalPrologueInfo, phase))
                 return false;
         }
     }
@@ -1907,7 +1921,7 @@ Address
 BaselineCompiler::getScopeCoordinateAddressFromObject(Register objReg, Register reg)
 {
     ScopeCoordinate sc(pc);
-    Shape *shape = ScopeCoordinateToStaticScopeShape(cx, script, pc);
+    Shape *shape = ScopeCoordinateToStaticScopeShape(script, pc);
 
     Address addr;
     if (shape->numFixedSlots() <= sc.slot) {
@@ -1950,7 +1964,7 @@ BaselineCompiler::emit_JSOP_CALLALIASEDVAR()
 bool
 BaselineCompiler::emit_JSOP_SETALIASEDVAR()
 {
-    JSScript *outerScript = ScopeCoordinateFunctionScript(cx, script, pc);
+    JSScript *outerScript = ScopeCoordinateFunctionScript(script, pc);
     if (outerScript && outerScript->treatAsRunOnce) {
         // Type updates for this operation might need to be tracked, so treat
         // this as a SETPROP.

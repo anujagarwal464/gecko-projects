@@ -148,17 +148,6 @@ SmsIPCService::GetSmsDefaultServiceId(uint32_t* aServiceId)
 }
 
 NS_IMETHODIMP
-SmsIPCService::HasSupport(bool* aHasSupport)
-{
-  PSmsChild* smsChild = GetSmsChild();
-  NS_ENSURE_TRUE(smsChild, NS_ERROR_FAILURE);
-
-  smsChild->SendHasSupport(aHasSupport);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 SmsIPCService::GetSegmentInfoForText(const nsAString& aText,
                                      nsIMobileMessageCallback* aRequest)
 {
@@ -293,7 +282,7 @@ GetSendMmsMessageRequestFromParams(uint32_t aServiceId,
   }
 
   for (uint32_t i = 0; i < params.mAttachments.Value().Length(); i++) {
-    MmsAttachment& attachment = params.mAttachments.Value()[i];
+    dom::MmsAttachment& attachment = params.mAttachments.Value()[i];
     MmsAttachmentData mmsAttachment;
     mmsAttachment.id().Assign(attachment.mId);
     mmsAttachment.location().Assign(attachment.mLocation);

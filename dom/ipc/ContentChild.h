@@ -165,6 +165,13 @@ public:
     virtual PFMRadioChild* AllocPFMRadioChild();
     virtual bool DeallocPFMRadioChild(PFMRadioChild* aActor);
 
+    virtual PAsmJSCacheEntryChild* AllocPAsmJSCacheEntryChild(
+                                 const asmjscache::OpenMode& aOpenMode,
+                                 const int64_t& aSizeToWrite,
+                                 const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
+    virtual bool DeallocPAsmJSCacheEntryChild(
+                                    PAsmJSCacheEntryChild* aActor) MOZ_OVERRIDE;
+
     virtual PSpeechSynthesisChild* AllocPSpeechSynthesisChild();
     virtual bool DeallocPSpeechSynthesisChild(PSpeechSynthesisChild* aActor);
 
@@ -178,6 +185,8 @@ public:
 
     virtual bool RecvSetOffline(const bool& offline);
 
+    virtual bool RecvSpeakerManagerNotify();
+
     virtual bool RecvNotifyVisited(const URIParams& aURI);
     // auto remove when alertfinished is received.
     nsresult AddRemoteAlertObserver(const nsString& aData, nsIObserver* aObserver);
@@ -188,7 +197,8 @@ public:
 
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows);
+                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                  const IPC::Principal& aPrincipal);
 
     virtual bool RecvGeolocationUpdate(const GeoPosition& somewhere);
 

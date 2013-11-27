@@ -393,6 +393,7 @@ public:
 };
 
 class PathBuilder;
+class FlattenedPath;
 
 /* The path class is used to create (sets of) figures of any shape that can be
  * filled or stroked to a DrawTarget
@@ -400,7 +401,7 @@ class PathBuilder;
 class Path : public RefCounted<Path>
 {
 public:
-  virtual ~Path() {}
+  virtual ~Path();
   
   virtual BackendType GetBackendType() const = 0;
 
@@ -440,15 +441,26 @@ public:
   virtual Rect GetStrokedBounds(const StrokeOptions &aStrokeOptions,
                                 const Matrix &aTransform = Matrix()) const = 0;
 
+  /* Take the contents of this path and stream it to another sink, this works
+   * regardless of the backend that might be used for the destination sink.
+   */
+  virtual void StreamToSink(PathSink *aSink) const = 0;
+
   /* This gets the fillrule this path's builder was created with. This is not
    * mutable.
    */
   virtual FillRule GetFillRule() const = 0;
 
-  virtual Float ComputeLength() { return 0; }
+  virtual Float ComputeLength();
 
   virtual Point ComputePointAtLength(Float aLength,
-                                     Point* aTangent) { return Point(); }
+                                     Point* aTangent = nullptr);
+
+protected:
+  Path();
+  void EnsureFlattenedPath();
+
+  RefPtr<FlattenedPath> mFlattenedPath;
 };
 
 /* The PathBuilder class allows path creation. Once finish is called on the
@@ -888,7 +900,7 @@ public:
     return mOpaqueRect;
   }
 
-  void SetPermitSubpixelAA(bool aPermitSubpixelAA) {
+  virtual void SetPermitSubpixelAA(bool aPermitSubpixelAA) {
     mPermitSubpixelAA = aPermitSubpixelAA;
   }
 

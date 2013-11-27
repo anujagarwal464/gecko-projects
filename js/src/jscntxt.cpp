@@ -110,10 +110,9 @@ JSCompartment::sweepCallsiteClones()
 }
 
 JSFunction *
-js::ExistingCloneFunctionAtCallsite(JSCompartment *comp, JSFunction *fun,
+js::ExistingCloneFunctionAtCallsite(const CallsiteCloneTable &table, JSFunction *fun,
                                     JSScript *script, jsbytecode *pc)
 {
-    JS_ASSERT(comp->zone()->types.inferenceEnabled);
     JS_ASSERT(fun->nonLazyScript()->shouldCloneAtCallsite);
     JS_ASSERT(!fun->nonLazyScript()->enclosingStaticScope());
     JS_ASSERT(types::UseNewTypeForClone(fun));
@@ -124,14 +123,10 @@ js::ExistingCloneFunctionAtCallsite(JSCompartment *comp, JSFunction *fun,
      */
     JS_ASSERT(fun->isTenured());
 
-    typedef CallsiteCloneKey Key;
-    typedef CallsiteCloneTable Table;
-
-    Table &table = comp->callsiteClones;
     if (!table.initialized())
         return nullptr;
 
-    Table::Ptr p = table.lookup(Key(fun, script, pc - script->code));
+    CallsiteCloneTable::Ptr p = table.lookup(CallsiteCloneKey(fun, script, pc - script->code));
     if (p)
         return p->value;
 
@@ -141,7 +136,7 @@ js::ExistingCloneFunctionAtCallsite(JSCompartment *comp, JSFunction *fun,
 JSFunction *
 js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript script, jsbytecode *pc)
 {
-    if (JSFunction *clone = ExistingCloneFunctionAtCallsite(cx->compartment(), fun, script, pc))
+    if (JSFunction *clone = ExistingCloneFunctionAtCallsite(cx->compartment()->callsiteClones, fun, script, pc))
         return clone;
 
     RootedObject parent(cx, fun->environment());
@@ -260,7 +255,7 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
          * Dump remaining type inference results while we still have a context.
          * This printing depends on atoms still existing.
          */
-        for (CompartmentsIter c(rt); !c.done(); c.next())
+        for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next())
             c->types.print(cx, false);
     }
     if (mode == DCM_FORCE_GC) {
@@ -357,6 +352,15 @@ PopulateReportBlame(JSContext *cx, JSErrorReport *report)
 void
 js_ReportOutOfMemory(ThreadSafeContext *cxArg)
 {
+#ifdef JS_MORE_DETERMINISTIC
+    /*
+     * OOMs are non-deterministic, especially across different execution modes
+     * (e.g. interpreter vs JIT). In more-deterministic builds, print to stderr
+     * so that the fuzzers can detect this.
+     */
+    fprintf(stderr, "js_ReportOutOfMemory called\n");
+#endif
+
     if (cxArg->isForkJoinSlice()) {
         cxArg->asForkJoinSlice()->setPendingAbortFatal(ParallelBailoutOutOfMemory);
         return;
@@ -425,7 +429,10 @@ js_ReportOverRecursed(JSContext *maybecx)
 void
 js_ReportOverRecursed(ThreadSafeContext *cx)
 {
-    js_ReportOverRecursed(cx->maybeJSContext());
+    if (cx->isJSContext())
+        js_ReportOverRecursed(cx->asJSContext());
+    else if (cx->isExclusiveContext())
+        cx->asExclusiveContext()->addPendingOverRecursed();
 }
 
 void
@@ -1013,7 +1020,7 @@ js_InvokeOperationCallback(JSContext *cx)
 
 #ifdef JSGC_GENERATIONAL
     if (rt->gcStoreBuffer.isAboutToOverflow())
-        MinorGC(rt, JS::gcreason::FULL_STORE_BUFFER);
+        MinorGC(cx, JS::gcreason::FULL_STORE_BUFFER);
 #endif
 
 #ifdef JS_ION

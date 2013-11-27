@@ -178,7 +178,12 @@ namespace {
   {
     nsTArray<nsRefPtr<Touch> > *touches =
               static_cast<nsTArray<nsRefPtr<Touch> > *>(aTouchList);
-    touches->AppendElement(aData);
+    nsRefPtr<Touch> copy = new Touch(aData->mIdentifier,
+               aData->mRefPoint,
+               aData->mRadius,
+               aData->mRotationAngle,
+               aData->mForce);
+    touches->AppendElement(copy);
     aData->mChanged = false;
     return PL_DHASH_NEXT;
   }
@@ -441,10 +446,6 @@ MetroInput::InitTouchEventTouchList(WidgetTouchEvent* aEvent)
 bool
 MetroInput::ShouldDeliverInputToRecognizer()
 {
-  // If the event is destined for chrome deliver all events to the recognizer.
-  if (mChromeHitTestCacheForTouch) {
-    return true;
-  }
   return mRecognizerWantsEvents;
 }
 
@@ -491,10 +492,13 @@ MetroInput::OnPointerPressed(UI::Core::ICoreWindow* aSender,
     // If this is the first touchstart of a touch session reset some
     // tracking flags.
     mContentConsumingTouch = false;
+    mApzConsumingTouch = false;
     mRecognizerWantsEvents = true;
-    mIsFirstTouchMove = true;
     mCancelable = true;
     mCanceledIds.Clear();
+  } else {
+    // Only the first touchstart can be canceled.
+    mCancelable = false;
   }
 
   InitTouchEventTouchList(touchEvent);
@@ -560,22 +564,13 @@ MetroInput::OnPointerMoved(UI::Core::ICoreWindow* aSender,
     return S_OK;
   }
 
+  AddPointerMoveDataToRecognizer(aArgs);
+
   // If the point hasn't moved, filter it out per the spec. Pres shell does
   // this as well, but we need to know when our first touchmove is going to
   // get delivered so we can check the result.
   if (!HasPointMoved(touch, currentPoint.Get())) {
-    // The recognizer needs the intermediate data otherwise it acts flaky
-    AddPointerMoveDataToRecognizer(aArgs);
     return S_OK;
-  }
-
-  // If we've accumulated a batch of pointer moves and we're now on a new batch
-  // at a new position send the previous batch. (perf opt)
-  if (!mIsFirstTouchMove && touch->mChanged) {
-    WidgetTouchEvent* touchEvent =
-      new WidgetTouchEvent(true, NS_TOUCH_MOVE, mWidget.Get());
-    InitTouchEventTouchList(touchEvent);
-    DispatchAsyncTouchEvent(touchEvent);
   }
 
   touch = CreateDOMTouch(currentPoint.Get());
@@ -585,15 +580,8 @@ MetroInput::OnPointerMoved(UI::Core::ICoreWindow* aSender,
 
   WidgetTouchEvent* touchEvent =
     new WidgetTouchEvent(true, NS_TOUCH_MOVE, mWidget.Get());
-
-  // If this is the first touch move of our session, dispatch it now.
-  if (mIsFirstTouchMove) {
-    InitTouchEventTouchList(touchEvent);
-    DispatchAsyncTouchEvent(touchEvent);
-    mIsFirstTouchMove = false;
-  }
-
-  AddPointerMoveDataToRecognizer(aArgs);
+  InitTouchEventTouchList(touchEvent);
+  DispatchAsyncTouchEvent(touchEvent);
 
   return S_OK;
 }
@@ -678,24 +666,47 @@ MetroInput::HitTestChrome(const LayoutDeviceIntPoint& pt)
   return (status == nsEventStatus_eConsumeNoDefault);
 }
 
-void
+/**
+ * Returns true if the position is in chrome, false otherwise.
+ */
+bool
 MetroInput::TransformRefPoint(const Foundation::Point& aPosition, LayoutDeviceIntPoint& aRefPointOut)
 {
   // If this event is destined for content we need to transform our ref point through
   // the apz so that zoom can be accounted for.
-  LayoutDeviceIntPoint pt = LayoutDeviceIntPoint::FromUntyped(MetroUtils::LogToPhys(aPosition));
-  aRefPointOut = pt;
+  aRefPointOut = LayoutDeviceIntPoint::FromUntyped(MetroUtils::LogToPhys(aPosition));
+  ScreenIntPoint spt;
+  spt.x = aRefPointOut.x;
+  spt.y = aRefPointOut.y;
   // This is currently a general contained rect hit test, it may produce a false positive for
   // overlay chrome elements.
-  bool apzIntersect = mWidget->HitTestAPZC(mozilla::ScreenPoint(pt.x, pt.y));
-  if (apzIntersect && HitTestChrome(pt)) {
-    return;
+  bool apzIntersect = mWidget->ApzHitTest(spt);
+  if (!apzIntersect) {
+    return true;
   }
-  WidgetMouseEvent event(true, NS_MOUSE_MOVE, mWidget.Get(),
-                         WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
-  event.refPoint = aRefPointOut;
-  mWidget->ApzReceiveInputEvent(&event);
-  aRefPointOut = event.refPoint;
+  if (HitTestChrome(aRefPointOut)) {
+    return true;
+  }
+  mWidget->ApzTransformGeckoCoordinate(spt, &aRefPointOut);
+  return false;
+}
+
+void
+MetroInput::TransformTouchEvent(WidgetTouchEvent* aEvent)
+{
+  nsTArray< nsRefPtr<dom::Touch> >& touches = aEvent->touches;
+  for (uint32_t i = 0; i < touches.Length(); ++i) {
+    dom::Touch* touch = touches[i];
+    if (touch) {
+      LayoutDeviceIntPoint lpt;
+      ScreenIntPoint spt;
+      spt.x = touch->mRefPoint.x;
+      spt.y = touch->mRefPoint.y;
+      mWidget->ApzTransformGeckoCoordinate(spt, &lpt);
+      touch->mRefPoint.x = lpt.x;
+      touch->mRefPoint.y = lpt.y;
+    }
+  }
 }
 
 void
@@ -895,6 +906,9 @@ MetroInput::OnTapped(UI::Input::IGestureRecognizer* aSender,
   Devices::Input::PointerDeviceType deviceType;
   aArgs->get_PointerDeviceType(&deviceType);
 
+  unsigned int tapCount;
+  aArgs->get_TapCount(&tapCount);
+
   // For mouse and pen input, we send mousedown/mouseup/mousemove
   // events as soon as we detect the input event.  For touch input, a set of
   // mousedown/mouseup events will be sent only once a tap has been detected.
@@ -904,7 +918,7 @@ MetroInput::OnTapped(UI::Input::IGestureRecognizer* aSender,
 
   Foundation::Point position;
   aArgs->get_Position(&position);
-  HandleSingleTap(position);
+  HandleTap(position, tapCount);
   return S_OK;
 }
 
@@ -931,21 +945,25 @@ MetroInput::OnRightTapped(UI::Input::IGestureRecognizer* aSender,
 }
 
 void
-MetroInput::HandleSingleTap(const Foundation::Point& aPoint)
+MetroInput::HandleTap(const Foundation::Point& aPoint, unsigned int aTapCount)
 {
 #ifdef DEBUG_INPUT
   LogFunction();
 #endif
-  
+
   LayoutDeviceIntPoint refPoint;
-  TransformRefPoint(aPoint, refPoint);
+  bool hitTestChrome = TransformRefPoint(aPoint, refPoint);
+  if (!hitTestChrome) {
+    // Let APZC handle tap/doubletap detection for content.
+    return;
+  }
 
   // send mousemove
   WidgetMouseEvent* mouseEvent =
     new WidgetMouseEvent(true, NS_MOUSE_MOVE, mWidget.Get(),
                          WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
   mouseEvent->refPoint = refPoint;
-  mouseEvent->clickCount = 1;
+  mouseEvent->clickCount = aTapCount;
   mouseEvent->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
   DispatchAsyncEventIgnoreStatus(mouseEvent);
 
@@ -954,7 +972,7 @@ MetroInput::HandleSingleTap(const Foundation::Point& aPoint)
     new WidgetMouseEvent(true, NS_MOUSE_BUTTON_DOWN, mWidget.Get(),
                          WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
   mouseEvent->refPoint = refPoint;
-  mouseEvent->clickCount = 1;
+  mouseEvent->clickCount = aTapCount;
   mouseEvent->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
   mouseEvent->button = WidgetMouseEvent::buttonType::eLeftButton;
   DispatchAsyncEventIgnoreStatus(mouseEvent);
@@ -963,7 +981,7 @@ MetroInput::HandleSingleTap(const Foundation::Point& aPoint)
     new WidgetMouseEvent(true, NS_MOUSE_BUTTON_UP, mWidget.Get(),
                          WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
   mouseEvent->refPoint = refPoint;
-  mouseEvent->clickCount = 1;
+  mouseEvent->clickCount = aTapCount;
   mouseEvent->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
   mouseEvent->button = WidgetMouseEvent::buttonType::eLeftButton;
   DispatchAsyncEventIgnoreStatus(mouseEvent);
@@ -979,11 +997,10 @@ MetroInput::HandleSingleTap(const Foundation::Point& aPoint)
       new WidgetMouseEvent(true, NS_MOUSE_MOVE, mWidget.Get(),
                            WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
     mouseEvent->refPoint = LayoutDeviceIntPoint(point.x, point.y);
-    mouseEvent->clickCount = 1;
+    mouseEvent->clickCount = aTapCount;
     mouseEvent->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
     DispatchAsyncEventIgnoreStatus(mouseEvent);
   }
-
 }
 
 void
@@ -1113,7 +1130,9 @@ MetroInput::DeliverNextQueuedTouchEvent()
    * 3) If mContentConsumingTouch is true: deliver touch to content after
    *  transforming through the apz. Also let the apz know content is
    *  consuming touch.
-   * 4) If mContentConsumingTouch is false: send a touchcancel to content
+   * 4) If mContentConsumingTouch is false: check the result from the apz and
+   *  set mApzConsumingTouch appropriately.
+   * 5) If mApzConsumingTouch is true: send a touchcancel to content
    *  and deliver all events to the apz. If the apz is doing something with
    *  the events we can save ourselves the overhead of delivering dom events.
    *
@@ -1128,7 +1147,7 @@ MetroInput::DeliverNextQueuedTouchEvent()
   if (mCancelable && event->message == NS_TOUCH_START) {
     nsRefPtr<Touch> touch = event->touches[0];
     LayoutDeviceIntPoint pt = LayoutDeviceIntPoint::FromUntyped(touch->mRefPoint);
-    bool apzIntersect = mWidget->HitTestAPZC(mozilla::ScreenPoint(pt.x, pt.y));
+    bool apzIntersect = mWidget->ApzHitTest(mozilla::ScreenIntPoint(pt.x, pt.y));
     mChromeHitTestCacheForTouch = (apzIntersect && HitTestChrome(pt));
   }
 
@@ -1146,11 +1165,19 @@ MetroInput::DeliverNextQueuedTouchEvent()
   if (mCancelable) {
     WidgetTouchEvent transformedEvent(*event);
     DUMP_TOUCH_IDS("APZC(1)", event);
-    mWidget->ApzReceiveInputEvent(event, &transformedEvent);
+    mWidget->ApzReceiveInputEvent(event, &mTargetAPZCGuid, &transformedEvent);
     DUMP_TOUCH_IDS("DOM(2)", event);
     mWidget->DispatchEvent(mChromeHitTestCacheForTouch ? event : &transformedEvent, status);
     if (event->message == NS_TOUCH_START) {
       mContentConsumingTouch = (nsEventStatus_eConsumeNoDefault == status);
+      // If we know content wants touch here, we can bail early on mCancelable
+      // processing. This insures the apz gets an update when the user touches
+      // the screen, but doesn't move soon after.
+      if (mContentConsumingTouch) {
+        mCancelable = false;
+        mWidget->ApzContentConsumingTouch(mTargetAPZCGuid);
+        DispatchTouchCancel(event);
+      }
       // Disable gesture based events (taps, swipes, rotation) if
       // preventDefault is called on touchstart.
       mRecognizerWantsEvents = !(nsEventStatus_eConsumeNoDefault == status);
@@ -1163,10 +1190,10 @@ MetroInput::DeliverNextQueuedTouchEvent()
       // Let the apz know if content wants to consume touch events, or cancel
       // the touch block for content.
       if (mContentConsumingTouch) {
-        mWidget->ApzContentConsumingTouch();
+        mWidget->ApzContentConsumingTouch(mTargetAPZCGuid);
+        DispatchTouchCancel(event);
       } else {
-        mWidget->ApzContentIgnoringTouch();
-        DispatchTouchCancel(&transformedEvent);
+        mWidget->ApzContentIgnoringTouch(mTargetAPZCGuid);
       }
     }
     // If content is consuming touch don't generate any gesture based
@@ -1177,22 +1204,36 @@ MetroInput::DeliverNextQueuedTouchEvent()
     return;
   }
 
-  // If content called preventDefault on touchstart or first touchmove send
-  // the event to content.
+  // If content is consuming touch, we may need to transform event coords
+  // through the apzc before sending to the dom. Otherwise send the event
+  // to apzc.
   if (mContentConsumingTouch) {
-    // ContentReceivedTouch has already been called in the mCancelable block
-    // above so this shouldn't cause the apz to react. We still need to
-    // transform our coordinates though.
-    DUMP_TOUCH_IDS("APZC(2)", event);
-    mWidget->ApzReceiveInputEvent(event);
+    // Only translate if we're dealing with web content that's transformed
+    // by the apzc.
+    if (!mChromeHitTestCacheForTouch) {
+      TransformTouchEvent(event);
+    }
     DUMP_TOUCH_IDS("DOM(3)", event);
     mWidget->DispatchEvent(event, status);
     return;
   }
 
-  // Forward event data to apz.
-  DUMP_TOUCH_IDS("APZC(3)", event);
-  mWidget->ApzReceiveInputEvent(event);
+  DUMP_TOUCH_IDS("APZC(2)", event);
+  status = mWidget->ApzReceiveInputEvent(event, nullptr);
+
+  // Send the event to content unless APZC is consuming it.
+  if (!mApzConsumingTouch) {
+    if (status == nsEventStatus_eConsumeNoDefault) {
+      mApzConsumingTouch = true;
+      DispatchTouchCancel(event);
+      return;
+    }
+    if (!mChromeHitTestCacheForTouch) {
+      TransformTouchEvent(event);
+    }
+    DUMP_TOUCH_IDS("DOM(4)", event);
+    mWidget->DispatchEvent(event, status);
+  }
 }
 
 void
@@ -1201,8 +1242,7 @@ MetroInput::DispatchTouchCancel(WidgetTouchEvent* aEvent)
   MOZ_ASSERT(aEvent);
   // Send a touchcancel for each pointer id we have a corresponding start
   // for. Note we can't rely on mTouches here since touchends remove points
-  // from it. The only time we end up in here is if the apz is consuming
-  // events, so this array shouldn't be very large.
+  // from it.
   WidgetTouchEvent touchEvent(true, NS_TOUCH_CANCEL, mWidget.Get());
   nsTArray< nsRefPtr<dom::Touch> >& touches = aEvent->touches;
   for (uint32_t i = 0; i < touches.Length(); ++i) {
@@ -1220,9 +1260,13 @@ MetroInput::DispatchTouchCancel(WidgetTouchEvent* aEvent)
   if (!touchEvent.touches.Length()) {
     return;
   }
-
-  DUMP_TOUCH_IDS("DOM(4)", &touchEvent);
-  mWidget->DispatchEvent(&touchEvent, sThrowawayStatus);
+  if (mContentConsumingTouch) {
+    DUMP_TOUCH_IDS("APZC(3)", &touchEvent);
+    mWidget->ApzReceiveInputEvent(&touchEvent, nullptr);
+  } else {
+    DUMP_TOUCH_IDS("DOM(5)", &touchEvent);
+    mWidget->DispatchEvent(&touchEvent, sThrowawayStatus);
+  }
 }
 
 void

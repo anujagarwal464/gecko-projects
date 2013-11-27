@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+include protocol PAsmJSCacheEntry;
 include protocol PBlob;
 include protocol PBluetooth;
 include protocol PBrowser;
@@ -40,6 +41,7 @@ using struct IPC::Permission from "mozilla/net/NeckoMessageUtils.h";
 using class IPC::Principal from "mozilla/dom/PermissionMessageUtils.h";
 using struct mozilla::null_t from "ipc/IPCMessageUtils.h";
 using struct mozilla::void_t from "ipc/IPCMessageUtils.h";
+using mozilla::dom::asmjscache::OpenMode from "mozilla/dom/asmjscache/AsmJSCache.h";
 using mozilla::dom::AudioChannelType from "AudioChannelCommon.h";
 using mozilla::dom::AudioChannelState from "AudioChannelCommon.h";
 using mozilla::dom::NativeThreadId from "mozilla/dom/TabMessageUtils.h";
@@ -175,6 +177,7 @@ intr protocol PContent
     parent opens PCompositor;
     parent opens PImageBridge;
 
+    manages PAsmJSCacheEntry;
     manages PBlob;
     manages PBluetooth;
     manages PBrowser;
@@ -238,6 +241,8 @@ child:
      */
     async AudioChannelNotify();
 
+    async SpeakerManagerNotify();
+
     /**
      * Do a memory info dump to a file in our temp directory.
      *
@@ -247,7 +252,6 @@ child:
     async DumpMemoryInfoToTempDir(nsString identifier,
                                   bool minimizeMemoryUsage,
                                   bool dumpChildProcesses);
-
     /**
      * Dump this process's GC and CC logs.
      *
@@ -356,6 +360,9 @@ parent:
 
     PFMRadio();
 
+    PAsmJSCacheEntry(OpenMode openMode, int64_t sizeToWrite,
+                     Principal principal);
+
     // Services remoting
 
     async StartVisitedQuery(URIParams uri);
@@ -375,10 +382,12 @@ parent:
 
     sync ReadFontList() returns (FontListEntry[] retValue);
 
-    sync SyncMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows)
+    sync SyncMessage(nsString aMessage, ClonedMessageData aData,
+                     CpowEntry[] aCpows, Principal aPrincipal)
       returns (nsString[] retval);
 
-    rpc RpcMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows)
+    rpc RpcMessage(nsString aMessage, ClonedMessageData aData,
+                   CpowEntry[] aCpows, Principal aPrincipal)
       returns (nsString[] retval);
 
     ShowAlertNotification(nsString imageUrl,
@@ -388,9 +397,10 @@ parent:
                           nsString cookie,
                           nsString name,
                           nsString bidi,
-                          nsString lang);
+                          nsString lang,
+                          Principal principal);
 
-    CloseAlert(nsString name);
+    CloseAlert(nsString name, Principal principal);
 
     PExternalHelperApp(OptionalURIParams uri, nsCString aMimeContentType,
                        nsCString aContentDisposition, bool aForceSave,
@@ -468,8 +478,14 @@ parent:
     sync KeywordToURI(nsCString keyword)
         returns (OptionalInputStreamParams postData, OptionalURIParams uri);
 
+    sync SpeakerManagerForceSpeaker(bool aEnable);
+
+    sync SpeakerManagerGetSpeakerStatus()
+        returns (bool value);
+
 both:
-     AsyncMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows);
+     AsyncMessage(nsString aMessage, ClonedMessageData aData,
+                  CpowEntry[] aCpows, Principal aPrincipal);
 };
 
 }

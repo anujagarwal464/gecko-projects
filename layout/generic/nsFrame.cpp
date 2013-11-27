@@ -514,12 +514,15 @@ nsFrame::Init(nsIContent*      aContent,
   }
   if (disp->mPosition == NS_STYLE_POSITION_STICKY &&
       !aPrevInFlow &&
-      !(mState & NS_FRAME_IS_NONDISPLAY)) {
+      !(mState & NS_FRAME_IS_NONDISPLAY) &&
+      !disp->IsInnerTableStyle()) {
     // Note that we only add first continuations, but we really only
     // want to add first continuation-or-special-siblings.  But since we
     // don't yet know if we're a later part of a block-in-inline split,
     // we'll just add later members of a block-in-inline split here, and
     // then StickyScrollContainer will remove them later.
+    // We don't currently support relative positioning of inner table
+    // elements (bug 35168), so exclude them from sticky positioning too.
     StickyScrollContainer* ssc =
       StickyScrollContainer::GetStickyScrollContainerForFrame(this);
     if (ssc) {
@@ -976,10 +979,10 @@ nsIFrame::ApplySkipSides(nsMargin& aMargin,
 nsRect
 nsIFrame::GetPaddingRectRelativeToSelf() const
 {
-  nsMargin bp(GetUsedBorder());
-  ApplySkipSides(bp);
+  nsMargin border(GetUsedBorder());
+  ApplySkipSides(border);
   nsRect r(0, 0, mRect.width, mRect.height);
-  r.Deflate(bp);
+  r.Deflate(border);
   return r;
 }
 
@@ -1809,31 +1812,31 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   aBuilder->SetContainsBlendMode(false);
  
   if (isTransformed) {
+    const nsRect overflow = GetVisualOverflowRectRelativeToSelf();
     if (aBuilder->IsForPainting() &&
         nsDisplayTransform::ShouldPrerenderTransformedContent(aBuilder, this)) {
-      dirtyRect = GetVisualOverflowRectRelativeToSelf();
+      dirtyRect = overflow;
     } else {
-      // Trying to  back-transform arbitrary rects gives us really weird results. I believe 
-      // this is from points that lie beyond the vanishing point. As a workaround we transform t
-      // he overflow rect into screen space and compare in that coordinate system.
+      if (overflow.IsEmpty() && !Preserves3DChildren()) {
+        return;
+      }
+      // Trying to back-transform arbitrary rects gives us really weird results. I believe 
+      // this is from points that lie beyond the vanishing point. As a workaround we transform
+      // the overflow rect into screen space and compare in that coordinate system.
 
-      // Transform the overflow rect into screen space
-      nsRect overflow = GetVisualOverflowRectRelativeToSelf();
+      // Transform the overflow rect into screen space.
       nsPoint offset = aBuilder->ToReferenceFrame(this);
-      overflow += offset;
-      overflow = nsDisplayTransform::TransformRect(overflow, this, offset);
-
+      nsRect trans = nsDisplayTransform::TransformRect(overflow + offset, this, offset);
       dirtyRect += offset;
-
-      if (dirtyRect.Intersects(overflow)) {
+      if (dirtyRect.Intersects(trans)) {
         // If they intersect, we take our whole overflow rect. We could instead take the intersection
         // and then reverse transform it but I doubt this extra work is worthwhile.
-        dirtyRect = GetVisualOverflowRectRelativeToSelf();
+        dirtyRect = overflow;
       } else {
+        if (!Preserves3DChildren()) {
+          return;
+        }
         dirtyRect.SetEmpty();
-      }
-      if (!Preserves3DChildren() && !dirtyRect.Intersects(GetVisualOverflowRectRelativeToSelf())) {
-        return;
       }
     }
     inTransform = true;
@@ -2014,6 +2017,8 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
         new (aBuilder) nsDisplayBlendContainer(aBuilder, this, &resultList));
   }
 
+  CreateOwnLayerIfNeeded(aBuilder, &resultList);
+
   aList->AppendToTop(&resultList);
 }
 
@@ -2168,19 +2173,8 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   NS_ASSERTION(!isStackingContext || pseudoStackingContext,
                "Stacking contexts must also be pseudo-stacking-contexts");
 
-  // This controls later whether we build an nsDisplayWrapList or an
-  // nsDisplayFixedPosition. We check if we're already building a fixed-pos
-  // item and disallow nesting, to prevent the situation of bug #769541
-  // occurring.
-  // Don't build an nsDisplayFixedPosition if our root scroll frame is not
-  // active, that's pointless and the extra layer(s) created may be wasteful.
-  bool buildFixedPositionItem = disp->mPosition == NS_STYLE_POSITION_FIXED &&
-    !child->GetParent()->GetParent() && !aBuilder->IsInFixedPosition() &&
-    IsScrollFrameActive(PresContext()->PresShell()->GetRootScrollFrameAsScrollable()) &&
-    !isSVG;
-
   nsDisplayListBuilder::AutoBuildingDisplayList
-    buildingForChild(aBuilder, child, pseudoStackingContext, buildFixedPositionItem);
+    buildingForChild(aBuilder, child, pseudoStackingContext);
   DisplayListClipState::AutoClipMultiple clipState(aBuilder);
 
   if (savedOutOfFlowData) {
@@ -2262,31 +2256,11 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     // Genuine stacking contexts, and positioned pseudo-stacking-contexts,
     // go in this level.
     if (!list.IsEmpty()) {
-      // Make sure the root of a fixed position frame sub-tree gets the
-      // correct displaylist item type.
-      nsDisplayItem* item;
-      if (buildFixedPositionItem) {
-        item = new (aBuilder) nsDisplayFixedPosition(aBuilder, child, child, &list);
-      } else {
-        item = WrapInWrapList(aBuilder, child, &list);
-      }
+      nsDisplayItem* item = WrapInWrapList(aBuilder, child, &list);
       if (isSVG) {
         aLists.Content()->AppendNewToTop(item);
       } else {
         aLists.PositionedDescendants()->AppendNewToTop(item);
-      }
-
-      // Make sure that extra positioned descendants don't escape having
-      // their fixed-position metadata applied to them.
-      if (buildFixedPositionItem) {
-        while (!extraPositionedDescendants.IsEmpty()) {
-          item = extraPositionedDescendants.RemoveBottom();
-          nsDisplayList fixedPosDescendantList;
-          fixedPosDescendantList.AppendToTop(item);
-          aLists.PositionedDescendants()->AppendNewToTop(
-              new (aBuilder) nsDisplayFixedPosition(aBuilder, item->Frame(),
-                                                    child, &fixedPosDescendantList));
-        }
       }
     }
   } else if (!isSVG && disp->IsFloating(child)) {
@@ -4075,6 +4049,14 @@ nsFrame::ComputeSimpleTightBounds(gfxContext* aContext) const
   return r;
 }
 
+/* virtual */ nsresult
+nsIFrame::GetPrefWidthTightBounds(nsRenderingContext* aContext,
+                                  nscoord* aX,
+                                  nscoord* aXMost)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 /* virtual */ nsSize
 nsFrame::ComputeAutoSize(nsRenderingContext *aRenderingContext,
                          nsSize aCBSize, nscoord aAvailableWidth,
@@ -4514,11 +4496,11 @@ nsRect nsIFrame::GetScreenRectInAppUnits() const
 
 // Returns the offset from this frame to the closest geometric parent that
 // has a view. Also returns the containing view or null in case of error
-NS_IMETHODIMP nsFrame::GetOffsetFromView(nsPoint&  aOffset,
-                                         nsView** aView) const
+void
+nsIFrame::GetOffsetFromView(nsPoint& aOffset, nsView** aView) const
 {
   NS_PRECONDITION(nullptr != aView, "null OUT parameter pointer");
-  nsIFrame* frame = const_cast<nsFrame*>(this);
+  nsIFrame* frame = const_cast<nsIFrame*>(this);
 
   *aView = nullptr;
   aOffset.MoveTo(0, 0);
@@ -4526,9 +4508,10 @@ NS_IMETHODIMP nsFrame::GetOffsetFromView(nsPoint&  aOffset,
     aOffset += frame->GetPosition();
     frame = frame->GetParent();
   } while (frame && !frame->HasView());
-  if (frame)
+
+  if (frame) {
     *aView = frame->GetView();
-  return NS_OK;
+  }
 }
 
 nsIWidget*
@@ -5760,9 +5743,10 @@ nsFrame::GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
         nsRect tempRect = resultFrame->GetRect();
         nsPoint offset;
         nsView * view; //used for call of get offset from view
-        result = resultFrame->GetOffsetFromView(offset, &view);
-        if (NS_FAILED(result))
-          return result;
+        resultFrame->GetOffsetFromView(offset, &view);
+        if (!view) {
+          return NS_ERROR_FAILURE;
+        }
         point.y = tempRect.height + offset.y;
 
         //special check. if we allow non-text selection then we can allow a hit location to fall before a table.
@@ -7373,7 +7357,7 @@ nsIFrame::VerticalAlignEnum() const
     for (const nsIFrame* frame = this; frame; frame = frame->GetParent()) {
       dominantBaseline = frame->StyleSVGReset()->mDominantBaseline;
       if (dominantBaseline != NS_STYLE_DOMINANT_BASELINE_AUTO ||
-          frame->GetType() == nsGkAtoms::svgTextFrame) {
+          frame->GetType() == nsGkAtoms::svgTextFrame2) {
         break;
       }
     }
@@ -8080,7 +8064,9 @@ void
 nsIFrame::CreateOwnLayerIfNeeded(nsDisplayListBuilder* aBuilder, 
                                  nsDisplayList* aList)
 {
-  if (GetContent()->HasAttr(kNameSpaceID_None, nsGkAtoms::layer)) {
+  if (GetContent() &&
+      GetContent()->IsXUL() &&
+      GetContent()->HasAttr(kNameSpaceID_None, nsGkAtoms::layer)) {
     aList->AppendNewToTop(new (aBuilder) 
         nsDisplayOwnLayer(aBuilder, this, aList));
   }

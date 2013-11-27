@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -26,6 +26,8 @@
 #include "BasicLayers.h"
 #include "FrameMetrics.h"
 #include "Windows.Graphics.Display.h"
+#include "DisplayInfo_sdk81.h"
+#include "nsNativeDragTarget.h"
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
 #endif
@@ -278,6 +280,8 @@ MetroWidget::Destroy()
     nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1", &rv);
     if (NS_SUCCEEDED(rv)) {
       observerService->RemoveObserver(this, "apzc-scroll-offset-changed");
+      observerService->RemoveObserver(this, "apzc-zoom-to-rect");
+      observerService->RemoveObserver(this, "apzc-disable-zoom");
     }
   }
 
@@ -330,6 +334,28 @@ MetroWidget::IsVisible() const
   if (!mView)
     return false;
   return mView->IsVisible();
+}
+
+NS_IMETHODIMP
+MetroWidget::EnableDragDrop(bool aEnable) {
+  if (aEnable) {
+    if (nullptr == mNativeDragTarget) {
+      mNativeDragTarget = new nsNativeDragTarget(this);
+      if (!mNativeDragTarget) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+
+    HRESULT hr = ::RegisterDragDrop(mWnd, static_cast<LPDROPTARGET>(mNativeDragTarget));
+    return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
+  } else {
+    if (nullptr == mNativeDragTarget) {
+      return NS_OK;
+    }
+
+    HRESULT hr = ::RevokeDragDrop(mWnd);
+    return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
+  }
 }
 
 NS_IMETHODIMP
@@ -966,6 +992,8 @@ CompositorParent* MetroWidget::NewCompositorParent(int aSurfaceWidth, int aSurfa
     nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1", &rv);
     if (NS_SUCCEEDED(rv)) {
       observerService->AddObserver(this, "apzc-scroll-offset-changed", false);
+      observerService->AddObserver(this, "apzc-zoom-to-rect", false);
+      observerService->AddObserver(this, "apzc-disable-zoom", false);
     }
   }
 
@@ -973,57 +1001,70 @@ CompositorParent* MetroWidget::NewCompositorParent(int aSurfaceWidth, int aSurfa
 }
 
 void
-MetroWidget::ApzContentConsumingTouch()
+MetroWidget::ApzContentConsumingTouch(const ScrollableLayerGuid& aGuid)
 {
   LogFunction();
-  if (!APZController::sAPZC) {
+  if (!mController) {
     return;
   }
-  APZController::sAPZC->ContentReceivedTouch(mRootLayerTreeId, true);
+  mController->ContentReceivedTouch(aGuid, true);
 }
 
 void
-MetroWidget::ApzContentIgnoringTouch()
+MetroWidget::ApzContentIgnoringTouch(const ScrollableLayerGuid& aGuid)
 {
   LogFunction();
-  if (!APZController::sAPZC) {
+  if (!mController) {
     return;
   }
-  APZController::sAPZC->ContentReceivedTouch(mRootLayerTreeId, false);
+  mController->ContentReceivedTouch(aGuid, false);
 }
 
 bool
-MetroWidget::HitTestAPZC(ScreenPoint& pt)
+MetroWidget::ApzHitTest(ScreenIntPoint& pt)
 {
-  if (!APZController::sAPZC) {
+  if (!mController) {
     return false;
   }
-  return APZController::sAPZC->HitTestAPZC(pt);
+  return mController->HitTestAPZC(pt);
+}
+
+void
+MetroWidget::ApzTransformGeckoCoordinate(const ScreenIntPoint& aPoint,
+                                         LayoutDeviceIntPoint* aRefPointOut)
+{
+  if (!mController) {
+    return;
+  }
+  mController->TransformCoordinateToGecko(aPoint, aRefPointOut);
 }
 
 nsEventStatus
-MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aEvent)
+MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aEvent,
+                                  ScrollableLayerGuid* aOutTargetGuid)
 {
   MOZ_ASSERT(aEvent);
 
-  if (!APZController::sAPZC) {
+  if (!mController) {
     return nsEventStatus_eIgnore;
   }
-  return APZController::sAPZC->ReceiveInputEvent(*aEvent->AsInputEvent());
+  return mController->ReceiveInputEvent(aEvent, aOutTargetGuid);
 }
 
 nsEventStatus
 MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aInEvent,
+                                  ScrollableLayerGuid* aOutTargetGuid,
                                   WidgetInputEvent* aOutEvent)
 {
   MOZ_ASSERT(aInEvent);
   MOZ_ASSERT(aOutEvent);
 
-  if (!APZController::sAPZC) {
+  if (!mController) {
     return nsEventStatus_eIgnore;
   }
-  return APZController::sAPZC->ReceiveInputEvent(*aInEvent->AsInputEvent(),
-                                                 aOutEvent);
+  return mController->ReceiveInputEvent(aInEvent,
+                                        aOutTargetGuid,
+                                        aOutEvent);
 }
 
 LayerManager*
@@ -1277,6 +1318,19 @@ double MetroWidget::GetDefaultScaleInternal()
 {
   // Return the resolution scale factor reported by the metro environment.
   // XXX TODO: also consider the desktop resolution setting, as IE appears to do?
+
+  ComPtr<IDisplayInformationStatics> dispInfoStatics;
+  if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayInformation).Get(),
+                                      dispInfoStatics.GetAddressOf()))) {
+    ComPtr<IDisplayInformation> dispInfo;
+    if (SUCCEEDED(dispInfoStatics->GetForCurrentView(&dispInfo))) {
+      ResolutionScale scale;
+      if (SUCCEEDED(dispInfo->get_ResolutionScale(&scale))) {
+        return (double)scale / 100.0;
+      }
+    }
+  }
+
   ComPtr<IDisplayPropertiesStatics> dispProps;
   if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayProperties).Get(),
                                      dispProps.GetAddressOf()))) {
@@ -1285,6 +1339,7 @@ double MetroWidget::GetDefaultScaleInternal()
       return (double)scale / 100.0;
     }
   }
+
   return 1.0;
 }
 
@@ -1351,18 +1406,20 @@ MetroWidget::Move(double aX, double aY)
 NS_IMETHODIMP
 MetroWidget::Resize(double aWidth, double aHeight, bool aRepaint)
 {
-  return NS_OK;
+  return Resize(0, 0, aWidth, aHeight, aRepaint);
 }
 
 NS_IMETHODIMP
 MetroWidget::Resize(double aX, double aY, double aWidth, double aHeight, bool aRepaint)
 {
+  WinUtils::Log("Resize: %f %f %f %f", aX, aY, aWidth, aHeight);
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->WindowResized(this, aWidth, aHeight);
   }
   if (mWidgetListener) {
     mWidgetListener->WindowResized(this, aWidth, aHeight);
   }
+  Invalidate();
   return NS_OK;
 }
 
@@ -1545,6 +1602,34 @@ MetroWidget::Observe(nsISupports *subject, const char *topic, const PRUnichar *d
     }
     mController->UpdateScrollOffset(ScrollableLayerGuid(mRootLayerTreeId, presShellId, scrollId),
                                     scrollOffset);
+  }
+  else if (!strcmp(topic, "apzc-zoom-to-rect")) {
+    CSSRect rect = CSSRect();
+    uint64_t viewId = 0;
+    int32_t presShellId = 0;
+
+    int reScan = swscanf(data, L"%f,%f,%f,%f,%d,%llu",
+                 &rect.x, &rect.y, &rect.width, &rect.height,
+                 &presShellId, &viewId);
+    if(reScan != 6) {
+      NS_WARNING("Malformed apzc-zoom-to-rect message");
+    }
+
+    ScrollableLayerGuid guid = ScrollableLayerGuid(mRootLayerTreeId, presShellId, viewId);
+    APZController::sAPZC->ZoomToRect(guid, rect);
+  }
+  else if (!strcmp(topic, "apzc-disable-zoom")) {
+    uint64_t viewId = 0;
+    int32_t presShellId = 0;
+
+    int reScan = swscanf(data, L"%d,%llu",
+      &presShellId, &viewId);
+    if (reScan != 2) {
+      NS_WARNING("Malformed apzc-disable-zoom message");
+    }
+
+    ScrollableLayerGuid guid = ScrollableLayerGuid(mRootLayerTreeId, presShellId, viewId);
+    APZController::sAPZC->UpdateZoomConstraints(guid, false, CSSToScreenScale(1.0f), CSSToScreenScale(1.0f));
   }
   return NS_OK;
 }

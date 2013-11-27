@@ -32,75 +32,6 @@ typedef Rooted<ArgumentsObject *> RootedArgumentsObject;
 
 /*****************************************************************************/
 
-StaticScopeIter::StaticScopeIter(ExclusiveContext *cx, JSObject *objArg)
-  : obj(cx, objArg), onNamedLambda(false)
-{
-    JS_ASSERT_IF(obj, obj->is<StaticBlockObject>() || obj->is<JSFunction>());
-}
-
-bool
-StaticScopeIter::done() const
-{
-    return !obj;
-}
-
-void
-StaticScopeIter::operator++(int)
-{
-    if (obj->is<StaticBlockObject>()) {
-        obj = obj->as<StaticBlockObject>().enclosingStaticScope();
-    } else if (onNamedLambda || !obj->as<JSFunction>().isNamedLambda()) {
-        onNamedLambda = false;
-        obj = obj->as<JSFunction>().nonLazyScript()->enclosingStaticScope();
-    } else {
-        onNamedLambda = true;
-    }
-    JS_ASSERT_IF(obj, obj->is<StaticBlockObject>() || obj->is<JSFunction>());
-    JS_ASSERT_IF(onNamedLambda, obj->is<JSFunction>());
-}
-
-bool
-StaticScopeIter::hasDynamicScopeObject() const
-{
-    return obj->is<StaticBlockObject>()
-           ? obj->as<StaticBlockObject>().needsClone()
-           : obj->as<JSFunction>().isHeavyweight();
-}
-
-Shape *
-StaticScopeIter::scopeShape() const
-{
-    JS_ASSERT(hasDynamicScopeObject());
-    JS_ASSERT(type() != NAMED_LAMBDA);
-    return type() == BLOCK
-           ? block().lastProperty()
-           : funScript()->bindings.callObjShape();
-}
-
-StaticScopeIter::Type
-StaticScopeIter::type() const
-{
-    if (onNamedLambda)
-        return NAMED_LAMBDA;
-    return obj->is<StaticBlockObject>() ? BLOCK : FUNCTION;
-}
-
-StaticBlockObject &
-StaticScopeIter::block() const
-{
-    JS_ASSERT(type() == BLOCK);
-    return obj->as<StaticBlockObject>();
-}
-
-JSScript *
-StaticScopeIter::funScript() const
-{
-    JS_ASSERT(type() == FUNCTION);
-    return obj->as<JSFunction>().nonLazyScript();
-}
-
-/*****************************************************************************/
-
 static JSObject *
 InnermostStaticScope(JSScript *script, jsbytecode *pc)
 {
@@ -115,9 +46,9 @@ InnermostStaticScope(JSScript *script, jsbytecode *pc)
 }
 
 Shape *
-js::ScopeCoordinateToStaticScopeShape(JSContext *cx, JSScript *script, jsbytecode *pc)
+js::ScopeCoordinateToStaticScopeShape(JSScript *script, jsbytecode *pc)
 {
-    StaticScopeIter ssi(cx, InnermostStaticScope(script, pc));
+    StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
     ScopeCoordinate sc(pc);
     while (true) {
         if (ssi.hasDynamicScopeObject()) {
@@ -130,25 +61,57 @@ js::ScopeCoordinateToStaticScopeShape(JSContext *cx, JSScript *script, jsbytecod
     return ssi.scopeShape();
 }
 
-PropertyName *
-js::ScopeCoordinateName(JSContext *cx, JSScript *script, jsbytecode *pc)
+static const uint32_t SCOPE_COORDINATE_NAME_THRESHOLD = 20;
+
+void
+ScopeCoordinateNameCache::purge()
 {
-    Shape::Range<NoGC> r(ScopeCoordinateToStaticScopeShape(cx, script, pc));
+    shape = nullptr;
+    if (map.initialized())
+        map.finish();
+}
+
+PropertyName *
+js::ScopeCoordinateName(ScopeCoordinateNameCache &cache, JSScript *script, jsbytecode *pc)
+{
+    Shape *shape = ScopeCoordinateToStaticScopeShape(script, pc);
+    if (shape != cache.shape && shape->slot() >= SCOPE_COORDINATE_NAME_THRESHOLD) {
+        cache.purge();
+        if (cache.map.init(shape->slot())) {
+            cache.shape = shape;
+            Shape::Range<NoGC> r(shape);
+            while (!r.empty()) {
+                if (!cache.map.putNew(r.front().slot(), r.front().propid())) {
+                    cache.purge();
+                    break;
+                }
+                r.popFront();
+            }
+        }
+    }
+
+    jsid id;
     ScopeCoordinate sc(pc);
-    while (r.front().slot() != sc.slot)
-        r.popFront();
-    jsid id = r.front().propid();
+    if (shape == cache.shape) {
+        ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot);
+        id = p->value;
+    } else {
+        Shape::Range<NoGC> r(shape);
+        while (r.front().slot() != sc.slot)
+            r.popFront();
+        id = r.front().propid();
+    }
 
     /* Beware nameless destructuring formal. */
     if (!JSID_IS_ATOM(id))
-        return cx->runtime()->atomState.empty;
+        return script->runtimeFromAnyThread()->atomState.empty;
     return JSID_TO_ATOM(id)->asPropertyName();
 }
 
 JSScript *
-js::ScopeCoordinateFunctionScript(JSContext *cx, JSScript *script, jsbytecode *pc)
+js::ScopeCoordinateFunctionScript(JSScript *script, jsbytecode *pc)
 {
-    StaticScopeIter ssi(cx, InnermostStaticScope(script, pc));
+    StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
     ScopeCoordinate sc(pc);
     while (true) {
         if (ssi.hasDynamicScopeObject()) {
@@ -158,7 +121,7 @@ js::ScopeCoordinateFunctionScript(JSContext *cx, JSScript *script, jsbytecode *p
         }
         ssi++;
     }
-    if (ssi.type() != StaticScopeIter::FUNCTION)
+    if (ssi.type() != StaticScopeIter<NoGC>::FUNCTION)
         return nullptr;
     return ssi.funScript();
 }
@@ -433,7 +396,7 @@ with_LookupElement(JSContext *cx, HandleObject obj, uint32_t index,
                    MutableHandleObject objp, MutableHandleShape propp)
 {
     RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
+    if (!IndexToId(cx, index, id.address()))
         return false;
     return with_LookupGeneric(cx, obj, id, objp, propp);
 }
@@ -467,7 +430,7 @@ with_GetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t
                 MutableHandleValue vp)
 {
     RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
+    if (!IndexToId(cx, index, id.address()))
         return false;
     return with_GetGeneric(cx, obj, receiver, id, vp);
 }
@@ -605,6 +568,7 @@ const Class WithObject::class_ = {
         with_DeleteProperty,
         with_DeleteElement,
         with_DeleteSpecial,
+        nullptr, nullptr, /* watch/unwatch */
         with_Enumerate,
         with_ThisObject,
     }
@@ -2195,7 +2159,7 @@ RemoveReferencedNames(JSContext *cx, HandleScript script, PropertyNameSet &remai
           case JSOP_GETALIASEDVAR:
           case JSOP_CALLALIASEDVAR:
           case JSOP_SETALIASEDVAR:
-            name = ScopeCoordinateName(cx, script, pc);
+            name = ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc);
             break;
 
           default:

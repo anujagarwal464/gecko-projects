@@ -195,8 +195,11 @@ nsSVGImageFrame::AttributeChanged(int32_t         aNameSpaceID,
       return NS_OK;
     }
     else if (aAttribute == nsGkAtoms::preserveAspectRatio) {
-      // Don't invalidate (the layers code does that).
-      SchedulePaint();
+      // We don't paint the content of the image using display lists, therefore
+      // we have to invalidate for this children-only transform changes since
+      // there is no layer tree to notice that the transform changed and
+      // recomposite.
+      InvalidateFrame();
       return NS_OK;
     }
   }
@@ -273,18 +276,18 @@ nsSVGImageFrame::TransformContextForPainting(gfxContext* aGfxContext,
     imageTransform =
       GetRasterImageTransform(nativeWidth, nativeHeight, FOR_PAINTING,
                               aTransformRoot);
+
+    // NOTE: We need to cancel out the effects of Full-Page-Zoom, or else
+    // it'll get applied an extra time by DrawSingleUnscaledImage.
+    nscoord appUnitsPerDevPx = PresContext()->AppUnitsPerDevPixel();
+    gfxFloat pageZoomFactor =
+      nsPresContext::AppUnitsToFloatCSSPixels(appUnitsPerDevPx);
+    imageTransform.Scale(pageZoomFactor, pageZoomFactor);
   }
 
   if (imageTransform.IsSingular()) {
     return false;
   }
-
-  // NOTE: We need to cancel out the effects of Full-Page-Zoom, or else
-  // it'll get applied an extra time by DrawSingleUnscaledImage.
-  nscoord appUnitsPerDevPx = PresContext()->AppUnitsPerDevPixel();
-  gfxFloat pageZoomFactor =
-    nsPresContext::AppUnitsToFloatCSSPixels(appUnitsPerDevPx);
-  imageTransform.Scale(pageZoomFactor, pageZoomFactor);
 
   aGfxContext->Multiply(imageTransform);
   return true;

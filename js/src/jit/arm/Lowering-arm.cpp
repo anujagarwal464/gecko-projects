@@ -210,8 +210,8 @@ bool
 LIRGeneratorARM::lowerForBitAndAndBranch(LBitAndAndBranch *baab, MInstruction *mir,
                                          MDefinition *lhs, MDefinition *rhs)
 {
-    baab->setOperand(0, useRegister(lhs));
-    baab->setOperand(1, useRegisterOrConstant(rhs));
+    baab->setOperand(0, useRegisterAtStart(lhs));
+    baab->setOperand(1, useRegisterOrConstantAtStart(rhs));
     return add(baab, mir);
 }
 
@@ -290,8 +290,8 @@ LIRGeneratorARM::lowerDivI(MDiv *div)
         return define(lir, div);
     }
 
-    LSoftDivI *lir = new LSoftDivI(useFixed(div->lhs(), r0), use(div->rhs(), r1),
-                                   tempFixed(r2), tempFixed(r3));
+    LSoftDivI *lir = new LSoftDivI(useFixedAtStart(div->lhs(), r0), useFixedAtStart(div->rhs(), r1),
+                                   tempFixed(r1), tempFixed(r2), tempFixed(r3));
     if (div->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
         return false;
     return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
@@ -335,8 +335,8 @@ LIRGeneratorARM::lowerModI(MMod *mod)
         return define(lir, mod);
     }
 
-    LSoftModI *lir = new LSoftModI(useFixed(mod->lhs(), r0), use(mod->rhs(), r1),
-                                   tempFixed(r2), tempFixed(r3), temp(LDefinition::GENERAL));
+    LSoftModI *lir = new LSoftModI(useFixedAtStart(mod->lhs(), r0), useFixedAtStart(mod->rhs(), r1),
+                                   tempFixed(r0), tempFixed(r2), tempFixed(r3), temp(LDefinition::GENERAL));
     if (mod->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
         return false;
     return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
@@ -416,7 +416,7 @@ LIRGeneratorARM::visitAsmJSNeg(MAsmJSNeg *ins)
 }
 
 bool
-LIRGeneratorARM::lowerUDiv(MInstruction *div)
+LIRGeneratorARM::lowerUDiv(MDiv *div)
 {
     MDefinition *lhs = div->getOperand(0);
     MDefinition *rhs = div->getOperand(1);
@@ -425,22 +425,20 @@ LIRGeneratorARM::lowerUDiv(MInstruction *div)
         LUDiv *lir = new LUDiv;
         lir->setOperand(0, useRegister(lhs));
         lir->setOperand(1, useRegister(rhs));
+        if (div->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+            return false;
         return define(lir, div);
     } else {
-        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixed(lhs, r0), useFixed(rhs, r1),
-                                                 tempFixed(r2), tempFixed(r3));
+        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixedAtStart(lhs, r0), useFixedAtStart(rhs, r1),
+                                                 tempFixed(r1), tempFixed(r2), tempFixed(r3));
+        if (div->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+            return false;
         return defineFixed(lir, div, LAllocation(AnyRegister(r0)));
     }
 }
 
 bool
-LIRGeneratorARM::visitAsmJSUDiv(MAsmJSUDiv *div)
-{
-    return lowerUDiv(div);
-}
-
-bool
-LIRGeneratorARM::lowerUMod(MInstruction *mod)
+LIRGeneratorARM::lowerUMod(MMod *mod)
 {
     MDefinition *lhs = mod->getOperand(0);
     MDefinition *rhs = mod->getOperand(1);
@@ -449,18 +447,16 @@ LIRGeneratorARM::lowerUMod(MInstruction *mod)
         LUMod *lir = new LUMod;
         lir->setOperand(0, useRegister(lhs));
         lir->setOperand(1, useRegister(rhs));
+        if (mod->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+            return false;
         return define(lir, mod);
     } else {
-        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixed(lhs, r0), useFixed(rhs, r1),
-                                                 tempFixed(r2), tempFixed(r3));
+        LSoftUDivOrMod *lir = new LSoftUDivOrMod(useFixedAtStart(lhs, r0), useFixedAtStart(rhs, r1),
+                                                 tempFixed(r0), tempFixed(r2), tempFixed(r3));
+        if (mod->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+            return false;
         return defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
     }
-}
-
-bool
-LIRGeneratorARM::visitAsmJSUMod(MAsmJSUMod *mod)
-{
-    return lowerUMod(mod);
 }
 
 bool

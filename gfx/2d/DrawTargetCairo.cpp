@@ -724,14 +724,19 @@ DrawTargetCairo::CopySurface(SourceSurface *aSurface,
   AutoPrepareForDrawing prep(this, mContext);
   AutoClearDeviceOffset clear(aSurface);
 
-  if (!aSurface || aSurface->GetType() != SURFACE_CAIRO) {
+  if (!aSurface) {
     gfxWarning() << "Unsupported surface type specified";
     return;
   }
 
-  cairo_surface_t* surf = static_cast<SourceSurfaceCairo*>(aSurface)->GetSurface();
+  cairo_surface_t* surf = GetCairoSurfaceForSourceSurface(aSurface);
+  if (!surf) {
+    gfxWarning() << "Unsupported surface type specified";
+    return;
+  }
 
   CopySurfaceInternal(surf, aSource, aDest);
+  cairo_surface_destroy(surf);
 }
 
 void
@@ -841,6 +846,16 @@ DrawTargetCairo::Fill(const Path *aPath,
   path->SetPathOnContext(mContext);
 
   DrawPattern(aPattern, StrokeOptions(), aOptions, DRAW_FILL);
+}
+
+void
+DrawTargetCairo::SetPermitSubpixelAA(bool aPermitSubpixelAA)
+{
+  DrawTarget::SetPermitSubpixelAA(aPermitSubpixelAA);
+#ifdef MOZ_TREE_CAIRO
+  cairo_surface_set_subpixel_antialiasing(mSurface,
+    aPermitSubpixelAA ? CAIRO_SUBPIXEL_ANTIALIASING_ENABLED : CAIRO_SUBPIXEL_ANTIALIASING_DISABLED);
+#endif
 }
 
 void
@@ -1114,6 +1129,13 @@ DrawTargetCairo::InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize&
   mSurface = aSurface;
   mSize = aSize;
   mFormat = CairoContentToGfxFormat(cairo_surface_get_content(aSurface));
+
+  if (mFormat == FORMAT_B8G8R8A8 ||
+      mFormat == FORMAT_R8G8B8A8) {
+    SetPermitSubpixelAA(false);
+  } else {
+    SetPermitSubpixelAA(true);
+  }
 
   return true;
 }

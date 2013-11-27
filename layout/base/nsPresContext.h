@@ -56,6 +56,7 @@ struct nsStyleBackground;
 struct nsStyleBorder;
 class nsIRunnable;
 class gfxUserFontSet;
+class gfxTextPerfMetrics;
 class nsUserFontSet;
 struct nsFontFaceRuleContainer;
 class nsObjectFrame;
@@ -788,6 +789,8 @@ public:
    */
   const nscoord* GetBorderWidthTable() { return mBorderWidthTable; }
 
+  gfxTextPerfMetrics *GetTextPerfMetrics() { return mTextPerf; }
+
   bool IsDynamic() { return (mType == eContext_PageLayout || mType == eContext_Galley); }
   bool IsScreen() { return (mMedium == nsGkAtoms::screen ||
                               mType == eContext_PageLayout ||
@@ -848,8 +851,7 @@ public:
   // Ensure that it is safe to hand out CSS rules outside the layout
   // engine by ensuring that all CSS style sheets have unique inners
   // and, if necessary, synchronously rebuilding all style data.
-  // Returns true on success and false on failure (not safe).
-  bool EnsureSafeToHandOutCSSRules();
+  void EnsureSafeToHandOutCSSRules();
 
   void NotifyInvalidation(uint32_t aFlags);
   void NotifyInvalidation(const nsRect& aRect, uint32_t aFlags);
@@ -999,6 +1001,8 @@ public:
   void SetExistThrottledUpdates(bool aExistThrottledUpdates) {
     mExistThrottledUpdates = aExistThrottledUpdates;
   }
+
+  bool IsDeviceSizePageSize();
 
 protected:
   friend class nsRunnableMethod<nsPresContext>;
@@ -1192,6 +1196,9 @@ protected:
 
   // container for per-context fonts (downloadable, SVG, etc.)
   nsUserFontSet*        mUserFontSet;
+
+  // text performance metrics
+  nsAutoPtr<gfxTextPerfMetrics>   mTextPerf;
 
   nsRect                mVisibleArea;
   nsSize                mPageSize;

@@ -551,19 +551,29 @@ CodeGeneratorX86Shared::visitPowHalfD(LPowHalfD *ins)
 
     Label done, sqrt;
 
-    // Branch if not -Infinity.
-    masm.loadConstantDouble(NegativeInfinity(), ScratchFloatReg);
-    masm.branchDouble(Assembler::DoubleNotEqualOrUnordered, input, ScratchFloatReg, &sqrt);
+    if (!ins->mir()->operandIsNeverNegativeInfinity()) {
+        // Branch if not -Infinity.
+        masm.loadConstantDouble(NegativeInfinity(), ScratchFloatReg);
 
-    // Math.pow(-Infinity, 0.5) == Infinity.
-    masm.xorpd(input, input);
-    masm.subsd(ScratchFloatReg, input);
-    masm.jump(&done);
+        Assembler::DoubleCondition cond = Assembler::DoubleNotEqualOrUnordered;
+        if (ins->mir()->operandIsNeverNaN())
+            cond = Assembler::DoubleNotEqual;
+        masm.branchDouble(cond, input, ScratchFloatReg, &sqrt);
 
-    // Math.pow(-0, 0.5) == 0 == Math.pow(0, 0.5). Adding 0 converts any -0 to 0.
-    masm.bind(&sqrt);
-    masm.xorpd(ScratchFloatReg, ScratchFloatReg);
-    masm.addsd(ScratchFloatReg, input);
+        // Math.pow(-Infinity, 0.5) == Infinity.
+        masm.xorpd(input, input);
+        masm.subsd(ScratchFloatReg, input);
+        masm.jump(&done);
+
+        masm.bind(&sqrt);
+    }
+
+    if (!ins->mir()->operandIsNeverNegativeZero()) {
+        // Math.pow(-0, 0.5) == 0 == Math.pow(0, 0.5). Adding 0 converts any -0 to 0.
+        masm.xorpd(ScratchFloatReg, ScratchFloatReg);
+        masm.addsd(ScratchFloatReg, input);
+    }
+
     masm.sqrtsd(input, input);
 
     masm.bind(&done);
@@ -784,17 +794,37 @@ CodeGeneratorX86Shared::visitUDivOrMod(LUDivOrMod *ins)
 
     JS_ASSERT_IF(output == eax, ToRegister(ins->remainder()) == edx);
 
-    masm.testl(rhs, rhs);
+    ReturnZero *ool = nullptr;
 
-    ReturnZero *ool = new ReturnZero(output);
-    masm.j(Assembler::Zero, ool->entry());
-    if (!addOutOfLineCode(ool))
-        return false;
+    // Prevent divide by zero.
+    if (ins->canBeDivideByZero()) {
+        masm.testl(rhs, rhs);
+        if (ins->mir()->isTruncated()) {
+            if (!ool)
+                ool = new ReturnZero(output);
+            masm.j(Assembler::Zero, ool->entry());
+        } else {
+            if (!bailoutIf(Assembler::Zero, ins->snapshot()))
+                return false;
+        }
+    }
 
     masm.mov(ImmWord(0), edx);
     masm.udiv(rhs);
 
-    masm.bind(ool->rejoin());
+    // Unsigned div or mod can return a value that's not a signed int32.
+    // If our users aren't expecting that, bail.
+    if (!ins->mir()->isTruncated()) {
+        masm.testl(output, output);
+        if (!bailoutIf(Assembler::Signed, ins->snapshot()))
+            return false;
+    }
+
+    if (ool) {
+        if (!addOutOfLineCode(ool))
+            return false;
+        masm.bind(ool->rejoin());
+    }
 
     return true;
 }

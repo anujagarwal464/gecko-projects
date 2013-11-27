@@ -236,14 +236,13 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
             js_free(source);
             return nullptr;
         }
-        RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss));
-        if (!sourceObject)
-            return nullptr;
         ss->setSource(source, sourceLen);
-
         CompileOptions options(cx);
         options.setNoScriptRval(true)
                .setVersion(JSVERSION_DEFAULT);
+        RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
+        if (!sourceObject)
+            return nullptr;
 
         RootedScript script(cx, JSScript::Create(cx,
                                                  /* enclosingScope = */ NullPtr(),
@@ -388,7 +387,11 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     if (cx->runtime()->isSelfHostingGlobal(self)) {
         intrinsicsHolder = self;
     } else {
-        intrinsicsHolder = NewObjectWithClassProto(cx, &JSObject::class_, nullptr, self, TenuredObject);
+        RootedObject proto(cx, self->getOrCreateObjectPrototype(cx));
+        if (!proto)
+            return nullptr;
+        intrinsicsHolder = NewObjectWithGivenProto(cx, &JSObject::class_, proto, self,
+                                                   TenuredObject);
         if (!intrinsicsHolder)
             return nullptr;
     }
@@ -485,6 +488,9 @@ GlobalObject::initStandardClasses(JSContext *cx, Handle<GlobalObject*> global)
 #if EXPOSE_INTL_API
            js_InitIntlClass(cx, global) &&
 #endif
+#if ENABLE_PARALLEL_JS
+           js_InitParallelArrayClass(cx, global) &&
+#endif
            true;
 }
 
@@ -502,6 +508,23 @@ GlobalObject::isRuntimeCodeGenEnabled(JSContext *cx, Handle<GlobalObject*> globa
         v.set(global, HeapSlot::Slot, RUNTIME_CODEGEN_ENABLED, boolValue);
     }
     return !v.isFalse();
+}
+
+/* static */ bool
+GlobalObject::warnOnceAboutWatch(JSContext *cx, HandleObject obj)
+{
+    Rooted<GlobalObject*> global(cx, &obj->global());
+    HeapSlot &v = global->getSlotRef(WARNED_WATCH_DEPRECATED);
+    if (v.isUndefined()) {
+        // Warn only once per global object.
+        if (!JS_ReportErrorFlagsAndNumber(cx, JSREPORT_WARNING, js_GetErrorMessage, nullptr,
+                                          JSMSG_OBJECT_WATCH_DEPRECATED))
+        {
+            return false;
+        }
+        v.init(global, HeapSlot::Slot, WARNED_WATCH_DEPRECATED, BooleanValue(true));
+    }
+    return true;
 }
 
 JSFunction *

@@ -126,7 +126,7 @@ NumBlockSlots(JSScript *script, jsbytecode *pc)
     JS_STATIC_ASSERT(JSOP_ENTERBLOCK_LENGTH == JSOP_ENTERLET1_LENGTH);
     JS_STATIC_ASSERT(JSOP_ENTERBLOCK_LENGTH == JSOP_ENTERLET2_LENGTH);
 
-    return script->getObject(GET_UINT32_INDEX(pc))->as<StaticBlockObject>().slotCount();
+    return script->getObject(GET_UINT32_INDEX(pc))->as<StaticBlockObject>().propertyCountForCompilation();
 }
 
 unsigned
@@ -389,7 +389,7 @@ class BytecodeParser
 
     JSContext *cx_;
     LifoAllocScope allocScope_;
-    JSScript *script_;
+    RootedScript script_;
 
     Bytecode **codeArray_;
 
@@ -397,17 +397,21 @@ class BytecodeParser
     BytecodeParser(JSContext *cx, JSScript *script)
       : cx_(cx),
         allocScope_(&cx->tempLifoAlloc()),
-        script_(script),
+        script_(cx, script),
         codeArray_(nullptr) { }
 
     bool parse();
+
+#ifdef DEBUG
+    bool isReachable(uint32_t offset) { return maybeCode(offset); }
+    bool isReachable(const jsbytecode *pc) { return maybeCode(pc); }
+#endif
 
     uint32_t stackDepthAtPC(uint32_t offset) {
         // Sometimes the code generator in debug mode asks about the stack depth
         // of unreachable code (bug 932180 comment 22).  Assume that unreachable
         // code has no operands on the stack.
-        Bytecode *code = maybeCode(offset);
-        return code ? code->stackDepth : 0;
+        return getCode(offset).stackDepth;
     }
     uint32_t stackDepthAtPC(const jsbytecode *pc) { return stackDepthAtPC(pc - script_->code); }
 
@@ -697,6 +701,21 @@ BytecodeParser::parse()
 
 #ifdef DEBUG
 
+bool
+js::ReconstructStackDepth(JSContext *cx, JSScript *script, jsbytecode *pc, uint32_t *depth)
+{
+    BytecodeParser parser(cx, script);
+    if (!parser.parse())
+        return false;
+
+    if (!parser.isReachable(pc))
+        return false;
+
+    *depth = parser.stackDepthAtPC(pc);
+
+    return true;
+}
+
 /*
  * If pc != nullptr, include a prefix indicating whether the PC is at the
  * current line. If showAll is true, include the source note type and the
@@ -707,9 +726,13 @@ js_DisassembleAtPC(JSContext *cx, JSScript *scriptArg, bool lines,
                    jsbytecode *pc, bool showAll, Sprinter *sp)
 {
     RootedScript script(cx, scriptArg);
+    BytecodeParser parser(cx, script);
 
     jsbytecode *next, *end;
     unsigned len;
+
+    if (showAll && !parser.parse())
+        return false;
 
     if (showAll)
         Sprint(sp, "%s:%u\n", script->filename(), script->lineno);
@@ -757,10 +780,10 @@ js_DisassembleAtPC(JSContext *cx, JSScript *scriptArg, bool lines,
             }
             else
                 sp->put("   ");
-            if (script->hasAnalysis() && script->analysis()->maybeCode(next))
-                Sprint(sp, "%05u ", script->analysis()->getCode(next).stackDepth);
+            if (parser.isReachable(next))
+                Sprint(sp, "%05u ", parser.stackDepthAtPC(next));
             else
-                sp->put("      ");
+                Sprint(sp, "      ", parser.stackDepthAtPC(next));
         }
         len = js_Disassemble1(cx, script, next, next - script->code, lines, sp);
         if (!len)
@@ -949,7 +972,7 @@ js_Disassemble1(JSContext *cx, HandleScript script, jsbytecode *pc,
       }
 
       case JOF_SCOPECOORD: {
-        Value v = StringValue(ScopeCoordinateName(cx, script, pc));
+        Value v = StringValue(ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc));
         JSAutoByteString bytes;
         if (!ToDisassemblySource(cx, v, &bytes))
             return 0;
@@ -1414,43 +1437,21 @@ js_QuoteString(ExclusiveContext *cx, JSString *str, jschar quote)
 static JSObject *
 GetBlockChainAtPC(JSContext *cx, JSScript *script, jsbytecode *pc)
 {
-    jsbytecode *start = script->main();
+    JS_ASSERT(pc >= script->main() && pc < script->code + script->length);
 
-    JS_ASSERT(pc >= start && pc < script->code + script->length);
+    ptrdiff_t offset = pc - script->main();
 
+    if (!script->hasBlockScopes())
+        return nullptr;
+
+    BlockScopeArray *blockScopes = script->blockScopes();
     JSObject *blockChain = nullptr;
-    for (jsbytecode *p = start; p < pc; p += GetBytecodeLength(p)) {
-        JSOp op = JSOp(*p);
-
-        switch (op) {
-          case JSOP_ENTERBLOCK:
-          case JSOP_ENTERLET0:
-          case JSOP_ENTERLET1:
-          case JSOP_ENTERLET2: {
-            JSObject *child = script->getObject(p);
-            JS_ASSERT_IF(blockChain, child->as<BlockObject>().stackDepth() >=
-                                     blockChain->as<BlockObject>().stackDepth());
-            blockChain = child;
+    for (uint32_t n = 0; n < blockScopes->length; n++) {
+        const BlockScopeNote *note = &blockScopes->vector[n];
+        if (note->start > offset)
             break;
-          }
-          case JSOP_LEAVEBLOCK:
-          case JSOP_LEAVEBLOCKEXPR:
-          case JSOP_LEAVEFORLETIN: {
-            // Some LEAVEBLOCK instructions are due to early exits via
-            // return/break/etc. from block-scoped loops and functions.  We
-            // should ignore these instructions, since they don't really signal
-            // the end of the block.
-            jssrcnote *sn = js_GetSrcNote(cx, script, p);
-            if (!(sn && SN_TYPE(sn) == SRC_HIDDEN)) {
-                JS_ASSERT(blockChain);
-                blockChain = blockChain->as<StaticBlockObject>().enclosingBlock();
-                JS_ASSERT_IF(blockChain, blockChain->is<BlockObject>());
-            }
-            break;
-          }
-          default:
-            break;
-        }
+        if (offset <= note->start + note->length)
+            blockChain = script->getObject(note->index);
     }
 
     return blockChain;
@@ -1590,7 +1591,7 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
       }
       case JSOP_CALLALIASEDVAR:
       case JSOP_GETALIASEDVAR: {
-        JSAtom *atom = ScopeCoordinateName(cx, script, pc);
+        JSAtom *atom = ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc);
         JS_ASSERT(atom);
         return write(atom);
       }
@@ -1984,16 +1985,6 @@ js::DecompileArgument(JSContext *cx, int formalIndex, HandleValue v)
         return nullptr;
     return LossyTwoByteCharsToNewLatin1CharsZ(cx, linear->range()).c_str();
 }
-
-unsigned
-js_ReconstructStackDepth(JSContext *cx, JSScript *script, jsbytecode *pc)
-{
-    BytecodeParser parser(cx, script);
-    if (!parser.parse())
-        return 0;
-    return parser.stackDepthAtPC(pc);
-}
-
 
 bool
 js::CallResultEscapes(jsbytecode *pc)

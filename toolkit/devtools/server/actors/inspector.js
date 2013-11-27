@@ -177,6 +177,7 @@ var NodeActor = protocol.ActorClass({
 
     let form = {
       actor: this.actorID,
+      baseURI: this.rawNode.baseURI,
       parent: parentNode ? parentNode.actorID : undefined,
       nodeType: this.rawNode.nodeType,
       namespaceURI: this.rawNode.namespaceURI,
@@ -468,6 +469,8 @@ let NodeFront = protocol.FrontClass(NodeActor, {
   get namespaceURI() this._form.namespaceURI,
   get nodeName() this._form.nodeName,
 
+  get baseURI() this._form.baseURI,
+
   get className() {
     return this.getAttribute("class") || '';
   },
@@ -581,6 +584,17 @@ let NodeFront = protocol.FrontClass(NodeActor, {
       ret.push(child);
     }
     return ret;
+  },
+
+  /**
+   * Do we use a local target?
+   * Useful to know if a rawNode is available or not.
+   *
+   * This will, one day, be removed. External code should
+   * not need to know if the target is remote or not.
+   */
+  isLocal_toBeDeprecated: function() {
+    return !!this.conn._transport._serverConnection;
   },
 
   /**

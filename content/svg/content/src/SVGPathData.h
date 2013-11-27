@@ -20,7 +20,6 @@
 #include <string.h>
 
 class gfxContext;
-class gfxPath;
 class nsSVGPathDataParser; // IWYU pragma: keep
 
 struct gfxMatrix;
@@ -157,10 +156,14 @@ public:
   /**
    * Returns true, except on OOM, in which case returns false.
    */
-  bool GetDistancesFromOriginToEndsOfVisibleSegments(nsTArray<double> *aArray) const;
+  bool GetDistancesFromOriginToEndsOfVisibleSegments(FallibleTArray<double> *aArray) const;
 
-  already_AddRefed<gfxPath>
-  ToPath(const gfxMatrix& aMatrix) const;
+  /**
+   * This returns a path without the extra little line segments that
+   * ApproximateZeroLengthSubpathSquareCaps can insert if we have square-caps.
+   * See the comment for that function for more info on that.
+   */
+  TemporaryRef<Path> ToPathForLengthOrPositionMeasuring() const;
 
   void ConstructPath(gfxContext *aCtx) const;
   TemporaryRef<Path> BuildPath(FillRule aFillRule,
@@ -229,10 +232,10 @@ protected:
  * sync, so we can safely expose any protected base class methods required by
  * the SMIL code.
  */
-class SVGPathDataAndOwner : public SVGPathData
+class SVGPathDataAndInfo : public SVGPathData
 {
 public:
-  SVGPathDataAndOwner(nsSVGElement *aElement = nullptr)
+  SVGPathDataAndInfo(nsSVGElement *aElement = nullptr)
     : mElement(do_GetWeakReference(static_cast<nsINode*>(aElement)))
   {}
 
@@ -245,11 +248,16 @@ public:
     return static_cast<nsSVGElement*>(e.get());
   }
 
-  nsresult CopyFrom(const SVGPathDataAndOwner& rhs) {
+  nsresult CopyFrom(const SVGPathDataAndInfo& rhs) {
     mElement = rhs.mElement;
     return SVGPathData::CopyFrom(rhs);
   }
 
+  /**
+   * Returns true if this object is an "identity" value, from the perspective
+   * of SMIL. In other words, returns true until the initial value set up in
+   * SVGPathSegListSMILType::Init() has been changed with a SetElement() call.
+   */
   bool IsIdentity() const {
     if (!mElement) {
       NS_ABORT_IF_FALSE(IsEmpty(), "target element propagation failure");
@@ -260,7 +268,7 @@ public:
 
   /**
    * Exposed so that SVGPathData baseVals can be copied to
-   * SVGPathDataAndOwner objects. Note that callers should also call
+   * SVGPathDataAndInfo objects. Note that callers should also call
    * SetElement() when using this method!
    */
   using SVGPathData::CopyFrom;

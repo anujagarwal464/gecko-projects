@@ -27,11 +27,11 @@ MACPORTS_URL = {'8': 'https://distfiles.macports.org/MacPorts/MacPorts-2.1.3-10.
                 '7': 'https://distfiles.macports.org/MacPorts/MacPorts-2.1.3-10.7-Lion.pkg',
                 '6': 'https://distfiles.macports.org/MacPorts/MacPorts-2.1.3-10.6-SnowLeopard.pkg',}
 
-MACPORTS_CLANG_PACKAGE = 'clang-3.2'
+MACPORTS_CLANG_PACKAGE = 'clang-3.3'
 
 RE_CLANG_VERSION = re.compile('Apple (?:clang|LLVM) version (\d+\.\d+)')
 
-APPLE_CLANG_MINIMUM_VERSION = StrictVersion('4.0')
+APPLE_CLANG_MINIMUM_VERSION = StrictVersion('4.2')
 
 XCODE_REQUIRED = '''
 Xcode is required to build Firefox. Please complete the install of Xcode
@@ -150,10 +150,13 @@ before the path to your package manager's binaries (%s).
 This means that the package manager's binaries likely won't be
 detected properly.
 
-Please modify your shell's configuration (e.g. ~/.bash_profile) to
-have %s appear in $PATH before %s. e.g.
+Modify your shell's configuration (e.g. ~/.profile or
+~/.bash_profile) to have %s appear in $PATH before %s. e.g.
 
     export PATH=%s:$PATH
+
+Once this is done, start a new shell (likely Command+T) and run
+this bootstrap again.
 '''
 
 

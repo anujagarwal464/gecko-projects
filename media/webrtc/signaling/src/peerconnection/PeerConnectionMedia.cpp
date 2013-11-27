@@ -136,7 +136,7 @@ PeerConnectionImpl* PeerConnectionImpl::CreatePeerConnection()
 PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
     : mParent(parent),
       mLocalSourceStreamsLock("PeerConnectionMedia.mLocalSourceStreamsLock"),
-      mIceCtx(NULL),
+      mIceCtx(nullptr),
       mDNSResolver(new mozilla::NrIceResolver()),
       mMainThread(mParent->GetMainThread()),
       mSTSThread(mParent->GetSTSThread()) {}
@@ -178,12 +178,12 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
     CSFLogError(logTag, "%s: Failed to get dns resolver", __FUNCTION__);
     return rv;
   }
-  mIceCtx->SignalGatheringCompleted.connect(this,
-                                            &PeerConnectionMedia::IceGatheringCompleted);
-  mIceCtx->SignalCompleted.connect(this,
-                                   &PeerConnectionMedia::IceCompleted);
-  mIceCtx->SignalFailed.connect(this,
-                                &PeerConnectionMedia::IceFailed);
+  mIceCtx->SignalGatheringStateChange.connect(
+      this,
+      &PeerConnectionMedia::IceGatheringStateChange);
+  mIceCtx->SignalConnectionStateChange.connect(
+      this,
+      &PeerConnectionMedia::IceConnectionStateChange);
 
   // Create three streams to start with.
   // One each for audio, video and DataChannel
@@ -361,7 +361,7 @@ PeerConnectionMedia::ShutdownMediaTransport_s()
   disconnect_all();
   mTransportFlows.clear();
   mIceStreams.clear();
-  mIceCtx = NULL;
+  mIceCtx = nullptr;
 
   mMainThread->Dispatch(WrapRunnable(this, &PeerConnectionMedia::SelfDestruct_m),
                         NS_DISPATCH_NORMAL);
@@ -371,7 +371,7 @@ LocalSourceStreamInfo*
 PeerConnectionMedia::GetLocalStream(int aIndex)
 {
   if(aIndex < 0 || aIndex >= (int) mLocalSourceStreams.Length()) {
-    return NULL;
+    return nullptr;
   }
 
   MOZ_ASSERT(mLocalSourceStreams[aIndex]);
@@ -382,7 +382,7 @@ RemoteSourceStreamInfo*
 PeerConnectionMedia::GetRemoteStream(int aIndex)
 {
   if(aIndex < 0 || aIndex >= (int) mRemoteSourceStreams.Length()) {
-    return NULL;
+    return nullptr;
   }
 
   MOZ_ASSERT(mRemoteSourceStreams[aIndex]);
@@ -424,24 +424,17 @@ PeerConnectionMedia::AddRemoteStreamHint(int aIndex, bool aIsVideo)
 
 
 void
-PeerConnectionMedia::IceGatheringCompleted(NrIceCtx *aCtx)
+PeerConnectionMedia::IceGatheringStateChange(NrIceCtx* ctx,
+                                             NrIceCtx::GatheringState state)
 {
-  MOZ_ASSERT(aCtx);
-  SignalIceGatheringCompleted(aCtx);
+  SignalIceGatheringStateChange(ctx, state);
 }
 
 void
-PeerConnectionMedia::IceCompleted(NrIceCtx *aCtx)
+PeerConnectionMedia::IceConnectionStateChange(NrIceCtx* ctx,
+                                              NrIceCtx::ConnectionState state)
 {
-  MOZ_ASSERT(aCtx);
-  SignalIceCompleted(aCtx);
-}
-
-void
-PeerConnectionMedia::IceFailed(NrIceCtx *aCtx)
-{
-  MOZ_ASSERT(aCtx);
-  SignalIceFailed(aCtx);
+  SignalIceConnectionStateChange(ctx, state);
 }
 
 void
@@ -454,14 +447,14 @@ PeerConnectionMedia::IceStreamReady(NrIceMediaStream *aStream)
 
 // This method exists for the unittests.
 // It allows visibility into the pipelines and flows.
-// It returns NULL if no pipeline exists for this track number.
+// It returns nullptr if no pipeline exists for this track number.
 mozilla::RefPtr<mozilla::MediaPipeline>
 SourceStreamInfo::GetPipeline(int aTrack) {
   std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> >::iterator it =
     mPipelines.find(aTrack);
 
   if (it == mPipelines.end()) {
-    return NULL;
+    return nullptr;
   }
 
   return it->second;

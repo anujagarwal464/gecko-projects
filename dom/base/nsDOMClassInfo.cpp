@@ -70,7 +70,6 @@
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDOMJSWindow.h"
-#include "nsIDOMMediaList.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsIDOMConstructor.h"
 
@@ -350,8 +349,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(CSSRuleList, nsCSSRuleListSH,
                            ARRAY_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(MediaList, nsMediaListSH,
-                           ARRAY_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(StyleSheetList, nsStyleSheetListSH,
                            ARRAY_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(CSSStyleSheet, nsDOMGenericSH,
@@ -619,10 +616,10 @@ IdToString(JSContext *cx, jsid id)
 {
   if (JSID_IS_STRING(id))
     return JSID_TO_STRING(id);
-  jsval idval;
-  if (!::JS_IdToValue(cx, id, &idval))
+  JS::Rooted<JS::Value> idval(cx);
+  if (!::JS_IdToValue(cx, id, idval.address()))
     return nullptr;
-  return JS_ValueToString(cx, idval);
+  return JS::ToString(cx, idval);
 }
 
 static inline nsresult
@@ -1046,10 +1043,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSRuleList)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(MediaList, nsIDOMMediaList)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMMediaList)
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(StyleSheetList, nsIDOMStyleSheetList)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMStyleSheetList)
   DOM_CLASSINFO_MAP_END
@@ -1388,7 +1381,7 @@ nsDOMClassInfo::GetArrayIndexFromId(JSContext *cx, JS::Handle<jsid> id, bool *aI
   if (JSID_IS_INT(id)) {
       i = JSID_TO_INT(id);
   } else {
-      JS::RootedValue idval(cx);
+      JS::Rooted<JS::Value> idval(cx);
       double array_index;
       if (!::JS_IdToValue(cx, id, idval.address()) ||
           !JS::ToNumber(cx, idval, &array_index) ||
@@ -2038,6 +2031,8 @@ NS_IMETHODIMP
 nsWindowSH::PostCreate(nsIXPConnectWrappedNative *wrapper,
                        JSContext *cx, JSObject *obj)
 {
+  JS::Rooted<JSObject*> window(cx, obj);
+
 #ifdef DEBUG
   nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryWrappedNative(wrapper));
 
@@ -2050,7 +2045,6 @@ nsWindowSH::PostCreate(nsIXPConnectWrappedNative *wrapper,
   const NativeProperties* eventTargetProperties =
     EventTargetBinding::sNativePropertyHooks->mNativeProperties.regular;
 
-  JS::Rooted<JSObject*> window(cx, obj);
   return DefineWebIDLBindingPropertiesOnXPCObject(cx, window, windowProperties, true) &&
          DefineWebIDLBindingPropertiesOnXPCObject(cx, window, eventTargetProperties, true) ?
          NS_OK : NS_ERROR_FAILURE;
@@ -3298,7 +3292,7 @@ LocationSetterGuts(JSContext *cx, JSObject *obj, JS::MutableHandle<JS::Value> vp
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Grab the value we're being set to before we stomp on |vp|
-  JS::Rooted<JSString*> val(cx, ::JS_ValueToString(cx, vp));
+  JS::Rooted<JSString*> val(cx, JS::ToString(cx, vp));
   NS_ENSURE_TRUE(val, NS_ERROR_UNEXPECTED);
 
   // Make sure |val| stays alive below
@@ -3445,7 +3439,7 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                        JSObject **objp, bool *_retval)
 {
   JS::Rooted<JSObject*> obj(cx, obj_);
-  JS::RootedId id(cx, id_);
+  JS::Rooted<jsid> id(cx, id_);
 
   if (!JSID_IS_STRING(id)) {
     return NS_OK;
@@ -3620,17 +3614,19 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
   }
 
   if (!(flags & JSRESOLVE_ASSIGNING) && sDocument_id == id) {
+    nsCOMPtr<nsIDocument> document = win->GetDoc();
+    JS::Rooted<JS::Value> v(cx);
+    nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
+    rv = WrapNative(cx, JS::CurrentGlobalOrNull(cx), document, document,
+                    &NS_GET_IID(nsIDOMDocument), &v, getter_AddRefs(holder),
+                    false);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // nsIDocument::WrapObject will handle defining the property.
+    *objp = obj;
+
+    // NB: We need to do this for any Xray wrapper.
     if (xpc::WrapperFactory::IsXrayWrapper(obj)) {
-      nsCOMPtr<nsIDocument> document = win->GetDoc();
-      JS::Rooted<JS::Value> v(cx);
-      nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-      rv = WrapNative(cx, JS::CurrentGlobalOrNull(cx), document, document,
-                      &NS_GET_IID(nsIDOMDocument), &v, getter_AddRefs(holder),
-                      false);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      *objp = obj;
-
       *_retval = JS_WrapValue(cx, &v) &&
                  JS_DefineProperty(cx, obj, "document", v,
                                    JS_PropertyStub, JS_StrictPropertyStub,
@@ -3651,6 +3647,14 @@ NS_IMETHODIMP
 nsWindowSH::Finalize(nsIXPConnectWrappedNative *wrapper, JSFreeOp *fop,
                      JSObject *obj)
 {
+  // Since this call is virtual, the exact rooting hazard static analysis is
+  // not able to determine that it happens during finalization and should be
+  // ignored. Moreover, the analysis cannot discover and validate the
+  // potential targets of the virtual call to OnFinalize below because of the
+  // indirection through nsCOMMPtr. Thus, we annotate the analysis here so
+  // that it does not report OnFinalize as GCing with |obj| on stack.
+  JS::AutoAssertNoGC nogc;
+
   nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryWrappedNative(wrapper));
   NS_ENSURE_TRUE(sgo, NS_ERROR_UNEXPECTED);
 
@@ -3999,7 +4003,7 @@ nsHTMLDocumentSH::GetDocumentAllNodeList(JSContext *cx,
     // We already have a node list in our reserved slot, use it.
     JS::Rooted<JSObject*> obj(cx, JSVAL_TO_OBJECT(collection));
     nsIHTMLCollection* htmlCollection;
-    rv = UNWRAP_OBJECT(HTMLCollection, cx, obj, htmlCollection);
+    rv = UNWRAP_OBJECT(HTMLCollection, obj, htmlCollection);
     if (NS_SUCCEEDED(rv)) {
       NS_ADDREF(*nodeList = static_cast<nsContentList*>(htmlCollection));
     }
@@ -4194,9 +4198,10 @@ nsHTMLDocumentSH::ReleaseDocument(JSFreeOp *fop, JSObject *obj)
 bool
 nsHTMLDocumentSH::CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp)
 {
+  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
   // Handle document.all("foo") style access to document.all.
 
-  if (argc != 1) {
+  if (args.length() != 1) {
     // XXX: Should throw NS_ERROR_XPC_NOT_ENOUGH_ARGS for argc < 1,
     // and create a new NS_ERROR_XPC_TOO_MANY_ARGS for argc > 1? IE
     // accepts nothing other than one arg.
@@ -4206,7 +4211,7 @@ nsHTMLDocumentSH::CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp)
   }
 
   // Convert all types to string.
-  JS::Rooted<JSString*> str(cx, ::JS_ValueToString(cx, JS_ARGV(cx, vp)[0]));
+  JS::Rooted<JSString*> str(cx, JS::ToString(cx, args[0]));
   if (!str) {
     return false;
   }
@@ -4214,10 +4219,9 @@ nsHTMLDocumentSH::CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp)
   // If we are called via document.all(id) instead of document.all.item(i) or
   // another method, use the document.all callee object as self.
   JSObject *self;
-  JS::Value callee = JS_CALLEE(cx, vp);
-  if (callee.isObject() &&
-      JS_GetClass(&callee.toObject()) == &sHTMLDocumentAllClass) {
-    self = JSVAL_TO_OBJECT(JS_CALLEE(cx, vp));
+  if (args.calleev().isObject() &&
+      JS_GetClass(&args.calleev().toObject()) == &sHTMLDocumentAllClass) {
+    self = &args.calleev().toObject();
   } else {
     self = JS_THIS_OBJECT(cx, vp);
     if (!self)
@@ -4231,13 +4235,7 @@ nsHTMLDocumentSH::CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  JS::Rooted<JS::Value> value(cx);
-  if (!::JS_GetUCProperty(cx, self, chars, length, &value)) {
-    return false;
-  }
-
-  *vp = value;
-  return true;
+  return ::JS_GetUCProperty(cx, self, chars, length, args.rval());
 }
 
 // StringArray helper
@@ -4271,30 +4269,6 @@ nsStringArraySH::GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                  NS_ERROR_OUT_OF_MEMORY);
   *vp = rval;
   return NS_SUCCESS_I_DID_SOMETHING;
-}
-
-
-// MediaList helper
-
-nsresult
-nsMediaListSH::GetStringAt(nsISupports *aNative, int32_t aIndex,
-                           nsAString& aResult)
-{
-  if (aIndex < 0) {
-    return NS_ERROR_DOM_INDEX_SIZE_ERR;
-  }
-
-  nsCOMPtr<nsIDOMMediaList> media_list(do_QueryInterface(aNative));
-
-  nsresult rv = media_list->Item(uint32_t(aIndex), aResult);
-#ifdef DEBUG
-  if (DOMStringIsNull(aResult)) {
-    uint32_t length = 0;
-    media_list->GetLength(&length);
-    NS_ASSERTION(uint32_t(aIndex) >= length, "Item should only return null for out-of-bounds access");
-  }
-#endif
-  return rv;
 }
 
 
@@ -4456,7 +4430,8 @@ nsStorage2SH::SetProperty(nsIXPConnectWrappedNative *wrapper,
   nsDependentJSString keyStr;
   NS_ENSURE_TRUE(keyStr.init(cx, key), NS_ERROR_UNEXPECTED);
 
-  JSString *value = ::JS_ValueToString(cx, *vp);
+  JS::Rooted<JS::Value> val(cx, *vp);
+  JSString *value = JS::ToString(cx, val);
   NS_ENSURE_TRUE(value, NS_ERROR_UNEXPECTED);
 
   nsDependentJSString valueStr;

@@ -32,13 +32,12 @@ const EVENTS = {
 };
 
 const STRINGS_URI = "chrome://browser/locale/devtools/shadereditor.properties"
-const HIGHLIGHT_COLOR = [1, 0, 0, 1]; // rgba
+const HIGHLIGHT_TINT = [1, 0, 0.25, 1]; // rgba
 const TYPING_MAX_DELAY = 500; // ms
 const SHADERS_AUTOGROW_ITEMS = 4;
 const GUTTER_ERROR_PANEL_OFFSET_X = 7; // px
 const GUTTER_ERROR_PANEL_DELAY = 100; // ms
 const DEFAULT_EDITOR_CONFIG = {
-  mode: Editor.modes.text,
   gutters: ["errors"],
   lineNumbers: true,
   showAnnotationRuler: true
@@ -298,7 +297,7 @@ let ShadersListView = Heritage.extend(WidgetMethods, {
   _onProgramMouseEnter: function(e) {
     let sourceItem = this.getItemForElement(e.target, { noSiblings: true });
     if (sourceItem && !sourceItem.attachment.isBlackBoxed) {
-      sourceItem.attachment.programActor.highlight(HIGHLIGHT_COLOR);
+      sourceItem.attachment.programActor.highlight(HIGHLIGHT_TINT);
 
       if (e instanceof Event) {
         e.preventDefault();
@@ -389,6 +388,7 @@ let ShadersEditorsView = {
     // in the ether of a resolved promise's value.
     let parent = $("#" + type +"-editor");
     let editor = new Editor(DEFAULT_EDITOR_CONFIG);
+    editor.config.mode = Editor.modes[type];
     editor.appendTo(parent).then(() => deferred.resolve(editor));
 
     return deferred.promise;

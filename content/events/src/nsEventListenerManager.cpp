@@ -228,10 +228,11 @@ nsEventListenerManager::AddEventListenerInternal(
   uint32_t count = mListeners.Length();
   for (uint32_t i = 0; i < count; i++) {
     ls = &mListeners.ElementAt(i);
-    if (ls->mListener == aListener &&
-        ls->mListenerIsHandler == aHandler &&
+    // mListener == aListener is the last one, since it can be a bit slow.
+    if (ls->mListenerIsHandler == aHandler &&
         ls->mFlags == aFlags &&
-        EVENT_TYPE_EQUALS(ls, aType, aTypeAtom, aTypeString, aAllEvents)) {
+        EVENT_TYPE_EQUALS(ls, aType, aTypeAtom, aTypeString, aAllEvents) &&
+        ls->mListener == aListener) {
       return;
     }
   }
@@ -728,7 +729,8 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
         csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
                                  NS_ConvertUTF8toUTF16(asciiSpec),
                                  scriptSample,
-                                 0);
+                                 0,
+                                 EmptyString());
       }
 
       // return early if CSP wants us to block inline scripts
@@ -906,6 +908,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
     JS::Rooted<JSObject*> boundHandler(cx);
     JS::Rooted<JSObject*> scope(cx, listener->GetEventScope());
     context->BindCompiledEventHandler(mTarget, scope, handler, &boundHandler);
+    aListenerStruct = nullptr;
     if (!boundHandler) {
       listener->ForgetHandler();
     } else if (listener->EventName() == nsGkAtoms::onerror && win) {
@@ -928,12 +931,12 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
 
 nsresult
 nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
-                                           const EventListenerHolder& aListener,
                                            nsIDOMEvent* aDOMEvent,
                                            EventTarget* aCurrentTarget,
                                            nsCxPusher* aPusher)
 {
   nsresult result = NS_OK;
+  EventListenerHolder listener(aListenerStruct->mListener);  // strong ref
 
   // If this is a script handler and we haven't yet
   // compiled the event handler itself
@@ -944,6 +947,7 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
                                          jslistener->GetEventContext() !=
                                            aPusher->GetCurrentScriptContext(),
                                          nullptr);
+    aListenerStruct = nullptr;
   }
 
   if (NS_SUCCEEDED(result)) {
@@ -951,13 +955,13 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
       nsContentUtils::EnterMicroTask();
     }
     // nsIDOMEvent::currentTarget is set in nsEventDispatcher.
-    if (aListener.HasWebIDLCallback()) {
+    if (listener.HasWebIDLCallback()) {
       ErrorResult rv;
-      aListener.GetWebIDLCallback()->
+      listener.GetWebIDLCallback()->
         HandleEvent(aCurrentTarget, *(aDOMEvent->InternalDOMEvent()), rv);
       result = rv.ErrorCode();
     } else {
-      result = aListener.GetXPCOMCallback()->HandleEvent(aDOMEvent);
+      result = listener.GetXPCOMCallback()->HandleEvent(aDOMEvent);
     }
     if (mIsMainThreadELM) {
       nsContentUtils::LeaveMicroTask();
@@ -1034,9 +1038,8 @@ nsEventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
             continue;
           }
 
-          EventListenerHolder kungFuDeathGrip(ls->mListener);
-          if (NS_FAILED(HandleEventSubType(ls, ls->mListener, *aDOMEvent,
-                                           aCurrentTarget, aPusher))) {
+          if (NS_FAILED(HandleEventSubType(ls, *aDOMEvent, aCurrentTarget,
+                                           aPusher))) {
             aEvent->mFlags.mExceptionHasBeenRisen = true;
           }
         }

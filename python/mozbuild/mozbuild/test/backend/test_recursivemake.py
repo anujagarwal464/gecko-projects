@@ -301,18 +301,6 @@ class TestRecursiveMakeBackend(BackendTester):
             'FAIL_ON_WARNINGS': [
                 'FAIL_ON_WARNINGS := 1',
             ],
-            'GTEST_CMMSRCS': [
-                'GTEST_CMMSRCS += test1.mm',
-                'GTEST_CMMSRCS += test2.mm',
-            ],
-            'GTEST_CPPSRCS': [
-                'GTEST_CPPSRCS += test1.cpp',
-                'GTEST_CPPSRCS += test2.cpp',
-            ],
-            'GTEST_CSRCS': [
-                'GTEST_CSRCS += test1.c',
-                'GTEST_CSRCS += test2.c',
-            ],
             'HOST_CPPSRCS': [
                 'HOST_CPPSRCS += bar.cpp',
                 'HOST_CPPSRCS += foo.cpp',
@@ -323,9 +311,6 @@ class TestRecursiveMakeBackend(BackendTester):
             ],
             'HOST_LIBRARY_NAME': [
                 'HOST_LIBRARY_NAME := host_bar',
-            ],
-            'LIBRARY_NAME': [
-                'LIBRARY_NAME := lib_name',
             ],
             'LIBXUL_LIBRARY': [
                 'LIBXUL_LIBRARY := 1',
@@ -341,10 +326,6 @@ class TestRecursiveMakeBackend(BackendTester):
             'SDK_LIBRARY': [
                 'SDK_LIBRARY += bar.sdk',
                 'SDK_LIBRARY += foo.sdk',
-            ],
-            'SHARED_LIBRARY_LIBS': [
-                'SHARED_LIBRARY_LIBS += bar.sll',
-                'SHARED_LIBRARY_LIBS += foo.sll',
             ],
             'SSRCS': [
                 'SSRCS += baz.S',

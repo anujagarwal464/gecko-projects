@@ -12,15 +12,18 @@
 <body>
 <iframe style="width:200px;height:200px;" id='testframe'></iframe>
 <script class="testbody" type="text/javascript">
+SimpleTest.waitForExplicitFinish();
+
 SpecialPowers.pushPrefEnv(
   {'set':[["security.csp.speccompliant", true]]},
-  function() {
+  function () {
     var testframe = document.getElementById('testframe');
     testframe.src = 'file_policyuri_regression_from_multipolicy.html';
     testframe.addEventListener('load', function checkInlineScriptExecuted () {
       is(this.contentDocument.getElementById('testdiv').innerHTML,
          'Inline Script Executed',
          'Inline script should execute (it would be blocked by the policy, but the policy is report-only)');
+      SimpleTest.finish();
     });
   }
 );

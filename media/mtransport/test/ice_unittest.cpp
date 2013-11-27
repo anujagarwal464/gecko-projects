@@ -87,6 +87,9 @@ bool operator<(const NrIceCandidate& lhs,
                const NrIceCandidate& rhs) {
   if (lhs.host == rhs.host) {
     if (lhs.port == rhs.port) {
+      if (lhs.type == rhs.type) {
+        return lhs.codeword < rhs.codeword;
+      }
       return lhs.type < rhs.type;
     }
     return lhs.port < rhs.port;
@@ -98,7 +101,8 @@ bool operator==(const NrIceCandidate& lhs,
                 const NrIceCandidate& rhs) {
   return lhs.host == rhs.host &&
          lhs.port == rhs.port &&
-         lhs.type == rhs.type;
+         lhs.type == rhs.type &&
+         lhs.codeword == rhs.codeword;
 }
 
 class IceCandidatePairCompare {
@@ -139,9 +143,12 @@ class IceTestPeer : public sigslot::has_slots<> {
       expected_remote_type_(NrIceCandidate::ICE_HOST),
       trickle_mode_(TRICKLE_NONE),
       trickled_(0) {
-    ice_ctx_->SignalGatheringCompleted.connect(this,
-                                               &IceTestPeer::GatheringComplete);
-    ice_ctx_->SignalCompleted.connect(this, &IceTestPeer::IceCompleted);
+    ice_ctx_->SignalGatheringStateChange.connect(
+        this,
+        &IceTestPeer::GatheringStateChange);
+    ice_ctx_->SignalConnectionStateChange.connect(
+        this,
+        &IceTestPeer::ConnectionStateChange);
   }
 
   ~IceTestPeer() {
@@ -371,6 +378,8 @@ class IceTestPeer : public sigslot::has_slots<> {
               << cand.host
               << ":"
               << cand.port
+              << " codeword="
+              << cand.codeword
               << std::endl;
   }
 
@@ -420,7 +429,13 @@ class IceTestPeer : public sigslot::has_slots<> {
   }
 
   // Handle events
-  void GatheringComplete(NrIceCtx *ctx) {
+  void GatheringStateChange(NrIceCtx* ctx,
+                            NrIceCtx::GatheringState state) {
+    (void)ctx;
+    if (state != NrIceCtx::ICE_CTX_GATHER_COMPLETE) {
+      return;
+    }
+
     std::cerr << "Gathering complete for " <<  name_ << std::endl;
     gathering_complete_ = true;
 
@@ -592,7 +607,12 @@ class IceTestPeer : public sigslot::has_slots<> {
     DumpCandidatePairs(stream);
   }
 
-  void IceCompleted(NrIceCtx *ctx) {
+  void ConnectionStateChange(NrIceCtx* ctx,
+                             NrIceCtx::ConnectionState state) {
+    (void)ctx;
+    if (state != NrIceCtx::ICE_CTX_OPEN) {
+      return;
+    }
     std::cerr << "ICE completed " << name_ << std::endl;
     ice_complete_ = true;
   }

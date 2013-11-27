@@ -49,10 +49,12 @@
 #include "mozilla/Telemetry.h"
 #include "gfxUtils.h"
 #include "gfxColor.h"
+#include "gfxGradientCache.h"
 #include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::css;
+using namespace mozilla::gfx;
 using mozilla::image::ImageOps;
 using mozilla::CSSSizeOrRatio;
 
@@ -294,164 +296,6 @@ struct ColorStop {
   gfxRGBA mColor;
 };
 
-struct GradientCacheKey : public PLDHashEntryHdr {
-  typedef const GradientCacheKey& KeyType;
-  typedef const GradientCacheKey* KeyTypePointer;
-  enum { ALLOW_MEMMOVE = true };
-  const nsTArray<gfx::GradientStop> mStops;
-  const bool mRepeating;
-  const gfx::BackendType mBackendType;
-
-  GradientCacheKey(const nsTArray<gfx::GradientStop>& aStops, const bool aRepeating, const gfx::BackendType aBackendType)
-    : mStops(aStops), mRepeating(aRepeating), mBackendType(aBackendType)
-  { }
-
-  GradientCacheKey(const GradientCacheKey* aOther)
-    : mStops(aOther->mStops), mRepeating(aOther->mRepeating), mBackendType(aOther->mBackendType)
-  { }
-
-  union FloatUint32
-  {
-    float    f;
-    uint32_t u;
-  };
-
-  static PLDHashNumber
-  HashKey(const KeyTypePointer aKey)
-  {
-    PLDHashNumber hash = 0;
-    FloatUint32 convert;
-    hash = AddToHash(hash, aKey->mBackendType);
-    hash = AddToHash(hash, aKey->mRepeating);
-    for (uint32_t i = 0; i < aKey->mStops.Length(); i++) {
-      hash = AddToHash(hash, aKey->mStops[i].color.ToABGR());
-      // Use the float bits as hash, except for the cases of 0.0 and -0.0 which both map to 0
-      convert.f = aKey->mStops[i].offset;
-      hash = AddToHash(hash, convert.f ? convert.u : 0);
-    }
-    return hash;
-  }
-
-  bool KeyEquals(KeyTypePointer aKey) const
-  {
-    bool sameStops = true;
-    if (aKey->mStops.Length() != mStops.Length()) {
-      sameStops = false;
-    } else {
-      for (uint32_t i = 0; i < mStops.Length(); i++) {
-        if (mStops[i].color.ToABGR() != aKey->mStops[i].color.ToABGR() ||
-            mStops[i].offset != aKey->mStops[i].offset) {
-          sameStops = false;
-          break;
-        }
-      }
-    }
-
-    return sameStops &&
-           (aKey->mBackendType == mBackendType) &&
-           (aKey->mRepeating == mRepeating);
-  }
-  static KeyTypePointer KeyToPointer(KeyType aKey)
-  {
-    return &aKey;
-  }
-};
-
-/**
- * This class is what is cached. It need to be allocated in an object separated
- * to the cache entry to be able to be tracked by the nsExpirationTracker.
- * */
-struct GradientCacheData {
-  GradientCacheData(mozilla::gfx::GradientStops* aStops, const GradientCacheKey& aKey)
-    : mStops(aStops),
-      mKey(aKey)
-  {}
-
-  GradientCacheData(const GradientCacheData& aOther)
-    : mStops(aOther.mStops),
-      mKey(aOther.mKey)
-  { }
-
-  nsExpirationState *GetExpirationState() {
-    return &mExpirationState;
-  }
-
-  nsExpirationState mExpirationState;
-  const mozilla::RefPtr<mozilla::gfx::GradientStops> mStops;
-  GradientCacheKey mKey;
-};
-
-/**
- * This class implements a cache with no maximum size, that retains the
- * gfxPatterns used to draw the gradients.
- *
- * The key is the nsStyleGradient that defines the gradient, and the size of the
- * gradient.
- *
- * The value is the gfxPattern, and whether or not we perform an optimization
- * based on the actual gradient property.
- *
- * An entry stays in the cache as long as it is used often. As long as a cache
- * entry is in the cache, all the references it has are guaranteed to be valid:
- * the nsStyleRect for the key, the gfxPattern for the value.
- */
-class GradientCache MOZ_FINAL : public nsExpirationTracker<GradientCacheData,4>
-{
-  public:
-    GradientCache()
-      : nsExpirationTracker<GradientCacheData, 4>(MAX_GENERATION_MS)
-    {
-      srand(time(nullptr));
-      mTimerPeriod = rand() % MAX_GENERATION_MS + 1;
-      Telemetry::Accumulate(Telemetry::GRADIENT_RETENTION_TIME, mTimerPeriod);
-    }
-
-    virtual void NotifyExpired(GradientCacheData* aObject)
-    {
-      // This will free the gfxPattern.
-      RemoveObject(aObject);
-      mHashEntries.Remove(aObject->mKey);
-    }
-
-    GradientCacheData* Lookup(const nsTArray<gfx::GradientStop>& aStops, bool aRepeating, gfx::BackendType aBackendType)
-    {
-      GradientCacheData* gradient =
-        mHashEntries.Get(GradientCacheKey(aStops, aRepeating, aBackendType));
-
-      if (gradient) {
-        MarkUsed(gradient);
-      }
-
-      return gradient;
-    }
-
-    // Returns true if we successfully register the gradient in the cache, false
-    // otherwise.
-    bool RegisterEntry(GradientCacheData* aValue)
-    {
-      nsresult rv = AddObject(aValue);
-      if (NS_FAILED(rv)) {
-        // We are OOM, and we cannot track this object. We don't want stall
-        // entries in the hash table (since the expiration tracker is responsible
-        // for removing the cache entries), so we avoid putting that entry in the
-        // table, which is a good things considering we are short on memory
-        // anyway, we probably don't want to retain things.
-        return false;
-      }
-      mHashEntries.Put(aValue->mKey, aValue);
-      return true;
-    }
-
-  protected:
-    uint32_t mTimerPeriod;
-    static const uint32_t MAX_GENERATION_MS = 10000;
-    /**
-     * FIXME use nsTHashtable to avoid duplicating the GradientCacheKey.
-     * https://bugzilla.mozilla.org/show_bug.cgi?id=761393#c47
-     */
-    nsClassHashtable<GradientCacheKey, GradientCacheData> mHashEntries;
-};
-
 /* Local functions */
 static void DrawBorderImage(nsPresContext* aPresContext,
                             nsRenderingContext& aRenderingContext,
@@ -477,15 +321,12 @@ static nscolor MakeBevelColor(mozilla::css::Side whichSide, uint8_t style,
                               nscolor aBorderColor);
 
 static InlineBackgroundData* gInlineBGData = nullptr;
-static GradientCache* gGradientCache = nullptr;
 
 // Initialize any static variables used by nsCSSRendering.
 void nsCSSRendering::Init()
 {
   NS_ASSERTION(!gInlineBGData, "Init called twice");
   gInlineBGData = new InlineBackgroundData();
-  gGradientCache = new GradientCache();
-  nsCSSBorderRenderer::Init();
 }
 
 // Clean up any global variables used by nsCSSRendering.
@@ -493,9 +334,6 @@ void nsCSSRendering::Shutdown()
 {
   delete gInlineBGData;
   gInlineBGData = nullptr;
-  delete gGradientCache;
-  gGradientCache = nullptr;
-  nsCSSBorderRenderer::Shutdown();
 }
 
 /**
@@ -1182,7 +1020,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
                                     nsRenderingContext& aRenderingContext,
                                     nsIFrame* aForFrame,
                                     const nsRect& aFrameArea,
-                                    const nsRect& aDirtyRect)
+                                    const nsRect& aDirtyRect,
+                                    float aOpacity)
 {
   const nsStyleBorder* styleBorder = aForFrame->StyleBorder();
   nsCSSShadowArray* shadows = styleBorder->mBoxShadow;
@@ -1246,12 +1085,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
 
     nsRect shadowRect = frameRect;
     shadowRect.MoveBy(shadowItem->mXOffset, shadowItem->mYOffset);
-    nscoord pixelSpreadRadius;
-    if (nativeTheme) {
-      pixelSpreadRadius = shadowItem->mSpread;
-    } else {
+    if (!nativeTheme) {
       shadowRect.Inflate(shadowItem->mSpread, shadowItem->mSpread);
-      pixelSpreadRadius = 0;
     }
 
     // shadowRect won't include the blur, so make an extra rect here that includes the blur
@@ -1261,31 +1096,9 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
     shadowRectPlusBlur.Inflate(
       nsContextBoxBlur::GetBlurRadiusMargin(blurRadius, twipsPerPixel));
 
-    gfxRect shadowGfxRect =
-      nsLayoutUtils::RectToGfxRect(shadowRect, twipsPerPixel);
     gfxRect shadowGfxRectPlusBlur =
       nsLayoutUtils::RectToGfxRect(shadowRectPlusBlur, twipsPerPixel);
-    shadowGfxRect.Round();
     shadowGfxRectPlusBlur.RoundOut();
-
-    gfxContext* renderContext = aRenderingContext.ThebesContext();
-    nsContextBoxBlur blurringArea;
-
-    // When getting the widget shape from the native theme, we're going
-    // to draw the widget into the shadow surface to create a mask.
-    // We need to ensure that there actually *is* a shadow surface
-    // and that we're not going to draw directly into renderContext.
-    gfxContext* shadowContext =
-      blurringArea.Init(shadowRect, pixelSpreadRadius,
-                        blurRadius, twipsPerPixel, renderContext, aDirtyRect,
-                        useSkipGfxRect ? &skipGfxRect : nullptr,
-                        nativeTheme ? nsContextBoxBlur::FORCE_MASK : 0);
-    if (!shadowContext)
-      continue;
-
-    // shadowContext is owned by either blurringArea or aRenderingContext.
-    MOZ_ASSERT(shadowContext == renderContext ||
-               shadowContext == blurringArea.GetContext());
 
     // Set the shadow color; if not specified, use the foreground color
     nscolor shadowColor;
@@ -1294,15 +1107,37 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
     else
       shadowColor = aForFrame->StyleColor()->mColor;
 
-    renderContext->Save();
-    renderContext->SetColor(gfxRGBA(shadowColor));
+    gfxRGBA gfxShadowColor(shadowColor);
+    gfxShadowColor.a *= aOpacity;
 
-    // Draw the shape of the frame so it can be blurred. Recall how nsContextBoxBlur
-    // doesn't make any temporary surfaces if blur is 0 and it just returns the original
-    // surface? If we have no blur, we're painting this fill on the actual content surface
-    // (renderContext == shadowContext) which is why we set up the color and clip
-    // before doing this.
+    gfxContext* renderContext = aRenderingContext.ThebesContext();
     if (nativeTheme) {
+      nsContextBoxBlur blurringArea;
+
+      // When getting the widget shape from the native theme, we're going
+      // to draw the widget into the shadow surface to create a mask.
+      // We need to ensure that there actually *is* a shadow surface
+      // and that we're not going to draw directly into renderContext.
+      gfxContext* shadowContext =
+        blurringArea.Init(shadowRect, shadowItem->mSpread,
+                          blurRadius, twipsPerPixel, renderContext, aDirtyRect,
+                          useSkipGfxRect ? &skipGfxRect : nullptr,
+                          nsContextBoxBlur::FORCE_MASK);
+      if (!shadowContext)
+        continue;
+
+      // shadowContext is owned by either blurringArea or aRenderingContext.
+      MOZ_ASSERT(shadowContext == blurringArea.GetContext());
+
+      renderContext->Save();
+      renderContext->SetColor(gfxShadowColor);
+
+      // Draw the shape of the frame so it can be blurred. Recall how nsContextBoxBlur
+      // doesn't make any temporary surfaces if blur is 0 and it just returns the original
+      // surface? If we have no blur, we're painting this fill on the actual content surface
+      // (renderContext == shadowContext) which is why we set up the color and clip
+      // before doing this.
+
       // We don't clip the border-box from the shadow, nor any other box.
       // We assume that the native theme is going to paint over the shadow.
 
@@ -1317,7 +1152,11 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
       nativeRect.IntersectRect(frameRect, aDirtyRect);
       aPresContext->GetTheme()->DrawWidgetBackground(wrapperCtx, aForFrame,
           styleDisplay->mAppearance, aFrameArea, nativeRect);
+
+      blurringArea.DoPaint();
+      renderContext->Restore();
     } else {
+      renderContext->Save();
       // Clip out the area of the actual frame so the shadow is not shown within
       // the frame
       renderContext->NewPath();
@@ -1331,9 +1170,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
       renderContext->SetFillRule(gfxContext::FILL_RULE_EVEN_ODD);
       renderContext->Clip();
 
-      shadowContext->NewPath();
+      gfxCornerSizes clipRectRadii;
       if (hasBorderRadius) {
-        gfxCornerSizes clipRectRadii;
         gfxFloat spreadDistance = shadowItem->mSpread / twipsPerPixel;
 
         gfxFloat borderSizes[4];
@@ -1345,15 +1183,19 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
 
         nsCSSBorderRenderer::ComputeOuterRadii(borderRadii, borderSizes,
             &clipRectRadii);
-        shadowContext->RoundedRectangle(shadowGfxRect, clipRectRadii);
-      } else {
-        shadowContext->Rectangle(shadowGfxRect);
+
       }
-      shadowContext->Fill();
+      nsContextBoxBlur::BlurRectangle(renderContext,
+                                      shadowRect,
+                                      twipsPerPixel,
+                                      hasBorderRadius ? &clipRectRadii : nullptr,
+                                      blurRadius,
+                                      gfxShadowColor,
+                                      aDirtyRect,
+                                      skipGfxRect);
+      renderContext->Restore();
     }
 
-    blurringArea.DoPaint();
-    renderContext->Restore();
   }
 }
 
@@ -2160,15 +2002,6 @@ nsCSSRendering::PaintGradient(nsPresContext* aPresContext,
 
   bool cellContainsFill = aOneCellArea.Contains(aFillArea);
 
-  gfx::BackendType backendType = gfx::BACKEND_NONE;
-  if (ctx->IsCairo()) {
-    backendType = gfx::BACKEND_CAIRO;
-  } else {
-    gfx::DrawTarget* dt = ctx->GetDrawTarget();
-    NS_ASSERTION(dt, "If we are not using Cairo, we should have a draw target.");
-    backendType = dt->GetType();
-  }
-
   // Compute "gradient line" start and end relative to oneCellArea
   gfxPoint lineStart, lineEnd;
   double radiusX = 0, radiusY = 0; // for radial gradients only
@@ -2443,18 +2276,12 @@ nsCSSRendering::PaintGradient(nsPresContext* aPresContext,
     rawStops.SetLength(stops.Length());
     for(uint32_t i = 0; i < stops.Length(); i++) {
       rawStops[i].color = gfx::Color(stops[i].mColor.r, stops[i].mColor.g, stops[i].mColor.b, stops[i].mColor.a);
-      rawStops[i].offset =  stopScale * (stops[i].mPosition - stopOrigin);
+      rawStops[i].offset = stopScale * (stops[i].mPosition - stopOrigin);
     }
-    GradientCacheData* cached = gGradientCache->Lookup(rawStops, isRepeat, backendType);
-    mozilla::RefPtr<mozilla::gfx::GradientStops> gs = cached ? cached->mStops : nullptr;
-    if (!gs) {
-      // CreateGradientStops is expensive (possibly lazily)
-      gs = ctx->GetDrawTarget()->CreateGradientStops(rawStops.Elements(), stops.Length(), isRepeat ? gfx::EXTEND_REPEAT : gfx::EXTEND_CLAMP);
-      cached = new GradientCacheData(gs, GradientCacheKey(rawStops, isRepeat, backendType));
-      if (!gGradientCache->RegisterEntry(cached)) {
-        delete cached;
-      }
-    }
+    mozilla::RefPtr<mozilla::gfx::GradientStops> gs =
+      gfxGradientCache::GetOrCreateGradientStops(ctx->GetDrawTarget(),
+                                                 rawStops,
+                                                 isRepeat ? gfx::EXTEND_REPEAT : gfx::EXTEND_CLAMP);
     gradientPattern->SetColorStops(gs);
   } else {
     for (uint32_t i = 0; i < stops.Length(); i++) {
@@ -2738,10 +2565,18 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
         nsBackgroundLayerState state = PrepareBackgroundLayer(aPresContext, aForFrame,
             aFlags, aBorderArea, clipState.mBGClipArea, *bg, layer);
         if (!state.mFillArea.IsEmpty()) {
+          if (state.mCompositingOp != gfxContext::OPERATOR_OVER) {
+            NS_ASSERTION(ctx->CurrentOperator() == gfxContext::OPERATOR_OVER,
+                         "It is assumed the initial operator is OPERATOR_OVER, when it is restored later");
+            ctx->SetOperator(state.mCompositingOp);
+          }
           state.mImageRenderer.DrawBackground(aPresContext, aRenderingContext,
                                               state.mDestArea, state.mFillArea,
                                               state.mAnchor + aBorderArea.TopLeft(),
                                               clipState.mDirtyRect);
+          if (state.mCompositingOp != gfxContext::OPERATOR_OVER) {
+            ctx->SetOperator(gfxContext::OPERATOR_OVER);
+          }
         }
       }
     }
@@ -3033,6 +2868,7 @@ nsCSSRendering::PrepareBackgroundLayer(nsPresContext* aPresContext,
    *   background-origin
    *   background-size
    *   background-break (-moz-background-inline-policy)
+   *   background-blend-mode
    *
    * (background-color applies to the entire element and not to individual
    * layers, so it is irrelevant to this method.)
@@ -3155,6 +2991,9 @@ nsCSSRendering::PrepareBackgroundLayer(nsPresContext* aPresContext,
     state.mFillArea.height = bgClipRect.height;
   }
   state.mFillArea.IntersectRect(state.mFillArea, bgClipRect);
+
+  state.mCompositingOp = GetGFXBlendMode(aLayer.mBlendMode);
+
   return state;
 }
 
@@ -4841,17 +4680,29 @@ nsImageRenderer::GetContainer(LayerManager* aManager)
 #define MAX_BLUR_RADIUS 300
 #define MAX_SPREAD_RADIUS 50
 
-static inline gfxIntSize
-ComputeBlurRadius(nscoord aBlurRadius, int32_t aAppUnitsPerDevPixel, gfxFloat aScaleX = 1.0, gfxFloat aScaleY = 1.0)
+static inline gfxPoint ComputeBlurStdDev(nscoord aBlurRadius,
+                                         int32_t aAppUnitsPerDevPixel,
+                                         gfxFloat aScaleX,
+                                         gfxFloat aScaleY)
 {
   // http://dev.w3.org/csswg/css3-background/#box-shadow says that the
   // standard deviation of the blur should be half the given blur value.
   gfxFloat blurStdDev = gfxFloat(aBlurRadius) / gfxFloat(aAppUnitsPerDevPixel);
 
-  gfxPoint scaledBlurStdDev = gfxPoint(std::min((blurStdDev * aScaleX),
-                                              gfxFloat(MAX_BLUR_RADIUS)) / 2.0,
-                                       std::min((blurStdDev * aScaleY),
-                                              gfxFloat(MAX_BLUR_RADIUS)) / 2.0);
+  return gfxPoint(std::min((blurStdDev * aScaleX),
+                           gfxFloat(MAX_BLUR_RADIUS)) / 2.0,
+                  std::min((blurStdDev * aScaleY),
+                           gfxFloat(MAX_BLUR_RADIUS)) / 2.0);
+}
+
+static inline gfxIntSize
+ComputeBlurRadius(nscoord aBlurRadius,
+                  int32_t aAppUnitsPerDevPixel,
+                  gfxFloat aScaleX = 1.0,
+                  gfxFloat aScaleY = 1.0)
+{
+  gfxPoint scaledBlurStdDev = ComputeBlurStdDev(aBlurRadius, aAppUnitsPerDevPixel,
+                                                aScaleX, aScaleY);
   return
     gfxAlphaBoxBlur::CalculateBlurRadius(scaledBlurStdDev);
 }
@@ -4967,4 +4818,71 @@ nsContextBoxBlur::GetBlurRadiusMargin(nscoord aBlurRadius,
   result.bottom = blurRadius.height * aAppUnitsPerDevPixel;
   result.left   = blurRadius.width  * aAppUnitsPerDevPixel;
   return result;
+}
+
+/* static */ void
+nsContextBoxBlur::BlurRectangle(gfxContext* aDestinationCtx,
+                                const nsRect& aRect,
+                                int32_t aAppUnitsPerDevPixel,
+                                gfxCornerSizes* aCornerRadii,
+                                nscoord aBlurRadius,
+                                const gfxRGBA& aShadowColor,
+                                const nsRect& aDirtyRect,
+                                const gfxRect& aSkipRect)
+{
+  if (aRect.IsEmpty()) {
+    return;
+  }
+
+  gfxRect shadowGfxRect =
+    nsLayoutUtils::RectToGfxRect(aRect, aAppUnitsPerDevPixel);
+
+  if (aBlurRadius <= 0) {
+    aDestinationCtx->SetColor(aShadowColor);
+    aDestinationCtx->NewPath();
+    if (aCornerRadii) {
+      aDestinationCtx->RoundedRectangle(shadowGfxRect, *aCornerRadii);
+    } else {
+      aDestinationCtx->Rectangle(shadowGfxRect);
+    }
+
+    aDestinationCtx->Fill();
+    return;
+  }
+
+  gfxFloat scaleX = 1;
+  gfxFloat scaleY = 1;
+
+  // Do blurs in device space when possible.
+  // Chrome/Skia always does the blurs in device space
+  // and will sometimes get incorrect results (e.g. rotated blurs)
+  gfxMatrix transform = aDestinationCtx->CurrentMatrix();
+  // XXX: we could probably handle negative scales but for now it's easier just to fallback
+  if (!transform.HasNonAxisAlignedTransform() && transform.xx > 0.0 && transform.yy > 0.0) {
+    scaleX = transform.xx;
+    scaleY = transform.yy;
+    aDestinationCtx->IdentityMatrix();
+  }
+
+  gfxPoint blurStdDev = ComputeBlurStdDev(aBlurRadius, aAppUnitsPerDevPixel, scaleX, scaleY);
+
+  gfxRect dirtyRect =
+    nsLayoutUtils::RectToGfxRect(aDirtyRect, aAppUnitsPerDevPixel);
+  dirtyRect.RoundOut();
+
+  shadowGfxRect = transform.TransformBounds(shadowGfxRect);
+  dirtyRect = transform.TransformBounds(dirtyRect);
+  gfxRect skipRect = transform.TransformBounds(aSkipRect);
+
+  if (aCornerRadii) {
+    aCornerRadii->Scale(scaleX, scaleY);
+  }
+
+  gfxAlphaBoxBlur::BlurRectangle(aDestinationCtx,
+                                 shadowGfxRect,
+                                 aCornerRadii,
+                                 blurStdDev,
+                                 aShadowColor,
+                                 dirtyRect,
+                                 skipRect);
 }

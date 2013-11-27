@@ -102,6 +102,7 @@ public class Tabs implements GeckoEventListener {
         registerEventListener("DOMTitleChanged");
         registerEventListener("Link:Favicon");
         registerEventListener("Link:Feed");
+        registerEventListener("Link:OpenSearch");
         registerEventListener("DesktopMode:Changed");
         registerEventListener("Tab:ViewportMetadata");
     }
@@ -306,8 +307,9 @@ public class Tabs implements GeckoEventListener {
         int tabId = tab.getId();
         removeTab(tabId);
 
-        if (nextTab == null)
-            nextTab = loadUrl("about:home", LOADURL_NEW_TAB);
+        if (nextTab == null) {
+            nextTab = loadUrl(AboutPages.HOME, LOADURL_NEW_TAB);
+        }
 
         selectTab(nextTab.getId());
 
@@ -380,6 +382,7 @@ public class Tabs implements GeckoEventListener {
 
     @Override
     public void handleMessage(String event, JSONObject message) {
+        Log.d(LOGTAG, "handleMessage: " + event);
         try {
             if (event.equals("Session:RestoreEnd")) {
                 notifyListeners(null, TabEvents.RESTORED);
@@ -467,8 +470,11 @@ public class Tabs implements GeckoEventListener {
                 tab.updateFaviconURL(message.getString("href"), message.getInt("size"));
                 notifyListeners(tab, TabEvents.LINK_FAVICON);
             } else if (event.equals("Link:Feed")) {
-                tab.setFeedsEnabled(true);
+                tab.setHasFeeds(true);
                 notifyListeners(tab, TabEvents.LINK_FEED);
+            } else if (event.equals("Link:OpenSearch")) {
+                boolean visible = message.getBoolean("visible");
+                tab.setHasOpenSearch(visible);
             } else if (event.equals("DesktopMode:Changed")) {
                 tab.setDesktopMode(message.getBoolean("desktopMode"));
                 notifyListeners(tab, TabEvents.DESKTOP_MODE_CHANGE);
@@ -557,6 +563,11 @@ public class Tabs implements GeckoEventListener {
 
     // Throws if not initialized.
     public void notifyListeners(final Tab tab, final TabEvents msg, final Object data) {
+        if (tab == null &&
+            msg != TabEvents.RESTORED) {
+            throw new IllegalArgumentException("onTabChanged:" + msg + " must specify a tab.");
+        }
+
         ThreadUtils.postToUiThread(new Runnable() {
             @Override
             public void run() {
@@ -630,7 +641,7 @@ public class Tabs implements GeckoEventListener {
     public int getTabIdForUrl(String url, boolean isPrivate) {
         for (Tab tab : mOrder) {
             String tabUrl = tab.getURL();
-            if (ReaderModeUtils.isAboutReader(tabUrl)) {
+            if (AboutPages.isAboutReader(tabUrl)) {
                 tabUrl = ReaderModeUtils.getUrlFromAboutReader(tabUrl);
             }
             if (TextUtils.equals(tabUrl, url) && isPrivate == tab.isPrivate()) {
@@ -655,8 +666,8 @@ public class Tabs implements GeckoEventListener {
      *
      * @param url URL of page to load, or search term used if searchEngine is given
      */
-    public void loadUrl(String url) {
-        loadUrl(url, LOADURL_NONE);
+    public Tab loadUrl(String url) {
+        return loadUrl(url, LOADURL_NONE);
     }
 
     /**
@@ -726,11 +737,32 @@ public class Tabs implements GeckoEventListener {
 
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Load", args.toString()));
 
-        if ((added != null) && !delayLoad && !background) {
+        if (added == null) {
+            return null;
+        }
+
+        if (!delayLoad && !background) {
             selectTab(added.getId());
         }
 
+        // TODO: surely we could just fetch *any* cached icon?
+        if (AboutPages.isDefaultIconPage(url)) {
+            Log.d(LOGTAG, "Setting about: tab favicon inline.");
+            added.updateFavicon(getAboutPageFavicon(url));
+        }
+
         return added;
+    }
+
+    /**
+     * These favicons are only used for the URL bar, so
+     * we fetch with that size.
+     *
+     * This method completes on the calling thread.
+     */
+    private Bitmap getAboutPageFavicon(final String url) {
+        int faviconSize = Math.round(mAppContext.getResources().getDimension(R.dimen.browser_toolbar_favicon_size));
+        return Favicons.getCachedFaviconForSize(url, faviconSize);
     }
 
     /**

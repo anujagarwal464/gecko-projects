@@ -10,6 +10,7 @@
 
 #include "xpcprivate.h"
 #include "xpcpublic.h"
+#include "XPCWrapper.h"
 #include "XPCJSMemoryReporter.h"
 #include "WrapperFactory.h"
 #include "dom_quickstubs.h"
@@ -36,9 +37,11 @@
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/WindowBinding.h"
 #include "mozilla/Attributes.h"
 #include "AccessCheck.h"
 #include "nsGlobalWindow.h"
+#include "nsAboutProtocolUtils.h"
 
 #include "GeckoProfiler.h"
 #include "nsJSPrincipals.h"
@@ -72,6 +75,7 @@ const char* const XPCJSRuntime::mStrings[] = {
     "__proto__",            // IDX_PROTO
     "__iterator__",         // IDX_ITERATOR
     "__exposedProps__",     // IDX_EXPOSEDPROPS
+    "eval",                 // IDX_EVAL
 };
 
 /***************************************************************************/
@@ -97,12 +101,6 @@ NativeInterfaceSweeper(PLDHashTable *table, PLDHashEntryHdr *hdr,
 
     if (arg == UNMARK_ONLY)
         return PL_DHASH_NEXT;
-
-#ifdef XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
-    fputs("- Destroying XPCNativeInterface for ", stdout);
-    JS_PutString(JSVAL_TO_STRING(iface->GetName()), stdout);
-    putc('\n', stdout);
-#endif
 
     XPCNativeInterface::DestroyInstance(iface);
     return PL_DHASH_REMOVE;
@@ -136,17 +134,6 @@ NativeSetSweeper(PLDHashTable *table, PLDHashEntryHdr *hdr,
     if (arg == UNMARK_ONLY)
         return PL_DHASH_NEXT;
 
-#ifdef XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
-    printf("- Destroying XPCNativeSet for:\n");
-    uint16_t count = set->GetInterfaceCount();
-    for (uint16_t k = 0; k < count; k++) {
-        XPCNativeInterface* iface = set->GetInterfaceAt(k);
-        fputs("    ", stdout);
-        JS_PutString(JSVAL_TO_STRING(iface->GetName()), stdout);
-        putc('\n', stdout);
-    }
-#endif
-
     XPCNativeSet::DestroyInstance(set);
     return PL_DHASH_REMOVE;
 }
@@ -158,23 +145,12 @@ JSClassSweeper(PLDHashTable *table, PLDHashEntryHdr *hdr,
     XPCNativeScriptableShared* shared =
         ((XPCNativeScriptableSharedMap::Entry*) hdr)->key;
     if (shared->IsMarked()) {
-#ifdef off_XPC_REPORT_JSCLASS_FLUSHING
-        printf("+ Marked XPCNativeScriptableShared for: %s @ %x\n",
-               shared->GetJSClass()->name,
-               shared->GetJSClass());
-#endif
         shared->Unmark();
         return PL_DHASH_NEXT;
     }
 
     if (arg == UNMARK_ONLY)
         return PL_DHASH_NEXT;
-
-#ifdef XPC_REPORT_JSCLASS_FLUSHING
-    printf("- Destroying XPCNativeScriptableShared for: %s @ %x\n",
-           shared->GetJSClass()->name,
-           shared->GetJSClass());
-#endif
 
     delete shared;
     return PL_DHASH_REMOVE;
@@ -405,9 +381,122 @@ EnsureCompartmentPrivate(JSCompartment *c)
     CompartmentPrivate *priv = GetCompartmentPrivate(c);
     if (priv)
         return priv;
-    priv = new CompartmentPrivate();
+    priv = new CompartmentPrivate(c);
     JS_SetCompartmentPrivate(c, priv);
     return priv;
+}
+
+XPCWrappedNativeScope*
+MaybeGetObjectScope(JSObject *obj)
+{
+    MOZ_ASSERT(obj);
+    JSCompartment *compartment = js::GetObjectCompartment(obj);
+
+    MOZ_ASSERT(compartment);
+    CompartmentPrivate *priv = GetCompartmentPrivate(compartment);
+    if (!priv)
+        return nullptr;
+
+    return priv->scope;
+}
+
+static bool
+PrincipalImmuneToScriptPolicy(nsIPrincipal* aPrincipal)
+{
+    // System principal gets a free pass.
+    if (XPCWrapper::GetSecurityManager()->IsSystemPrincipal(aPrincipal))
+        return true;
+
+    // nsExpandedPrincipal gets a free pass.
+    nsCOMPtr<nsIExpandedPrincipal> ep = do_QueryInterface(aPrincipal);
+    if (ep)
+        return true;
+
+    // Check whether our URI is an "about:" URI that allows scripts.  If it is,
+    // we need to allow JS to run.
+    nsCOMPtr<nsIURI> principalURI;
+    aPrincipal->GetURI(getter_AddRefs(principalURI));
+    MOZ_ASSERT(principalURI);
+    bool isAbout;
+    nsresult rv = principalURI->SchemeIs("about", &isAbout);
+    if (NS_SUCCEEDED(rv) && isAbout) {
+        nsCOMPtr<nsIAboutModule> module;
+        rv = NS_GetAboutModule(principalURI, getter_AddRefs(module));
+        if (NS_SUCCEEDED(rv)) {
+            uint32_t flags;
+            rv = module->GetURIFlags(principalURI, &flags);
+            if (NS_SUCCEEDED(rv) &&
+                (flags & nsIAboutModule::ALLOW_SCRIPT)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+Scriptability::Scriptability(JSCompartment *c) : mScriptBlocks(0)
+                                               , mDocShellAllowsScript(true)
+                                               , mScriptBlockedByPolicy(false)
+{
+    nsIPrincipal *prin = nsJSPrincipals::get(JS_GetCompartmentPrincipals(c));
+    mImmuneToScriptPolicy = PrincipalImmuneToScriptPolicy(prin);
+
+    // If we're not immune, we should have a real principal with a codebase URI.
+    // Check the URI against the new-style domain policy.
+    if (!mImmuneToScriptPolicy) {
+        nsIScriptSecurityManager* ssm = XPCWrapper::GetSecurityManager();
+        nsCOMPtr<nsIURI> codebase;
+        nsresult rv = prin->GetURI(getter_AddRefs(codebase));
+        bool policyAllows;
+        if (NS_SUCCEEDED(rv) && codebase &&
+            NS_SUCCEEDED(ssm->PolicyAllowsScript(codebase, &policyAllows)))
+        {
+            mScriptBlockedByPolicy = !policyAllows;
+        } else {
+            // Something went wrong - be safe and block script.
+            mScriptBlockedByPolicy = true;
+        }
+    }
+}
+
+bool
+Scriptability::Allowed()
+{
+    return mDocShellAllowsScript && !mScriptBlockedByPolicy &&
+           mScriptBlocks == 0;
+}
+
+bool
+Scriptability::IsImmuneToScriptPolicy()
+{
+    return mImmuneToScriptPolicy;
+}
+
+void
+Scriptability::Block()
+{
+    ++mScriptBlocks;
+}
+
+void
+Scriptability::Unblock()
+{
+    MOZ_ASSERT(mScriptBlocks > 0);
+    --mScriptBlocks;
+}
+
+void
+Scriptability::SetDocShellAllowsScript(bool aAllowed)
+{
+    mDocShellAllowsScript = aAllowed;
+}
+
+/* static */
+Scriptability&
+Scriptability::Get(JSObject *aScope)
+{
+    return EnsureCompartmentPrivate(aScope)->scriptability;
 }
 
 bool
@@ -493,6 +582,28 @@ GetJunkScopeGlobal()
     return GetNativeForGlobal(junkScope);
 }
 
+nsGlobalWindow*
+WindowGlobalOrNull(JSObject *aObj)
+{
+    MOZ_ASSERT(aObj);
+    JSObject *glob = js::GetGlobalForObjectCrossCompartment(aObj);
+    MOZ_ASSERT(glob);
+
+    // This will always return null until we have Window on WebIDL bindings,
+    // at which point it will do the right thing.
+    if (!IS_WN_CLASS(js::GetObjectClass(glob))) {
+        nsGlobalWindow* win = nullptr;
+        UNWRAP_OBJECT(Window, glob, win);
+        return win;
+    }
+
+    nsISupports* supports = XPCWrappedNative::Get(glob)->GetIdentityObject();
+    nsCOMPtr<nsPIDOMWindow> piWin = do_QueryInterface(supports);
+    if (!piWin)
+        return nullptr;
+    return static_cast<nsGlobalWindow*>(piWin.get());
+}
+
 }
 
 static void
@@ -518,15 +629,11 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc)
             roots->TraceJSAll(trc);
     }
 
-    {
-        XPCAutoLock lock(mMapLock);
-
-        // XPCJSObjectHolders don't participate in cycle collection, so always
-        // trace them here.
-        XPCRootSetElem *e;
-        for (e = mObjectHolderRoots; e; e = e->GetNextRoot())
-            static_cast<XPCJSObjectHolder*>(e)->TraceJS(trc);
-    }
+    // XPCJSObjectHolders don't participate in cycle collection, so always
+    // trace them here.
+    XPCRootSetElem *e;
+    for (e = mObjectHolderRoots; e; e = e->GetNextRoot())
+        static_cast<XPCJSObjectHolder*>(e)->TraceJS(trc);
 
     dom::TraceBlackJS(trc, JS_GetGCParameter(Runtime(), JSGC_NUMBER),
                       nsXPConnect::XPConnect()->IsShuttingDown());
@@ -534,8 +641,6 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc)
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer *trc)
 {
-    XPCAutoLock lock(mMapLock);
-
     XPCWrappedNativeScope::TraceWrappedNativesInAllScopes(trc, this);
 
     for (XPCRootSetElem *e = mVariantRoots; e ; e = e->GetNextRoot())
@@ -595,8 +700,6 @@ CanSkipWrappedJS(nsXPCWrappedJS *wrappedJS)
 void
 XPCJSRuntime::TraverseAdditionalNativeRoots(nsCycleCollectionNoteRootCallback &cb)
 {
-    XPCAutoLock lock(mMapLock);
-
     XPCWrappedNativeScope::SuspectAllWrappers(this, cb);
 
     for (XPCRootSetElem *e = mVariantRoots; e ; e = e->GetNextRoot()) {
@@ -624,7 +727,6 @@ XPCJSRuntime::TraverseAdditionalNativeRoots(nsCycleCollectionNoteRootCallback &c
 void
 XPCJSRuntime::UnmarkSkippableJSHolders()
 {
-    XPCAutoLock lock(mMapLock);
     CycleCollectedJSRuntime::UnmarkSkippableJSHolders();
 }
 
@@ -638,12 +740,20 @@ XPCJSRuntime::PrepareForForgetSkippable()
 }
 
 void
-XPCJSRuntime::PrepareForCollection()
+XPCJSRuntime::BeginCycleCollectionCallback()
 {
+    nsJSContext::BeginCycleCollectionCallback();
+
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
     if (obs) {
         obs->NotifyObservers(nullptr, "cycle-collector-begin", nullptr);
     }
+}
+
+void
+XPCJSRuntime::EndCycleCollectionCallback(CycleCollectorResults &aResults)
+{
+    nsJSContext::EndCycleCollectionCallback(aResults);
 }
 
 void
@@ -720,12 +830,8 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, bool isCo
         {
             MOZ_ASSERT(!self->mDoingFinalization, "bad state");
 
-            // mThreadRunningGC indicates that GC is running
-            { // scoped lock
-                XPCAutoLock lock(self->GetMapLock());
-                MOZ_ASSERT(!self->mThreadRunningGC, "bad state");
-                self->mThreadRunningGC = PR_GetCurrentThread();
-            }
+            MOZ_ASSERT(!self->mGCIsRunning, "bad state");
+            self->mGCIsRunning = true;
 
             nsTArray<nsXPCWrappedJS*>* dyingWrappedJSArray =
                 &self->mWrappedJSToReleaseArray;
@@ -740,8 +846,6 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, bool isCo
 
             // Find dying scopes.
             XPCWrappedNativeScope::StartFinalizationPhaseOfGC(fop, self);
-
-            XPCStringConvert::ClearCache();
 
             self->mDoingFinalization = true;
             break;
@@ -758,31 +862,15 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, bool isCo
             // Sweep scopes needing cleanup
             XPCWrappedNativeScope::FinishedFinalizationPhaseOfGC();
 
-            // mThreadRunningGC indicates that GC is running.
-            // Clear it and notify waiters.
-            { // scoped lock
-                XPCAutoLock lock(self->GetMapLock());
-                MOZ_ASSERT(self->mThreadRunningGC == PR_GetCurrentThread(), "bad state");
-                self->mThreadRunningGC = nullptr;
-                xpc_NotifyAll(self->GetMapLock());
-            }
+            MOZ_ASSERT(self->mGCIsRunning, "bad state");
+            self->mGCIsRunning = false;
 
             break;
         }
         case JSFINALIZE_COLLECTION_END:
         {
-            // mThreadRunningGC indicates that GC is running
-            { // scoped lock
-                XPCAutoLock lock(self->GetMapLock());
-                MOZ_ASSERT(!self->mThreadRunningGC, "bad state");
-                self->mThreadRunningGC = PR_GetCurrentThread();
-            }
-
-#ifdef XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
-            printf("--------------------------------------------------------------\n");
-            int setsBefore = (int) self->mNativeSetMap->Count();
-            int ifacesBefore = (int) self->mIID2NativeInterfaceMap->Count();
-#endif
+            MOZ_ASSERT(!self->mGCIsRunning, "bad state");
+            self->mGCIsRunning = true;
 
             // We use this occasion to mark and sweep NativeInterfaces,
             // NativeSets, and the WrappedNativeJSClasses...
@@ -866,18 +954,6 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, bool isCo
             XPCWrappedNativeScope::ASSERT_NoInterfaceSetsAreMarked();
 #endif
 
-#ifdef XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
-            int setsAfter = (int) self->mNativeSetMap->Count();
-            int ifacesAfter = (int) self->mIID2NativeInterfaceMap->Count();
-
-            printf("\n");
-            printf("XPCNativeSets:        before: %d  collected: %d  remaining: %d\n",
-                   setsBefore, setsBefore - setsAfter, setsAfter);
-            printf("XPCNativeInterfaces:  before: %d  collected: %d  remaining: %d\n",
-                   ifacesBefore, ifacesBefore - ifacesAfter, ifacesAfter);
-            printf("--------------------------------------------------------------\n");
-#endif
-
             // Now we are going to recycle any unused WrappedNativeTearoffs.
             // We do this by iterating all the live callcontexts
             // and marking the tearoffs in use. And then we
@@ -931,14 +1007,8 @@ XPCJSRuntime::FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, bool isCo
             self->mDyingWrappedNativeProtoMap->
                 Enumerate(DyingProtoKiller, nullptr);
 
-            // mThreadRunningGC indicates that GC is running.
-            // Clear it and notify waiters.
-            { // scoped lock
-                XPCAutoLock lock(self->GetMapLock());
-                MOZ_ASSERT(self->mThreadRunningGC == PR_GetCurrentThread(), "bad state");
-                self->mThreadRunningGC = nullptr;
-                xpc_NotifyAll(self->GetMapLock());
-            }
+            MOZ_ASSERT(self->mGCIsRunning, "bad state");
+            self->mGCIsRunning = false;
 
             break;
         }
@@ -1421,18 +1491,6 @@ XPCJSRuntime::DeleteString(nsAString *string)
 
 /***************************************************************************/
 
-#ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
-static PLDHashOperator
-DEBUG_WrapperChecker(PLDHashTable *table, PLDHashEntryHdr *hdr,
-                     uint32_t number, void *arg)
-{
-    XPCWrappedNative* wrapper = (XPCWrappedNative*)((PLDHashEntryStub*)hdr)->key;
-    MOZ_ASSERT(!wrapper->IsValid(), "found a 'valid' wrapper!");
-    ++ *((int*)arg);
-    return PL_DHASH_NEXT;
-}
-#endif
-
 static PLDHashOperator
 DetachedWrappedNativeProtoShutdownMarker(PLDHashTable *table, PLDHashEntryHdr *hdr,
                                          uint32_t number, void *arg)
@@ -1475,18 +1533,6 @@ XPCJSRuntime::~XPCJSRuntime()
     if (mCallContext)
         mCallContext->SystemIsBeingShutDown();
 
-#ifdef XPC_DUMP_AT_SHUTDOWN
-    {
-    // count the total JSContexts in use
-    JSContext* iter = nullptr;
-    int count = 0;
-    while (JS_ContextIterator(Runtime(), &iter))
-        count ++;
-    if (count)
-        printf("deleting XPCJSRuntime with %d live JSContexts\n", count);
-    }
-#endif
-
     auto rtPrivate = static_cast<PerThreadAtomCache*>(JS_GetRuntimePrivate(Runtime()));
     delete rtPrivate;
     JS_SetRuntimePrivate(Runtime(), nullptr);
@@ -1499,100 +1545,33 @@ XPCJSRuntime::~XPCJSRuntime()
 
     // clean up and destroy maps...
     if (mWrappedJSMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mWrappedJSMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live wrapped JSObject\n", (int)count);
-#endif
         mWrappedJSMap->ShutdownMarker();
         delete mWrappedJSMap;
     }
 
-    if (mWrappedJSClassMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mWrappedJSClassMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live nsXPCWrappedJSClass\n", (int)count);
-#endif
+    if (mWrappedJSClassMap)
         delete mWrappedJSClassMap;
-    }
 
-    if (mIID2NativeInterfaceMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mIID2NativeInterfaceMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live XPCNativeInterfaces\n", (int)count);
-#endif
+    if (mIID2NativeInterfaceMap)
         delete mIID2NativeInterfaceMap;
-    }
 
-    if (mClassInfo2NativeSetMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mClassInfo2NativeSetMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live XPCNativeSets\n", (int)count);
-#endif
+    if (mClassInfo2NativeSetMap)
         delete mClassInfo2NativeSetMap;
-    }
 
-    if (mNativeSetMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mNativeSetMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live XPCNativeSets\n", (int)count);
-#endif
+    if (mNativeSetMap)
         delete mNativeSetMap;
-    }
 
-    if (mMapLock)
-        XPCAutoLock::DestroyLock(mMapLock);
-
-    if (mThisTranslatorMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mThisTranslatorMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live ThisTranslator\n", (int)count);
-#endif
+    if (mThisTranslatorMap)
         delete mThisTranslatorMap;
-    }
 
-#ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
-    if (DEBUG_WrappedNativeHashtable) {
-        int LiveWrapperCount = 0;
-        PL_DHashTableEnumerate(DEBUG_WrappedNativeHashtable,
-                               DEBUG_WrapperChecker, &LiveWrapperCount);
-        if (LiveWrapperCount)
-            printf("deleting XPCJSRuntime with %d live XPCWrappedNative (found in wrapper check)\n", (int)LiveWrapperCount);
-        PL_DHashTableDestroy(DEBUG_WrappedNativeHashtable);
-    }
-#endif
-
-    if (mNativeScriptableSharedMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mNativeScriptableSharedMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live XPCNativeScriptableShared\n", (int)count);
-#endif
+    if (mNativeScriptableSharedMap)
         delete mNativeScriptableSharedMap;
-    }
 
-    if (mDyingWrappedNativeProtoMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mDyingWrappedNativeProtoMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live but dying XPCWrappedNativeProto\n", (int)count);
-#endif
+    if (mDyingWrappedNativeProtoMap)
         delete mDyingWrappedNativeProtoMap;
-    }
 
-    if (mDetachedWrappedNativeProtoMap) {
-#ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32_t count = mDetachedWrappedNativeProtoMap->Count();
-        if (count)
-            printf("deleting XPCJSRuntime with %d live detached XPCWrappedNativeProto\n", (int)count);
-#endif
+    if (mDetachedWrappedNativeProtoMap)
         delete mDetachedWrappedNativeProtoMap;
-    }
 
 #ifdef MOZ_ENABLE_PROFILER_SPS
     // Tell the profiler that the runtime is gone
@@ -2945,8 +2924,7 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    mNativeScriptableSharedMap(XPCNativeScriptableSharedMap::newMap(XPC_NATIVE_JSCLASS_MAP_SIZE)),
    mDyingWrappedNativeProtoMap(XPCWrappedNativeProtoMap::newMap(XPC_DYING_NATIVE_PROTO_MAP_SIZE)),
    mDetachedWrappedNativeProtoMap(XPCWrappedNativeProtoMap::newMap(XPC_DETACHED_NATIVE_PROTO_MAP_SIZE)),
-   mMapLock(XPCAutoLock::NewLock("XPCJSRuntime::mMapLock")),
-   mThreadRunningGC(nullptr),
+   mGCIsRunning(false),
    mWrappedJSToReleaseArray(),
    mNativesToReleaseArray(),
    mDoingFinalization(false),
@@ -2957,12 +2935,6 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    mJunkScope(nullptr),
    mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite())
 {
-#ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
-    DEBUG_WrappedNativeHashtable =
-        PL_NewDHashTable(PL_DHashGetStubOps(), nullptr,
-                         sizeof(PLDHashEntryStub), 128);
-#endif
-
     DOM_InitInterfaces();
 
     // these jsids filled in later when we have a JSContext to work with.
@@ -2992,6 +2964,7 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     // ordered by the effective categories in which they are grouped in the
     // JS_SetNativeStackQuota call (which predates this analysis).
     //
+    // (NB: These numbers may have drifted recently - see bug 938429)
     // OSX 64-bit Debug: 7MB stack, 636 stack frames => ~11.3k per stack frame
     // OSX64 Opt: 7MB stack, 2440 stack frames => ~3k per stack frame
     //
@@ -3019,9 +2992,9 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
 
 #if defined(XP_MACOSX) || defined(DARWIN)
     // MacOS has a gargantuan default stack size of 8MB. Go wild with 7MB,
-    // and give trusted script 120k extra. The stack is huge on mac anyway.
+    // and give trusted script 140k extra. The stack is huge on mac anyway.
     const size_t kStackQuota = 7 * 1024 * 1024;
-    const size_t kTrustedScriptBuffer = 120 * 1024;
+    const size_t kTrustedScriptBuffer = 140 * 1024;
 #elif defined(MOZ_ASAN)
     // ASan requires more stack space due to red-zones, so give it double the
     // default (2MB on 32-bit, 4MB on 64-bit). ASAN stack frame measurements
@@ -3139,7 +3112,6 @@ XPCJSRuntime::newXPCJSRuntime(nsXPConnect* aXPConnect)
         self->GetThisTranslatorMap()            &&
         self->GetNativeScriptableSharedMap()    &&
         self->GetDyingWrappedNativeProtoMap()   &&
-        self->GetMapLock()                      &&
         self->mWatchdogManager) {
         return self;
     }
@@ -3255,7 +3227,6 @@ XPCJSRuntime::DebugDump(int16_t depth)
     XPC_LOG_ALWAYS(("XPCJSRuntime @ %x", this));
         XPC_LOG_INDENT();
         XPC_LOG_ALWAYS(("mJSRuntime @ %x", Runtime()));
-        XPC_LOG_ALWAYS(("mMapLock @ %x", mMapLock));
 
         XPC_LOG_ALWAYS(("mWrappedJSToReleaseArray @ %x with %d wrappers(s)", \
                         &mWrappedJSToReleaseArray,
@@ -3324,11 +3295,9 @@ XPCJSRuntime::DebugDump(int16_t depth)
 /***************************************************************************/
 
 void
-XPCRootSetElem::AddToRootSet(XPCLock *lock, XPCRootSetElem **listHead)
+XPCRootSetElem::AddToRootSet(XPCRootSetElem **listHead)
 {
     MOZ_ASSERT(!mSelfp, "Must be not linked");
-
-    XPCAutoLock autoLock(lock);
 
     mSelfp = listHead;
     mNext = *listHead;
@@ -3340,14 +3309,12 @@ XPCRootSetElem::AddToRootSet(XPCLock *lock, XPCRootSetElem **listHead)
 }
 
 void
-XPCRootSetElem::RemoveFromRootSet(XPCLock *lock)
+XPCRootSetElem::RemoveFromRootSet()
 {
     nsXPConnect *xpc = nsXPConnect::XPConnect();
     JS::PokeGC(xpc->GetRuntime()->Runtime());
 
     MOZ_ASSERT(mSelfp, "Must be linked");
-
-    XPCAutoLock autoLock(lock);
 
     MOZ_ASSERT(*mSelfp == this, "Link invariant");
     *mSelfp = mNext;

@@ -7,6 +7,7 @@
 #ifndef js_RootingAPI_h
 #define js_RootingAPI_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/NullPtr.h"
@@ -222,6 +223,11 @@ class Heap : public js::HeapBase<T>
         return *this;
     }
 
+    Heap<T> &operator=(const Heap<T>& other) {
+        set(other.get());
+        return *this;
+    }
+
     void set(T newPtr) {
         JS_ASSERT(!js::GCMethods<T>::poisoned(newPtr));
         if (js::GCMethods<T>::needsPostBarrier(newPtr)) {
@@ -348,6 +354,11 @@ class TenuredHeap : public js::HeapBase<T>
         return *this;
     }
 
+    TenuredHeap<T> &operator=(const TenuredHeap<T>& other) {
+        bits = other.bits;
+        return *this;
+    }
+
     /*
      * Set the pointer to a value which will cause a crash if it is
      * dereferenced.
@@ -427,10 +438,9 @@ class MOZ_NONHEAP_CLASS Handle : public js::HandleBase<T>
      *     for the lifetime of the handle, as its users may not expect its value
      *     to change underneath them.
      */
-    static Handle fromMarkedLocation(const T *p) {
-        Handle h;
-        h.ptr = p;
-        return h;
+    static MOZ_CONSTEXPR Handle fromMarkedLocation(const T *p) {
+        return Handle(p, DeliberatelyChoosingThisOverload,
+                      ImUsingThisOnlyInFromFromMarkedLocation);
     }
 
     /*
@@ -471,6 +481,10 @@ class MOZ_NONHEAP_CLASS Handle : public js::HandleBase<T>
 
   private:
     Handle() {}
+
+    enum Disambiguator { DeliberatelyChoosingThisOverload = 42 };
+    enum CallerIdentity { ImUsingThisOnlyInFromFromMarkedLocation = 17 };
+    MOZ_CONSTEXPR Handle(const T *p, Disambiguator, CallerIdentity) : ptr(p) {}
 
     const T *ptr;
 
@@ -576,6 +590,9 @@ class InternalHandle<T*>
       : holder((void**)root.address()), offset(uintptr_t(field) - uintptr_t(root.get()))
     {}
 
+    InternalHandle(const InternalHandle<T*>& other)
+      : holder(other.holder), offset(other.offset) {}
+
     T *get() const { return reinterpret_cast<T*>(uintptr_t(*holder) + offset); }
 
     const T &operator*() const { return *get(); }
@@ -599,6 +616,8 @@ class InternalHandle<T*>
       : holder(reinterpret_cast<void * const *>(&js::NullPtr::constNullValue)),
         offset(uintptr_t(field))
     {}
+
+    void operator=(InternalHandle<T*> other) MOZ_DELETE;
 };
 
 /*
@@ -913,10 +932,16 @@ class FakeRooted : public RootedBase<T>
     T &get() { return ptr; }
     const T &get() const { return ptr; }
 
-    T &operator=(T value) {
+    FakeRooted<T> &operator=(T value) {
         JS_ASSERT(!GCMethods<T>::poisoned(value));
         ptr = value;
-        return ptr;
+        return *this;
+    }
+
+    FakeRooted<T> &operator=(const FakeRooted<T> &other) {
+        JS_ASSERT(!GCMethods<T>::poisoned(other.ptr));
+        ptr = other.ptr;
+        return *this;
     }
 
     bool operator!=(const T &other) const { return ptr != other; }
@@ -961,6 +986,8 @@ class FakeMutableHandle : public js::MutableHandleBase<T>
 
     template <typename S>
     void operator=(S v) MOZ_DELETE;
+
+    void operator=(const FakeMutableHandle<T>& other) MOZ_DELETE;
 };
 
 /*

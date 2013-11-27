@@ -297,7 +297,7 @@ NewInitArray(JSContext *cx, uint32_t count, types::TypeObject *typeArg)
 {
     RootedTypeObject type(cx, typeArg);
     NewObjectKind newKind = !type ? SingletonObject : GenericObject;
-    if (type && type->isLongLivedForJITAlloc())
+    if (type && type->shouldPreTenure())
         newKind = TenuredObject;
     RootedObject obj(cx, NewDenseAllocatedArray(cx, count, nullptr, newKind));
     if (!obj)
@@ -315,7 +315,7 @@ JSObject*
 NewInitObject(JSContext *cx, HandleObject templateObject)
 {
     NewObjectKind newKind = templateObject->hasSingletonType() ? SingletonObject : GenericObject;
-    if (!templateObject->hasLazyType() && templateObject->type()->isLongLivedForJITAlloc())
+    if (!templateObject->hasLazyType() && templateObject->type()->shouldPreTenure())
         newKind = TenuredObject;
     RootedObject obj(cx, CopyInitializerObject(cx, templateObject, newKind));
 
@@ -336,7 +336,7 @@ NewInitObjectWithClassPrototype(JSContext *cx, HandleObject templateObject)
     JS_ASSERT(!templateObject->hasSingletonType());
     JS_ASSERT(!templateObject->hasLazyType());
 
-    NewObjectKind newKind = templateObject->type()->isLongLivedForJITAlloc()
+    NewObjectKind newKind = templateObject->type()->shouldPreTenure()
                             ? TenuredObject
                             : GenericObject;
     JSObject *obj = NewObjectWithGivenProto(cx,
@@ -462,7 +462,7 @@ SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValu
         // required for initializing 'const' closure variables.
         Shape *shape = obj->nativeLookup(cx, name);
         JS_ASSERT(shape && shape->hasSlot());
-        JSObject::nativeSetSlotWithType(cx, obj, shape, value);
+        obj->nativeSetSlotWithType(cx, shape, value);
         return true;
     }
 
@@ -617,7 +617,7 @@ GetDynamicName(JSContext *cx, JSObject *scopeChain, JSString *str, Value *vp)
     if (str->isAtom()) {
         atom = &str->asAtom();
     } else {
-        atom = AtomizeString<NoGC>(cx, str);
+        atom = AtomizeString(cx, str);
         if (!atom) {
             vp->setUndefined();
             return;
@@ -804,7 +804,7 @@ InitRestParameter(JSContext *cx, uint32_t length, Value *rest, HandleObject temp
         return arrRes;
     }
 
-    NewObjectKind newKind = templateObj->type()->isLongLivedForJITAlloc()
+    NewObjectKind newKind = templateObj->type()->shouldPreTenure()
                             ? TenuredObject
                             : GenericObject;
     ArrayObject *arrRes = NewDenseCopiedArray(cx, length, rest, nullptr, newKind);

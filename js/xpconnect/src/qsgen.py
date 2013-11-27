@@ -433,8 +433,7 @@ argumentUnboxingTemplates = {
         "        return false;\n",
 
     'boolean':
-        "    bool ${name};\n"
-        "    JS_ValueToBoolean(cx, ${argVal}, &${name});\n",
+        "    bool ${name} = JS::ToBoolean(${argVal});\n",
 
     '[astring]':
         "    xpc_qsAString ${name}(cx, ${argVal}, ${argPtr}, ${notPassed});\n"
@@ -454,11 +453,6 @@ argumentUnboxingTemplates = {
         "    if (!xpc_qsJsvalToCharStr(cx, ${argVal}, &${name}_bytes))\n"
         "        return false;\n"
         "    char *${name} = ${name}_bytes.ptr();\n",
-
-    'wstring':
-        "    const PRUnichar *${name};\n"
-        "    if (!xpc_qsJsvalToWcharStr(cx, ${argVal}, ${argPtr}, &${name}))\n"
-        "        return false;\n",
 
     '[cstring]':
         "    xpc_qsACString ${name}(cx, ${argVal}, ${argPtr}, ${notPassed});\n"

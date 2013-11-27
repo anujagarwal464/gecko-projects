@@ -18,6 +18,9 @@ const RIL_MMSSERVICE_CONTRACTID = "@mozilla.org/mms/rilmmsservice;1";
 const RIL_MMSSERVICE_CID = Components.ID("{217ddd76-75db-4210-955d-8806cd8d87f9}");
 
 let DEBUG = false;
+function debug(s) {
+  dump("-@- MmsService: " + s + "\n");
+};
 
 // Read debug setting from pref.
 try {
@@ -32,14 +35,13 @@ const kSmsReceivedObserverTopic          = "sms-received";
 const kSmsRetrievingObserverTopic        = "sms-retrieving";
 const kSmsDeliverySuccessObserverTopic   = "sms-delivery-success";
 const kSmsDeliveryErrorObserverTopic     = "sms-delivery-error";
+const kSmsReadSuccessObserverTopic       = "sms-read-success";
+const kSmsReadErrorObserverTopic         = "sms-read-error";
 
 const NS_XPCOM_SHUTDOWN_OBSERVER_ID      = "xpcom-shutdown";
 const kNetworkInterfaceStateChangedTopic = "network-interface-state-changed";
 const kMobileMessageDeletedObserverTopic = "mobile-message-deleted";
 
-const kPrefRilMmsc                       = "ril.mms.mmsc";
-const kPrefRilMmsProxy                   = "ril.mms.mmsproxy";
-const kPrefRilMmsPort                    = "ril.mms.mmsport";
 const kPrefRilRadioDisabled              = "ril.radio.disabled";
 
 // HTTP status codes:
@@ -174,7 +176,8 @@ MmsConnection.prototype = {
     }
 
     let port = this.mmsPort;
-    if (port == -1) {
+
+    if (port <= 0) {
       port = 80;
       if (DEBUG) debug("getProxyInfo: port is not valid. Set to defult (80).");
     }
@@ -190,7 +193,7 @@ MmsConnection.prototype = {
 
   // For keeping track of the radio status.
   radioDisabled: false,
-  settings: ["ril.radio.disabled"],
+  settings: [kPrefRilRadioDisabled],
   connected: false,
 
   //A queue to buffer the MMS HTTP requests when the MMS network
@@ -407,16 +410,25 @@ MmsConnection.prototype = {
           return;
         }
 
-        this.connected =
+        // We only need to capture the state change of MMS network. Using
+        // |network.state| isn't reliable due to the possibilty of shared APN.
+        let connected =
           this.radioInterface.getDataCallStateByType("mms") ==
             Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED;
 
+        // Return if the MMS network state doesn't change, where the network
+        // state change can come from other non-MMS networks.
+        if (connected == this.connected) {
+          return;
+        }
+
+        this.connected = connected;
         if (!this.connected) {
           return;
         }
 
-        // Set up the MMS APN setting based on the network, which is going to
-        // be used for the HTTP requests later.
+        // Set up the MMS APN setting based on the connected MMS network,
+        // which is going to be used for the HTTP requests later.
         this.setApnSetting(network);
 
         if (DEBUG) debug("Got the MMS network connected! Resend the buffered " +
@@ -1163,6 +1175,7 @@ SendTransaction.prototype = Object.create(CancellableTransaction.prototype, {
       if (!this.istreamComposed) {
         this.loadBlobs(this.msg.parts, (function () {
           this.istream = MMS.PduHelper.compose(null, this.msg);
+          this.istreamSize = this.istream.available();
           this.istreamComposed = true;
           if (this.isCancelled) {
             this.runCallbackIfValid(_MMS_ERROR_MESSAGE_DELETED, null);
@@ -1192,6 +1205,13 @@ SendTransaction.prototype = Object.create(CancellableTransaction.prototype, {
           }
 
           this.retryCount++;
+
+          // the input stream may be read in the previous failure request so
+          // we have to re-compose it.
+          if (this.istreamSize == null ||
+              this.istreamSize != this.istream.available()) {
+            this.istream = MMS.PduHelper.compose(null, this.msg);
+          }
 
           this.timer.initWithCallback(this.send.bind(this, retryCallback),
                                       PREF_SEND_RETRY_INTERVAL,
@@ -1339,7 +1359,7 @@ function ReadRecTransaction(mmsConnection, messageID, toAddress) {
             type: type}
   headers["to"] = to;
   headers["from"] = null;
-  headers["x-mms-read-status"] = true;
+  headers["x-mms-read-status"] = MMS.MMS_PDU_READ_STATUS_READ;
 
   this.istream = MMS.PduHelper.compose(null, {headers: headers});
   if (!this.istream) {
@@ -1416,38 +1436,33 @@ MmsService.prototype = {
                                                                       retrievalMode) {
     intermediate.type = "mms";
     intermediate.delivery = DELIVERY_NOT_DOWNLOADED;
-    // As a receiver, we don't need to care about the delivery status of others.
-    let deliveryInfo = intermediate.deliveryInfo = [{
-      receiver: mmsConnection.getPhoneNumber(),
-      deliveryStatus: DELIVERY_STATUS_NOT_APPLICABLE }];
 
+    let deliveryStatus;
     switch (retrievalMode) {
       case RETRIEVAL_MODE_MANUAL:
-        deliveryInfo[0].deliveryStatus = DELIVERY_STATUS_MANUAL;
+        deliveryStatus = DELIVERY_STATUS_MANUAL;
         break;
       case RETRIEVAL_MODE_NEVER:
-        deliveryInfo[0].deliveryStatus = DELIVERY_STATUS_REJECTED;
+        deliveryStatus = DELIVERY_STATUS_REJECTED;
         break;
       case RETRIEVAL_MODE_AUTOMATIC:
-        deliveryInfo[0].deliveryStatus = DELIVERY_STATUS_PENDING;
+        deliveryStatus = DELIVERY_STATUS_PENDING;
         break;
       case RETRIEVAL_MODE_AUTOMATIC_HOME:
         if (mmsConnection.isVoiceRoaming()) {
-          deliveryInfo[0].deliveryStatus = DELIVERY_STATUS_MANUAL;
+          deliveryStatus = DELIVERY_STATUS_MANUAL;
         } else {
-          deliveryInfo[0].deliveryStatus = DELIVERY_STATUS_PENDING;
+          deliveryStatus = DELIVERY_STATUS_PENDING;
         }
         break;
+      default:
+        deliveryStatus = DELIVERY_STATUS_NOT_APPLICABLE;
+        break;
     }
+    // |intermediate.deliveryStatus| will be deleted after being stored in db.
+    intermediate.deliveryStatus = deliveryStatus;
 
     intermediate.timestamp = Date.now();
-    intermediate.sender = null;
-    intermediate.transactionId = intermediate.headers["x-mms-transaction-id"];
-    if (intermediate.headers.from) {
-      intermediate.sender = intermediate.headers.from.address;
-    } else {
-      intermediate.sender = "anonymous";
-    }
     intermediate.receivers = [];
     intermediate.phoneNumber = mmsConnection.getPhoneNumber();
     intermediate.iccId = mmsConnection.getIccId();
@@ -1470,11 +1485,6 @@ MmsService.prototype = {
                                                                   intermediate,
                                                                   savable) {
     savable.timestamp = Date.now();
-    if (intermediate.headers.from) {
-      savable.sender = intermediate.headers.from.address;
-    } else {
-      savable.sender = "anonymous";
-    }
     savable.receivers = [];
     // We don't have Bcc in recevied MMS message.
     for each (let type in ["cc", "to"]) {
@@ -1490,10 +1500,8 @@ MmsService.prototype = {
     }
 
     savable.delivery = DELIVERY_RECEIVED;
-    // As a receiver, we don't need to care about the delivery status of others.
-    savable.deliveryInfo = [{
-      receiver: mmsConnection.getPhoneNumber(),
-      deliveryStatus: DELIVERY_STATUS_SUCCESS }];
+    // |savable.deliveryStatus| will be deleted after being stored in db.
+    savable.deliveryStatus = DELIVERY_STATUS_SUCCESS;
     for (let field in intermediate.headers) {
       savable.headers[field] = intermediate.headers[field];
     }
@@ -1600,6 +1608,8 @@ MmsService.prototype = {
                                                             retrievedMessage) {
     if (DEBUG) debug("retrievedMessage = " + JSON.stringify(retrievedMessage));
 
+    let transactionId = savableMessage.headers["x-mms-transaction-id"];
+
     // The absence of the field does not indicate any default
     // value. So we go check the same field in the retrieved
     // message instead.
@@ -1639,8 +1649,6 @@ MmsService.prototype = {
     savableMessage = this.mergeRetrievalConfirmation(mmsConnection,
                                                      retrievedMessage,
                                                      savableMessage);
-    let transactionId = savableMessage.headers["x-mms-transaction-id"];
-
     gMobileMessageDatabaseService.saveReceivedMessage(savableMessage,
         (function (rv, domMessage) {
       let success = Components.isSuccessCode(rv);
@@ -1790,11 +1798,6 @@ MmsService.prototype = {
    *        The MMS message object.
    */
   handleDeliveryIndication: function handleDeliveryIndication(aMsg) {
-    if (DEBUG) {
-      debug("handleDeliveryIndication: got delivery report" +
-            JSON.stringify(aMsg));
-    }
-
     let headers = aMsg.headers;
     let envelopeId = headers["message-id"];
     let address = headers.to.address;
@@ -1832,11 +1835,8 @@ MmsService.prototype = {
 
     if (DEBUG) debug("Updating the delivery status to: " + deliveryStatus);
     gMobileMessageDatabaseService
-      .setMessageDeliveryByEnvelopeId(envelopeId,
-                                      address,
-                                      null,
-                                      deliveryStatus,
-                                      (function notifySetDeliveryResult(aRv, aDomMessage) {
+      .setMessageDeliveryStatusByEnvelopeId(envelopeId, address, deliveryStatus,
+                                            (function(aRv, aDomMessage) {
       if (DEBUG) debug("Marking the delivery status is done.");
       // TODO bug 832140 handle !Components.isSuccessCode(aRv)
 
@@ -1854,6 +1854,57 @@ MmsService.prototype = {
       }
 
       // Notifying observers the delivery status is updated.
+      Services.obs.notifyObservers(aDomMessage, topic, null);
+    }).bind(this));
+  },
+
+  /**
+   * Handle incoming M-Read-Orig.ind PDU.
+   *
+   * @param aIndication
+   *        The MMS message object.
+   */
+  handleReadOriginateIndication:
+    function handleReadOriginateIndication(aIndication) {
+
+    let headers = aIndication.headers;
+    let envelopeId = headers["message-id"];
+    let address = headers.from.address;
+    let mmsReadStatus = headers["x-mms-read-status"];
+    if (DEBUG) {
+      debug("Start updating the read status for envelopeId: " + envelopeId +
+            ", address: " + address + ", mmsReadStatus: " + mmsReadStatus);
+    }
+
+    // From OMA-TS-MMS_ENC-V1_3-20110913-A subclause 9.4 "X-Mms-Read-Status",
+    // in M-Read-Rec-Orig.ind the X-Mms-Read-Status could be
+    // MMS.MMS_READ_STATUS_{ READ, DELETED_WITHOUT_BEING_READ }.
+    let readStatus = mmsReadStatus == MMS.MMS_PDU_READ_STATUS_READ
+                   ? MMS.DOM_READ_STATUS_SUCCESS
+                   : MMS.DOM_READ_STATUS_ERROR;
+    if (DEBUG) debug("Updating the read status to: " + readStatus);
+
+    gMobileMessageDatabaseService
+      .setMessageReadStatusByEnvelopeId(envelopeId, address, readStatus,
+                                        (function(aRv, aDomMessage) {
+      if (!Components.isSuccessCode(aRv)) {
+        // Notifying observers the read status is error.
+        Services.obs.notifyObservers(aDomMessage, kSmsReadSuccessObserverTopic, null);
+        return;
+      }
+
+      if (DEBUG) debug("Marking the read status is done.");
+      let topic;
+      if (mmsReadStatus == MMS.MMS_PDU_READ_STATUS_READ) {
+        topic = kSmsReadSuccessObserverTopic;
+
+        // Broadcasting a 'sms-read-success' system message to open apps.
+        this.broadcastMmsSystemMessage(topic, aDomMessage);
+      } else {
+        topic = kSmsReadErrorObserverTopic;
+      }
+
+      // Notifying observers the read status is updated.
       Services.obs.notifyObservers(aDomMessage, topic, null);
     }).bind(this));
   },
@@ -2098,7 +2149,7 @@ MmsService.prototype = {
 
       if (errorCode !== Ci.nsIMobileMessageCallback.SUCCESS_NO_ERROR) {
         if (DEBUG) debug("Error! The params for sending MMS are invalid.");
-        sendTransactionCb(aDomMessage, errorCode);
+        sendTransactionCb(aDomMessage, errorCode, null);
         return;
       }
 
@@ -2111,7 +2162,7 @@ MmsService.prototype = {
       } catch (e) {
         if (DEBUG) debug("Exception: fail to create a SendTransaction instance.");
         sendTransactionCb(aDomMessage,
-                          Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+                          Ci.nsIMobileMessageCallback.INTERNAL_ERROR, null);
         return;
       }
       sendTransaction.run(function callback(aMmsStatus, aMsg) {
@@ -2128,10 +2179,8 @@ MmsService.prototype = {
         } else {
           errorCode = Ci.nsIMobileMessageCallback.SUCCESS_NO_ERROR;
         }
-        let envelopeId = null;
-        if (aMsg) {
-          envelopeId = aMsg.headers ? aMsg.headers["message-id"] : null;
-        }
+        let envelopeId =
+          aMsg && aMsg.headers && aMsg.headers["message-id"] || null;
         sendTransactionCb(aDomMessage, errorCode, envelopeId);
       });
     });
@@ -2166,7 +2215,8 @@ MmsService.prototype = {
         aRequest.notifyGetMessageFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
         return;
       }
-      if (DELIVERY_STATUS_PENDING == aMessageRecord.deliveryStatus) {
+      let deliveryStatus = aMessageRecord.deliveryInfo[0].deliveryStatus;
+      if (DELIVERY_STATUS_PENDING == deliveryStatus) {
         if (DEBUG) debug("Delivery status of message record is 'pending'.");
         aRequest.notifyGetMessageFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
         return;
@@ -2360,6 +2410,9 @@ MmsService.prototype = {
       case MMS.MMS_PDU_TYPE_DELIVERY_IND:
         this.handleDeliveryIndication(msg);
         break;
+      case MMS.MMS_PDU_TYPE_READ_ORIG_IND:
+        this.handleReadOriginateIndication(msg);
+        break;
       default:
         if (DEBUG) debug("Unsupported X-MMS-Message-Type: " + msg.type);
         break;
@@ -2380,12 +2433,3 @@ MmsService.prototype = {
 };
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([MmsService]);
-
-let debug;
-if (DEBUG) {
-  debug = function (s) {
-    dump("-@- MmsService: " + s + "\n");
-  };
-} else {
-  debug = function (s) {};
-}

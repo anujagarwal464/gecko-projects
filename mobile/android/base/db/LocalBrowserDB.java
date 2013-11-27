@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko.db;
 
+import org.mozilla.gecko.AboutPages;
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserContract.ExpirePriority;
@@ -147,7 +148,9 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         // the constraint string(s), treating space-separated words as separate constraints
         if (!TextUtils.isEmpty(constraint)) {
           String[] constraintWords = constraint.toString().split(" ");
-          for (int i = 0; i < constraintWords.length; i++) {
+          // Only create a filter query with a maximum of 10 constraint words
+          int constraintCount = Math.min(constraintWords.length, 10);
+          for (int i = 0; i < constraintCount; i++) {
               selection = DBUtils.concatenateWhere(selection, "(" + Combined.URL + " LIKE ? OR " +
                                                                     Combined.TITLE + " LIKE ?)");
               String constraintWord =  "%" + constraintWords[i] + "%";
@@ -248,7 +251,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                                              Combined.HISTORY_ID },
                               "",
                               limit,
-                              BrowserDB.ABOUT_PAGES_URL_FILTER,
+                              AboutPages.URL_FILTER,
                               selection,
                               selectionArgs);
     }
@@ -400,10 +403,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             c = cr.query(mBookmarksUriWithProfile,
                          DEFAULT_BOOKMARK_COLUMNS,
                          Bookmarks.PARENT + " = ? AND " +
-                         "(" + Bookmarks.TYPE + " = ? OR " + Bookmarks.TYPE + " = ?)",
+                         "(" + Bookmarks.TYPE + " = ? OR " +
+                            "(" + Bookmarks.TYPE + " = ? AND " + Bookmarks.URL + " IS NOT NULL))",
                          new String[] { String.valueOf(folderId),
-                                        String.valueOf(Bookmarks.TYPE_BOOKMARK),
-                                        String.valueOf(Bookmarks.TYPE_FOLDER) },
+                                        String.valueOf(Bookmarks.TYPE_FOLDER),
+                                        String.valueOf(Bookmarks.TYPE_BOOKMARK) },
                          null);
         }
 

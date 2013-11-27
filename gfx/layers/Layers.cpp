@@ -37,18 +37,14 @@ using namespace mozilla::gfx;
 
 typedef FrameMetrics::ViewID ViewID;
 const ViewID FrameMetrics::NULL_SCROLL_ID = 0;
-const ViewID FrameMetrics::ROOT_SCROLL_ID = 1;
-const ViewID FrameMetrics::START_SCROLL_ID = 2;
 
 uint8_t gLayerManagerLayerBuilder;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 FILE*
 FILEOrDefault(FILE* aFile)
 {
   return aFile ? aFile : stderr;
 }
-#endif // MOZ_LAYERS_HAVE_LOG
 
 namespace mozilla {
 namespace layers {
@@ -1131,8 +1127,6 @@ LayerManager::BeginTabSwitch()
   mTabSwitchStart = TimeStamp::Now();
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
-
 static nsACString& PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite);
 
 #ifdef MOZ_DUMP_PAINTING
@@ -1145,7 +1139,7 @@ void WriteSnapshotLinkToDumpFile(T* aObj, FILE* aFile)
   nsCString string(aObj->Name());
   string.Append("-");
   string.AppendInt((uint64_t)aObj);
-  fprintf(aFile, "href=\"javascript:ViewImage('%s')\"", string.BeginReading());
+  fprintf_stderr(aFile, "href=\"javascript:ViewImage('%s')\"", string.BeginReading());
 }
 
 template <typename T>
@@ -1154,11 +1148,13 @@ void WriteSnapshotToDumpFile_internal(T* aObj, gfxASurface* aSurf)
   nsCString string(aObj->Name());
   string.Append("-");
   string.AppendInt((uint64_t)aObj);
-  if (gfxUtils::sDumpPaintFile)
-    fprintf(gfxUtils::sDumpPaintFile, "array[\"%s\"]=\"", string.BeginReading());
+  if (gfxUtils::sDumpPaintFile) {
+    fprintf_stderr(gfxUtils::sDumpPaintFile, "array[\"%s\"]=\"", string.BeginReading());
+  }
   aSurf->DumpAsDataURL(gfxUtils::sDumpPaintFile);
-  if (gfxUtils::sDumpPaintFile)
-    fprintf(gfxUtils::sDumpPaintFile, "\";");
+  if (gfxUtils::sDumpPaintFile) {
+    fprintf_stderr(gfxUtils::sDumpPaintFile, "\";");
+  }
 }
 
 void WriteSnapshotToDumpFile(Layer* aLayer, gfxASurface* aSurf)
@@ -1182,13 +1178,13 @@ void
 Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
 {
   if (aDumpHtml) {
-    fprintf(aFile, "<li><a id=\"%p\" ", this);
+    fprintf_stderr(aFile, "<li><a id=\"%p\" ", this);
 #ifdef MOZ_DUMP_PAINTING
     if (GetType() == TYPE_CONTAINER || GetType() == TYPE_THEBES) {
       WriteSnapshotLinkToDumpFile(this, aFile);
     }
 #endif
-    fprintf(aFile, ">");
+    fprintf_stderr(aFile, ">");
   }
   DumpSelf(aFile, aPrefix);
 
@@ -1199,12 +1195,13 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
 #endif
 
   if (aDumpHtml) {
-    fprintf(aFile, "</a>");
+    fprintf_stderr(aFile, "</a>");
   }
 
   if (Layer* mask = GetMaskLayer()) {
+    fprintf_stderr(aFile, "%s  Mask layer:\n", aPrefix);
     nsAutoCString pfx(aPrefix);
-    pfx += "  Mask layer: ";
+    pfx += "    ";
     mask->Dump(aFile, pfx.get(), aDumpHtml);
   }
 
@@ -1212,16 +1209,16 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
     nsAutoCString pfx(aPrefix);
     pfx += "  ";
     if (aDumpHtml) {
-      fprintf(aFile, "<ul>");
+      fprintf_stderr(aFile, "<ul>");
     }
     kid->Dump(aFile, pfx.get(), aDumpHtml);
     if (aDumpHtml) {
-      fprintf(aFile, "</ul>");
+      fprintf_stderr(aFile, "</ul>");
     }
   }
 
   if (aDumpHtml) {
-    fprintf(aFile, "</li>");
+    fprintf_stderr(aFile, "</li>");
   }
   if (Layer* next = GetNextSibling())
     next->Dump(aFile, aPrefix, aDumpHtml);
@@ -1232,11 +1229,7 @@ Layer::DumpSelf(FILE* aFile, const char* aPrefix)
 {
   nsAutoCString str;
   PrintInfo(str, aPrefix);
-  if (!aFile || aFile == stderr) {
-    printf_stderr("%s\n", str.get());
-  } else {
-    fprintf(aFile, "%s\n", str.get());
-  }
+  fprintf_stderr(aFile, "%s\n", str.get());
 }
 
 void
@@ -1266,6 +1259,12 @@ Layer::LogSelf(const char* aPrefix)
   nsAutoCString str;
   PrintInfo(str, aPrefix);
   MOZ_LAYERS_LOG(("%s", str.get()));
+
+  if (mMaskLayer) {
+    nsAutoCString pfx(aPrefix);
+    pfx += "   \\ MaskLayer ";
+    mMaskLayer->LogSelf(pfx.get());
+  }
 }
 
 nsACString&
@@ -1309,6 +1308,9 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
                      mStickyPositionData->mOuter.width, mStickyPositionData->mOuter.height,
                      mStickyPositionData->mInner.x, mStickyPositionData->mInner.y,
                      mStickyPositionData->mInner.width, mStickyPositionData->mInner.height);
+  }
+  if (mMaskLayer) {
+    aTo.AppendPrintf(" [mMaskLayer=%p]", mMaskLayer.get());
   }
 
   return aTo;
@@ -1404,36 +1406,36 @@ LayerManager::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
 
 #ifdef MOZ_DUMP_PAINTING
   if (aDumpHtml) {
-    fprintf(file, "<ul><li><a ");
+    fprintf_stderr(file, "<ul><li><a ");
     WriteSnapshotLinkToDumpFile(this, file);
-    fprintf(file, ">");
+    fprintf_stderr(file, ">");
   }
 #endif
   DumpSelf(file, aPrefix);
 #ifdef MOZ_DUMP_PAINTING
   if (aDumpHtml) {
-    fprintf(file, "</a>");
+    fprintf_stderr(file, "</a>");
   }
 #endif
 
   nsAutoCString pfx(aPrefix);
   pfx += "  ";
   if (!GetRoot()) {
-    fprintf(file, "%s(null)", pfx.get());
+    fprintf_stderr(file, "%s(null)", pfx.get());
     if (aDumpHtml) {
-      fprintf(file, "</li></ul>");
+      fprintf_stderr(file, "</li></ul>");
     }
     return;
   }
 
   if (aDumpHtml) {
-    fprintf(file, "<ul>");
+    fprintf_stderr(file, "<ul>");
   }
   GetRoot()->Dump(file, pfx.get(), aDumpHtml);
   if (aDumpHtml) {
-    fprintf(file, "</ul></li></ul>");
+    fprintf_stderr(file, "</ul></li></ul>");
   }
-  fputc('\n', file);
+  fprintf_stderr(file, "\n");
 }
 
 void
@@ -1441,7 +1443,7 @@ LayerManager::DumpSelf(FILE* aFile, const char* aPrefix)
 {
   nsAutoCString str;
   PrintInfo(str, aPrefix);
-  fprintf(FILEOrDefault(aFile), "%s\n", str.get());
+  fprintf_stderr(FILEOrDefault(aFile), "%s\n", str.get());
 }
 
 void
@@ -1510,57 +1512,38 @@ PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite)
   return aTo;
 }
 
-#else  // !MOZ_LAYERS_HAVE_LOG
+void
+SetAntialiasingFlags(Layer* aLayer, gfxContext* aTarget)
+{
+  if (!aTarget->IsCairo()) {
+    RefPtr<DrawTarget> dt = aTarget->GetDrawTarget();
 
-void Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml) {}
-void Layer::DumpSelf(FILE* aFile, const char* aPrefix) {}
-void Layer::Log(const char* aPrefix) {}
-void Layer::LogSelf(const char* aPrefix) {}
-nsACString&
-Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
+    if (dt->GetFormat() != FORMAT_B8G8R8A8) {
+      return;
+    }
 
-nsACString&
-ThebesLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
+    const nsIntRect& bounds = aLayer->GetVisibleRegion().GetBounds();
+    gfx::Rect transformedBounds = dt->GetTransform().TransformBounds(gfx::Rect(Float(bounds.x), Float(bounds.y),
+                                                                     Float(bounds.width), Float(bounds.height)));
+    transformedBounds.RoundOut();
+    IntRect intTransformedBounds;
+    transformedBounds.ToIntRect(&intTransformedBounds);
+    dt->SetPermitSubpixelAA(!(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
+                            dt->GetOpaqueRect().Contains(intTransformedBounds));
+  } else {
+    nsRefPtr<gfxASurface> surface = aTarget->CurrentSurface();
+    if (surface->GetContentType() != GFX_CONTENT_COLOR_ALPHA) {
+      // Destination doesn't have alpha channel; no need to set any special flags
+      return;
+    }
 
-nsACString&
-ContainerLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-nsACString&
-ColorLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-nsACString&
-CanvasLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-nsACString&
-ImageLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-nsACString&
-RefLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-nsACString&
-ReadbackLayer::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-void LayerManager::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml) {}
-void LayerManager::DumpSelf(FILE* aFile, const char* aPrefix) {}
-void LayerManager::Log(const char* aPrefix) {}
-void LayerManager::LogSelf(const char* aPrefix) {}
-
-nsACString&
-LayerManager::PrintInfo(nsACString& aTo, const char* aPrefix)
-{ return aTo; }
-
-/*static*/ void LayerManager::InitLog() {}
-/*static*/ bool LayerManager::IsLogEnabled() { return false; }
-
-#endif // MOZ_LAYERS_HAVE_LOG
+    const nsIntRect& bounds = aLayer->GetVisibleRegion().GetBounds();
+    surface->SetSubpixelAntialiasingEnabled(
+        !(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
+        surface->GetOpaqueRect().Contains(
+          aTarget->UserToDevice(gfxRect(bounds.x, bounds.y, bounds.width, bounds.height))));
+  }
+}
 
 PRLogModuleInfo* LayerManager::sLog;
 

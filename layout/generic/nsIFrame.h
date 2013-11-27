@@ -327,6 +327,9 @@ typedef uint64_t nsFrameState;
 // <defs> element or an SVG resource element (<mask>, <pattern>, etc.)
 #define NS_FRAME_IS_NONDISPLAY                      NS_FRAME_STATE_BIT(53)
 
+// Frame has a LayerActivityProperty property
+#define NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY        NS_FRAME_STATE_BIT(54)
+
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
 #define NS_STATE_IS_DIRECTION_NORMAL                NS_FRAME_STATE_BIT(31)
@@ -1830,6 +1833,26 @@ public:
   virtual nsRect ComputeTightBounds(gfxContext* aContext) const;
 
   /**
+   * This function is similar to GetPrefWidth and ComputeTightBounds: it
+   * computes the left and right coordinates of a preferred tight bounding
+   * rectangle for the frame. This is a rectangle that would enclose the pixels
+   * that are drawn if we lay out the element without taking any optional line
+   * breaks. The rectangle is in appunits and relative to the origin of this
+   * frame. Currently, this function is only implemented for nsBlockFrame and
+   * nsTextFrame and is used to determine intrinsic widths of MathML token
+   * elements.
+
+   * @param aContext a rendering context that can be used if we need
+   * to do measurement
+   * @param aX      computed left coordinate of the tight bounding rectangle
+   * @param aXMost  computed intrinsic width of the tight bounding rectangle
+   *
+   */
+  virtual nsresult GetPrefWidthTightBounds(nsRenderingContext* aContext,
+                                           nscoord* aX,
+                                           nscoord* aXMost);
+
+  /**
    * Pre-reflow hook. Before a frame is reflowed this method will be called.
    * This call will always be invoked at least once before a subsequent Reflow
    * and DidReflow call. It may be called more than once, In general you will
@@ -2039,8 +2062,7 @@ public:
    * Returns the offset from this frame to the closest geometric parent that
    * has a view. Also returns the containing view or null in case of error
    */
-  NS_IMETHOD  GetOffsetFromView(nsPoint&  aOffset,
-                                nsView** aView) const = 0;
+  void GetOffsetFromView(nsPoint& aOffset, nsView** aView) const;
 
   /**
    * Returns the nearest widget containing this frame. If this frame has a

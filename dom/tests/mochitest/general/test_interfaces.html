@@ -36,7 +36,10 @@ var ecmaGlobals =
     "Float32Array",
     "Float64Array",
     "Function",
-    "Infinity",
+    // NB: We haven't bothered to resolve constants like Infinity and NaN on
+    // Xrayed windows (which are seen from the XBL scope). We could support
+    // this if needed with some refactoring.
+    {name: "Infinity", xbl: false},
     "Int16Array",
     "Int32Array",
     "Int8Array",
@@ -46,7 +49,7 @@ var ecmaGlobals =
     "JSON",
     "Map",
     "Math",
-    "NaN",
+    {name: "NaN", xbl: false},
     "Number",
     "Object",
     {name: "ParallelArray", nightly: true},
@@ -296,6 +299,7 @@ var interfaceNamesInGlobalScope =
     "HTMLUListElement",
     "HTMLUnknownElement",
     "HTMLVideoElement",
+    {name: "IccChangeEvent", b2g: true, pref: "dom.icc.enabled"},
     {name: "IccCardLockError", b2g: true, pref: "dom.icc.enabled"},
     "IDBCursor",
     "IDBCursorWithValue",
@@ -326,7 +330,7 @@ var interfaceNamesInGlobalScope =
     "MediaStream",
     "MediaStreamAudioDestinationNode",
     "MediaStreamAudioSourceNode",
-    "MediaStreamEvent",
+    {name: "MediaStreamEvent", pref: "media.peerconnection.enabled"},
     "MediaStreamTrack",
     "MessageEvent",
     "MessagePort",
@@ -345,25 +349,32 @@ var interfaceNamesInGlobalScope =
     "MozCSSKeyframeRule",
     "MozCSSKeyframesRule",
     {name: "MozEmergencyCbModeEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
+    {name: "MozIcc", b2g: true, pref: "dom.icc.enabled"},
     {name: "MozIccManager", b2g: true, pref: "dom.icc.enabled"},
     {name: "MozInputContext", b2g: true},
     {name: "MozInputMethodManager", b2g: true},
     "MozMmsEvent",
     "MozMmsMessage",
     {name: "MozMobileConnection", b2g: true, pref: "dom.mobileconnection.enabled"},
+    {name: "MozMobileConnectionArray", b2g: true, pref: "dom.mobileconnection.enabled"},
     "MozMobileMessageManager",
     "MozMobileMessageThread",
     "MozNamedAttrMap",
+    {name: "MozNdefRecord", b2g: true},
+    {name: "MozNfc", b2g: true},
+    {name: "MozNFCPeer", b2g: true},
+    {name: "MozNFCTag", b2g: true},
     {name: "MozOtaStatusEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
     "MozPowerManager",
-    "mozRTCIceCandidate",
-    "mozRTCPeerConnection",
-    "mozRTCSessionDescription",
+    {name: "mozRTCIceCandidate", pref: "media.peerconnection.enabled"},
+    {name: "mozRTCPeerConnection", pref: "media.peerconnection.enabled"},
+    {name: "mozRTCSessionDescription", pref: "media.peerconnection.enabled"},
     "MozSettingsEvent",
     "MozSmsEvent",
     "MozSmsFilter",
     "MozSmsMessage",
     "MozSmsSegmentInfo",
+    {name: "MozSpeakerManager", b2g: true},
     {name: "MozStkCommandEvent", b2g: true, pref: "dom.icc.enabled"},
     {name: "MozTimeManager", b2g: true},
     {name: "MozVoicemail", b2g: true, pref: "dom.voicemail.enabled"},
@@ -398,6 +409,7 @@ var interfaceNamesInGlobalScope =
     "PhoneNumberService",
     "Plugin",
     "PluginArray",
+    {name: "PointerEvent", pref: "dom.w3c_pointer_events.enabled"},
     "PopStateEvent",
     "PopupBlockedEvent",
     "ProcessingInstruction",
@@ -408,9 +420,9 @@ var interfaceNamesInGlobalScope =
     "RecordErrorEvent",
     "Rect",
     "RGBColor",
-    "RTCDataChannelEvent",
-    "RTCPeerConnectionIceEvent",
-    "RTCStatsReport",
+    {name: "RTCDataChannelEvent", pref: "media.peerconnection.enabled"},
+    {name: "RTCPeerConnectionIceEvent", pref: "media.peerconnection.enabled"},
+    {name: "RTCStatsReport", pref: "media.peerconnection.enabled"},
     "Screen",
     "ScriptProcessorNode",
     "ScrollAreaEvent",
@@ -649,9 +661,7 @@ function createInterfaceMap(isXBLScope) {
     }
   }
 
-  // Standard ECMAScript global objects are not defined on the XBL scope, but
-  // everything else exists everywhere.
-  addInterfaces(ecmaGlobals, !isXBLScope);
+  addInterfaces(ecmaGlobals, true);
   addInterfaces(interfaceNamesInGlobalScope, true);
 
   return interfaceMap;

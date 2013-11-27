@@ -153,6 +153,8 @@ SmsParent::SmsParent()
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
   obs->AddObserver(this, kSilentSmsReceivedObserverTopic, false);
+  obs->AddObserver(this, kSmsReadSuccessObserverTopic, false);
+  obs->AddObserver(this, kSmsReadErrorObserverTopic, false);
 }
 
 void
@@ -171,6 +173,8 @@ SmsParent::ActorDestroy(ActorDestroyReason why)
   obs->RemoveObserver(this, kSmsDeliverySuccessObserverTopic);
   obs->RemoveObserver(this, kSmsDeliveryErrorObserverTopic);
   obs->RemoveObserver(this, kSilentSmsReceivedObserverTopic);
+  obs->RemoveObserver(this, kSmsReadSuccessObserverTopic);
+  obs->RemoveObserver(this, kSmsReadErrorObserverTopic);
 }
 
 NS_IMETHODIMP
@@ -272,6 +276,30 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
     return NS_OK;
   }
 
+
+  if (!strcmp(aTopic, kSmsReadSuccessObserverTopic)) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
+      NS_ERROR("Got a 'sms-read-success' topic without a valid message!");
+      return NS_OK;
+    }
+
+    unused << SendNotifyReadSuccessMessage(msgData);
+    return NS_OK;
+  }
+
+  if (!strcmp(aTopic, kSmsReadErrorObserverTopic)) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
+      NS_ERROR("Got a 'sms-read-error' topic without a valid message!");
+      return NS_OK;
+    }
+
+    unused << SendNotifyReadErrorMessage(msgData);
+    return NS_OK;
+  }
+
+
   return NS_OK;
 }
 
@@ -298,18 +326,6 @@ SmsParent::GetMobileMessageDataFromMessage(nsISupports *aMsg,
 
   NS_WARNING("Cannot get MobileMessageData");
   return false;
-}
-
-bool
-SmsParent::RecvHasSupport(bool* aHasSupport)
-{
-  *aHasSupport = false;
-
-  nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsService, true);
-
-  smsService->HasSupport(aHasSupport);
-  return true;
 }
 
 bool

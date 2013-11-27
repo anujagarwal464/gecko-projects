@@ -139,6 +139,7 @@
 #endif
 #include "nsIDOMCustomEvent.h"
 #include "nsIFrameRequestCallback.h"
+#include "nsIJARChannel.h"
 
 #include "xpcprivate.h"
 
@@ -235,6 +236,13 @@ class nsIScriptTimeoutHandler;
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gDOMLeakPRLog;
+#endif
+
+#ifdef XP_WIN
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h> // for getpid()
 #endif
 
 static const char kStorageEnabled[] = "dom.storage.enabled";
@@ -540,7 +548,8 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
   mIsActive(false), mIsBackground(false),
   mInnerWindow(nullptr), mOuterWindow(aOuterWindow),
   // Make sure no actual window ends up with mWindowID == 0
-  mWindowID(++gNextWindowID), mHasNotifiedGlobalCreated(false)
+  mWindowID(++gNextWindowID), mHasNotifiedGlobalCreated(false),
+  mMarkedCCGeneration(0)
  {}
 
 nsPIDOMWindow::~nsPIDOMWindow() {}
@@ -603,6 +612,11 @@ public:
                        bool *bp) MOZ_OVERRIDE;
   virtual bool enumerate(JSContext *cx, JS::Handle<JSObject*> proxy,
                          JS::AutoIdVector &props) MOZ_OVERRIDE;
+
+  virtual bool watch(JSContext *cx, JS::Handle<JSObject*> proxy,
+                     JS::Handle<jsid> id, JS::Handle<JSObject*> callable) MOZ_OVERRIDE;
+  virtual bool unwatch(JSContext *cx, JS::Handle<JSObject*> proxy,
+                       JS::Handle<jsid> id) MOZ_OVERRIDE;
 
   // Derived traps
   virtual bool has(JSContext *cx, JS::Handle<JSObject*> proxy,
@@ -953,6 +967,20 @@ nsOuterWindowProxy::AppendIndexedPropertyNames(JSContext *cx, JSObject *proxy,
   return true;
 }
 
+bool
+nsOuterWindowProxy::watch(JSContext *cx, JS::Handle<JSObject*> proxy,
+                          JS::Handle<jsid> id, JS::Handle<JSObject*> callable)
+{
+  return js::WatchGuts(cx, proxy, id, callable);
+}
+
+bool
+nsOuterWindowProxy::unwatch(JSContext *cx, JS::Handle<JSObject*> proxy,
+                            JS::Handle<jsid> id)
+{
+  return js::UnwatchGuts(cx, proxy, id);
+}
+
 nsOuterWindowProxy
 nsOuterWindowProxy::singleton;
 
@@ -1121,10 +1149,12 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
 
 #ifdef DEBUG
   if (!PR_GetEnv("MOZ_QUIET")) {
-    printf("++DOMWINDOW == %d (%p) [serial = %d] [outer = %p]\n", gRefCnt,
-           static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
-           gSerialCounter,
-           static_cast<void*>(static_cast<nsIScriptGlobalObject*>(aOuterWindow)));
+    printf_stderr("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
+                  gRefCnt,
+                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
+                  getpid(),
+                  gSerialCounter,
+                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(aOuterWindow)));
   }
 #endif
 
@@ -1197,9 +1227,13 @@ nsGlobalWindow::~nsGlobalWindow()
     }
 
     nsGlobalWindow* outer = static_cast<nsGlobalWindow*>(mOuterWindow.get());
-    printf("--DOMWINDOW == %d (%p) [serial = %d] [outer = %p] [url = %s]\n",
-           gRefCnt, static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
-           mSerial, static_cast<void*>(static_cast<nsIScriptGlobalObject*>(outer)), url.get());
+    printf_stderr("--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = %s]\n",
+                  gRefCnt,
+                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
+                  getpid(),
+                  mSerial,
+                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(outer)),
+                  url.get());
   }
 #endif
 
@@ -1584,7 +1618,7 @@ MarkXBLHandlers(nsXBLPrototypeHandler* aKey, JS::Heap<JSObject*>& aData, void* a
 }
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGlobalWindow)
-  if (tmp->IsBlackForCC()) {
+  if (tmp->IsBlackForCC(false)) {
     if (tmp->mCachedXBLPrototypeHandlers) {
       tmp->mCachedXBLPrototypeHandlers->Enumerate(MarkXBLHandlers, nullptr);
     }
@@ -1597,11 +1631,11 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGlobalWindow)
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsGlobalWindow)
-  return tmp->IsBlackForCC();
+  return tmp->IsBlackForCC(true);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsGlobalWindow)
-  return tmp->IsBlackForCC();
+  return tmp->IsBlackForCC(false);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 inline void
@@ -1622,10 +1656,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindow)
     cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   } else {
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsGlobalWindow, tmp->mRefCnt.get())
-  }
-
-  if (!cb.WantAllTraces() && tmp->IsBlackForCC()) {
-    return NS_SUCCESS_INTERRUPTED_TRAVERSE;
   }
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContext)
@@ -1756,12 +1786,16 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsGlobalWindow)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 bool
-nsGlobalWindow::IsBlackForCC()
+nsGlobalWindow::IsBlackForCC(bool aTracingNeeded)
 {
-  return
-    (mDoc &&
-     nsCCUncollectableMarker::InGeneration(mDoc->GetMarkedCCGeneration())) ||
-    (nsCCUncollectableMarker::sGeneration && IsBlack());
+  if (!nsCCUncollectableMarker::sGeneration) {
+    return false;
+  }
+
+  return (nsCCUncollectableMarker::InGeneration(GetMarkedCCGeneration()) ||
+          IsBlack()) &&
+         (!aTracingNeeded ||
+          HasNothingToTrace(static_cast<nsIDOMEventTarget*>(this)));
 }
 
 void
@@ -2027,6 +2061,9 @@ WindowStateHolder::WindowStateHolder(nsGlobalWindow *aWindow,
   mInnerWindowHolder = aHolder;
 
   aWindow->SuspendTimeouts();
+
+  // When a global goes into the bfcache, we disable script.
+  xpc::Scriptability::Get(aWindow->mJSObject).SetDocShellAllowsScript(false);
 }
 
 WindowStateHolder::~WindowStateHolder()
@@ -2425,6 +2462,10 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     // Enter the new global's compartment.
     JSAutoCompartment ac(cx, mJSObject);
 
+    // Set scriptability based on the state of the docshell.
+    bool allow = GetDocShell()->GetCanExecuteScripts();
+    xpc::Scriptability::Get(mJSObject).SetDocShellAllowsScript(allow);
+
     // If we created a new inner window above, we need to do the last little bit
     // of initialization now that the dust has settled.
     if (createdInnerWindow) {
@@ -2505,6 +2546,14 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
       JS::Rooted<JSObject*> obj(cx, newInnerWindow->mJSObject);
       rv = mContext->InitClasses(obj);
       NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    // If the document comes from a JAR, check if the channel was determined
+    // to be unsafe. If so, permanently disable script on the compartment by
+    // calling Block() and throwing away the key.
+    nsCOMPtr<nsIJARChannel> jarChannel = do_QueryInterface(aDocument->GetChannel());
+    if (jarChannel && jarChannel->GetIsUnsafe()) {
+      xpc::Scriptability::Get(newInnerWindow->mJSObject).Block();
     }
 
     if (mArguments) {
@@ -2799,6 +2848,14 @@ nsGlobalWindow::UpdateParentTarget()
   nsCOMPtr<Element> frameElement = GetFrameElementInternal();
   nsCOMPtr<EventTarget> eventTarget =
     TryGetTabChildGlobalAsEventTarget(frameElement);
+
+  if (!eventTarget) {
+    nsGlobalWindow* topWin = GetScriptableTop();
+    if (topWin) {
+      frameElement = topWin->GetFrameElementInternal();
+      eventTarget = TryGetTabChildGlobalAsEventTarget(frameElement);
+    }
+  }
 
   if (!eventTarget) {
     eventTarget = TryGetTabChildGlobalAsEventTarget(mChromeEventHandler);
@@ -3137,19 +3194,6 @@ nsGlobalWindow::PoisonOuterWindowProxy(JSObject *aObject)
   MOZ_ASSERT(IsOuterWindow());
   if (aObject == mJSObject) {
     mJSObject.setToCrashOnTouch();
-  }
-}
-
-void
-nsGlobalWindow::SetScriptsEnabled(bool aEnabled, bool aFireTimeouts)
-{
-  FORWARD_TO_INNER_VOID(SetScriptsEnabled, (aEnabled, aFireTimeouts));
-
-  if (aEnabled && aFireTimeouts) {
-    // Scripts are enabled (again?) on this context, run timeouts that
-    // fired on this context while scripts were disabled.
-    void (nsGlobalWindow::*run)() = &nsGlobalWindow::RunTimeout;
-    NS_DispatchToCurrentThread(NS_NewRunnableMethod(this, run));
   }
 }
 
@@ -6928,27 +6972,23 @@ nsGlobalWindow::SetResizable(bool aResizable)
   return NS_OK;
 }
 
-static void
-ReportUseOfDeprecatedMethod(nsGlobalWindow* aWindow, const char* aWarning)
-{
-  nsCOMPtr<nsIDocument> doc = aWindow->GetExtantDoc();
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  NS_LITERAL_CSTRING("DOM Events"), doc,
-                                  nsContentUtils::eDOM_PROPERTIES,
-                                  aWarning);
-}
-
 NS_IMETHODIMP
 nsGlobalWindow::CaptureEvents(int32_t aEventFlags)
 {
-  ReportUseOfDeprecatedMethod(this, "UseOfCaptureEventsWarning");
+  if (mDoc) {
+    mDoc->WarnOnceAbout(nsIDocument::eUseOfCaptureEvents);
+  }
+
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsGlobalWindow::ReleaseEvents(int32_t aEventFlags)
 {
-  ReportUseOfDeprecatedMethod(this, "UseOfReleaseEventsWarning");
+  if (mDoc) {
+    mDoc->WarnOnceAbout(nsIDocument::eUseOfReleaseEvents);
+  }
+
   return NS_OK;
 }
 
@@ -7531,7 +7571,7 @@ PostMessageWriteStructuredClone(JSContext* cx,
 
   if (MessageChannel::PrefEnabled()) {
     MessagePortBase* port = nullptr;
-    nsresult rv = UNWRAP_OBJECT(MessagePort, cx, obj, port);
+    nsresult rv = UNWRAP_OBJECT(MessagePort, obj, port);
     if (NS_SUCCEEDED(rv) && scInfo->subsumes) {
       nsRefPtr<MessagePortBase> newPort = port->Clone();
 
@@ -7929,9 +7969,12 @@ nsGlobalWindow::Close(ErrorResult& aError)
     return;
   }
 
-  // Don't allow scripts from content to close non-app windows that were not
-  // opened by script.
+  // Don't allow scripts from content to close non-app or non-neterror
+  // windows that were not opened by script.
+  nsAutoString url;
+  mDoc->GetURL(url);
   if (!mDocShell->GetIsApp() &&
+      !StringBeginsWith(url, NS_LITERAL_STRING("about:neterror")) &&
       !mHadOriginalOpener && !nsContentUtils::IsCallerChrome()) {
     bool allowClose = mAllowScriptsToClose ||
       Preferences::GetBool("dom.allow_scripts_to_close_windows", true);
@@ -8580,6 +8623,10 @@ already_AddRefed<nsIVariant>
 nsGlobalWindow::ShowModalDialog(const nsAString& aUrl, nsIVariant* aArgument,
                                 const nsAString& aOptions, ErrorResult& aError)
 {
+  if (mDoc) {
+    mDoc->WarnOnceAbout(nsIDocument::eShowModalDialog);
+  }
+
   FORWARD_TO_OUTER_OR_THROW(ShowModalDialog,
                             (aUrl, aArgument, aOptions, aError), aError,
                             nullptr);
@@ -8905,10 +8952,13 @@ NS_IMPL_REMOVE_SYSTEM_EVENT_LISTENER(nsGlobalWindow)
 NS_IMETHODIMP
 nsGlobalWindow::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
 {
-  MOZ_ASSERT(!IsInnerWindow() || IsCurrentInnerWindow(),
-             "We should only fire events on the current inner window.");
-
   FORWARD_TO_INNER(DispatchEvent, (aEvent, aRetVal), NS_OK);
+
+  if (!IsCurrentInnerWindow()) {
+    NS_WARNING("DispatchEvent called on non-current inner window, dropping. "
+               "Please check the window in the caller instead.");
+    return NS_ERROR_FAILURE;
+  }
 
   if (!mDoc) {
     return NS_ERROR_FAILURE;
@@ -10358,7 +10408,7 @@ nsGlobalWindow::ShowSlowScriptDialog()
   NS_ENSURE_TRUE(prompt, KillSlowScript);
 
   // Check if we should offer the option to debug
-  JS::RootedScript script(cx);
+  JS::Rooted<JSScript*> script(cx);
   unsigned lineno;
   bool hasFrame = JS_DescribeScriptedCaller(cx, &script, &lineno);
 
@@ -11784,20 +11834,6 @@ nsGlobalWindow::RunTimeout(nsTimeout *aTimeout)
     if (!scx) {
       // No context means this window was closed or never properly
       // initialized for this language.
-      continue;
-    }
-
-    // The "scripts disabled" concept is still a little vague wrt
-    // multiple languages.  Prepare for the day when languages can be
-    // disabled independently of the other languages...
-    if (!scx->GetScriptsEnabled()) {
-      // Scripts were enabled once in this window (unless aTimeout ==
-      // nullptr) but now scripts are disabled (we might be in
-      // print-preview, for instance), this means we shouldn't run any
-      // timeouts at this point.
-      //
-      // If scripts are enabled for this language in this window again
-      // we'll fire the timeouts that are due at that point.
       continue;
     }
 

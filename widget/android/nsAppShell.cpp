@@ -34,6 +34,7 @@
 #include "prenv.h"
 
 #include "AndroidBridge.h"
+#include "AndroidBridgeUtilities.h"
 #include <android/log.h>
 #include <pthread.h>
 #include <wchar.h>
@@ -82,20 +83,20 @@ public:
         nsCOMPtr<nsIBrowserTab> tab;
         mBrowserApp->GetBrowserTab(mTabId, getter_AddRefs(tab));
         if (!tab) {
-            AndroidBridge::Bridge()->SendThumbnail(buffer, mTabId, false);
+            ThumbnailHelper::SendThumbnail(buffer, mTabId, false);
             return NS_ERROR_FAILURE;
         }
 
         tab->GetWindow(getter_AddRefs(domWindow));
         if (!domWindow) {
-            AndroidBridge::Bridge()->SendThumbnail(buffer, mTabId, false);
+            ThumbnailHelper::SendThumbnail(buffer, mTabId, false);
             return NS_ERROR_FAILURE;
         }
 
         NS_ASSERTION(mPoints.Length() == 1, "Thumbnail event does not have enough coordinates");
 
         nsresult rv = AndroidBridge::Bridge()->CaptureThumbnail(domWindow, mPoints[0].x, mPoints[0].y, mTabId, buffer);
-        AndroidBridge::Bridge()->SendThumbnail(buffer, mTabId, NS_SUCCEEDED(rv));
+        ThumbnailHelper::SendThumbnail(buffer, mTabId, NS_SUCCEEDED(rv));
         return rv;
     }
 private:
@@ -110,7 +111,7 @@ class WakeLockListener MOZ_FINAL : public nsIDOMMozWakeLockListener {
   NS_DECL_ISUPPORTS;
 
   nsresult Callback(const nsAString& topic, const nsAString& state) {
-    AndroidBridge::Bridge()->NotifyWakeLockChanged(topic, state);
+    GeckoAppShell::NotifyWakeLockChanged(topic, state);
     return NS_OK;
   }
 };
@@ -202,7 +203,7 @@ nsAppShell::Init()
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (match) {
-        bridge->SetSelectedLocale(EmptyString());
+        GeckoAppShell::SetSelectedLocale(EmptyString());
         return NS_OK;
     }
 
@@ -212,7 +213,7 @@ nsAppShell::Init()
         rv = Preferences::GetString(PREFNAME_UA_LOCALE, &locale);
     }
 
-    bridge->SetSelectedLocale(locale);
+    GeckoAppShell::SetSelectedLocale(locale);
     mAllowCoalescingTouches = Preferences::GetBool(PREFNAME_COALESCE_TOUCHES, true);
     return rv;
 }
@@ -234,17 +235,12 @@ nsAppShell::Observe(nsISupports* aSubject,
                        NS_LITERAL_STRING(PREFNAME_COALESCE_TOUCHES)) ||
                    nsDependentString(aData).Equals(
                        NS_LITERAL_STRING(PREFNAME_MATCH_OS)))) {
-        AndroidBridge* bridge = AndroidBridge::Bridge();
-        if (!bridge) {
-            return NS_OK;
-        }
-
         bool match;
         nsresult rv = Preferences::GetBool(PREFNAME_MATCH_OS, &match);
         NS_ENSURE_SUCCESS(rv, rv);
 
         if (match) {
-            bridge->SetSelectedLocale(EmptyString());
+            GeckoAppShell::SetSelectedLocale(EmptyString());
             return NS_OK;
         }
 
@@ -254,7 +250,7 @@ nsAppShell::Observe(nsISupports* aSubject,
             locale = Preferences::GetString(PREFNAME_UA_LOCALE);
         }
 
-        bridge->SetSelectedLocale(locale);
+        GeckoAppShell::SetSelectedLocale(locale);
 
         mAllowCoalescingTouches = Preferences::GetBool(PREFNAME_COALESCE_TOUCHES, true);
         return NS_OK;
@@ -316,7 +312,14 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
         mozilla::hal::SensorType type = (mozilla::hal::SensorType) curEvent->Flags();
 
         switch (type) {
+          // Bug 938035, transfer HAL data for orientation sensor to meet w3c
+          // spec, ex: HAL report alpha=90 means East but alpha=90 means West
+          // in w3c spec
           case hal::SENSOR_ORIENTATION:
+            values.AppendElement(360 -curEvent->X());
+            values.AppendElement(-curEvent->Y()); 
+            values.AppendElement(-curEvent->Z());
+            break;
           case hal::SENSOR_LINEAR_ACCELERATION:
           case hal::SENSOR_ACCELERATION:
           case hal::SENSOR_GYROSCOPE:
@@ -403,10 +406,6 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
 
     case AndroidGeckoEvent::THUMBNAIL: {
         if (!mBrowserApp)
-            break;
-
-        AndroidBridge* bridge = AndroidBridge::Bridge();
-        if (!bridge)
             break;
 
         int32_t tabId = curEvent->MetaState();
@@ -600,7 +599,7 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
     }
 
     if (curEvent->AckNeeded()) {
-        AndroidBridge::Bridge()->AcknowledgeEvent();
+        GeckoAppShell::AcknowledgeEvent();
     }
 
     EVLOG("nsAppShell: -- done event %p %d", (void*)curEvent.get(), curEvent->Type());

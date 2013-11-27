@@ -80,11 +80,12 @@ xpc::NewSandboxConstructor()
 static bool
 SandboxDump(JSContext *cx, unsigned argc, jsval *vp)
 {
-    JSString *str;
-    if (!argc)
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (args.length() == 0)
         return true;
 
-    str = JS_ValueToString(cx, JS_ARGV(cx, vp)[0]);
+    RootedString str(cx, ToString(cx, args[0]));
     if (!str)
         return false;
 
@@ -107,11 +108,14 @@ SandboxDump(JSContext *cx, unsigned argc, jsval *vp)
         c++;
     }
 #endif
+#ifdef ANDROID
+    __android_log_write(ANDROID_LOG_INFO, "GeckoDump", cstr);
+#endif
 
     fputs(cstr, stdout);
     fflush(stdout);
     NS_Free(cstr);
-    JS_SET_RVAL(cx, vp, JSVAL_TRUE);
+    args.rval().setBoolean(true);
     return true;
 }
 
@@ -138,7 +142,7 @@ SandboxImport(JSContext *cx, unsigned argc, Value *vp)
     RootedString funname(cx);
     if (args.length() > 1) {
         // Use the second parameter as the function name.
-        funname = JS_ValueToString(cx, args[1]);
+        funname = ToString(cx, args[1]);
         if (!funname)
             return false;
     } else {
@@ -215,6 +219,27 @@ CreateXMLHttpRequest(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
+static bool
+IsProxy(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() < 1) {
+        JS_ReportError(cx, "Function requires at least 1 argument");
+        return false;
+    }
+    if (!args[0].isObject()) {
+        args.rval().setBoolean(false);
+        return true;
+    }
+
+    RootedObject obj(cx, &args[0].toObject());
+    obj = js::CheckedUnwrap(obj);
+    NS_ENSURE_TRUE(obj, false);
+
+    args.rval().setBoolean(js::IsScriptedProxy(obj));
+    return true;
+}
+
 namespace xpc {
 
 bool
@@ -235,6 +260,11 @@ ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleV
     targetScope = CheckedUnwrap(targetScope);
     if (!targetScope) {
         JS_ReportError(cx, "Permission denied to export function into scope");
+        return false;
+    }
+
+    if (js::IsScriptedProxy(targetScope)) {
+        JS_ReportError(cx, "Defining property on proxy object is not allowed");
         return false;
     }
 
@@ -455,11 +485,6 @@ EvalInWindow(JSContext *cx, const nsAString &source, HandleObject scope, Mutable
         (static_cast<nsGlobalWindow*>(window.get()))->GetScriptContext();
     if (!context) {
         JS_ReportError(cx, "Script context needed");
-        return false;
-    }
-
-    if (!context->GetScriptsEnabled()) {
-        JS_ReportError(cx, "Scripts are disabled in this window");
         return false;
     }
 
@@ -949,8 +974,7 @@ bool
 xpc::GlobalProperties::Define(JSContext *cx, JS::HandleObject obj)
 {
     if (indexedDB && AccessCheck::isChrome(obj) &&
-        (!IndexedDatabaseManager::DefineConstructors(cx, obj) ||
-         !IndexedDatabaseManager::DefineIndexedDBGetter(cx, obj)))
+        !IndexedDatabaseManager::DefineIndexedDB(cx, obj))
         return false;
 
     if (XMLHttpRequest &&
@@ -1087,7 +1111,8 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
         if (options.wantExportHelpers &&
             (!JS_DefineFunction(cx, sandbox, "exportFunction", ExportFunction, 3, 0) ||
              !JS_DefineFunction(cx, sandbox, "evalInWindow", EvalInWindow, 2, 0) ||
-             !JS_DefineFunction(cx, sandbox, "createObjectIn", CreateObjectIn, 2, 0)))
+             !JS_DefineFunction(cx, sandbox, "createObjectIn", CreateObjectIn, 2, 0) ||
+             !JS_DefineFunction(cx, sandbox, "isProxy", IsProxy, 1, 0)))
             return NS_ERROR_XPC_UNEXPECTED;
 
         if (!options.globalProperties.Define(cx, sandbox))
@@ -1645,7 +1670,7 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
                           PromiseFlatString(source).get(), source.Length(),
                           v.address());
         if (ok && returnStringOnly && !v.isUndefined()) {
-            JSString *str = JS_ValueToString(sandcx, v);
+            JSString *str = ToString(sandcx, v);
             ok = !!str;
             v = ok ? JS::StringValue(str) : JS::UndefinedValue();
         }
@@ -1657,7 +1682,7 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
             if (returnStringOnly) {
                 // The caller asked for strings only, convert the
                 // exception into a string.
-                JSString *str = JS_ValueToString(sandcx, exn);
+                JSString *str = ToString(sandcx, exn);
                 exn = str ? JS::StringValue(str) : JS::UndefinedValue();
             }
         }

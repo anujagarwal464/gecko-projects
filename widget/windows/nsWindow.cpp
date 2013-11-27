@@ -125,6 +125,7 @@
 #include "nsIWidgetListener.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/gfx/2D.h"
+#include "mozilla/WindowsVersion.h"
 
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
@@ -134,7 +135,6 @@
 #include "LayerManagerD3D10.h"
 #endif
 
-#include "LayerManagerOGL.h"
 #include "nsIGfxInfo.h"
 #include "nsUXThemeConstants.h"
 #include "KeyboardLayout.h"
@@ -481,9 +481,7 @@ nsWindow::Create(nsIWidget *aParent,
       parent = nullptr;
     }
 
-    if (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION &&
-        WinUtils::GetWindowsVersion() <= WinUtils::WIN7_VERSION &&
-        HasBogusPopupsDropShadowOnMultiMonitor()) {
+    if (IsVistaOrLater() && !IsWin8OrLater()) {
       extendedStyle |= WS_EX_COMPOSITED;
     }
 
@@ -606,7 +604,7 @@ nsWindow::Create(nsIWidget *aParent,
     // bugs over the years, disable it (sTrimOnMinimize=1) on Vista and up.
     sTrimOnMinimize =
       Preferences::GetBool("config.trim_on_minimize",
-        (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION)) ? 1 : 0;
+        IsVistaOrLater() ? 1 : 0);
     sSwitchKeyboardLayout =
       Preferences::GetBool("intl.keyboard.per_window_layout", false);
   }
@@ -1226,8 +1224,7 @@ bool nsWindow::IsVisible() const
 // transparency. These routines are called on size and move operations.
 void nsWindow::ClearThemeRegion()
 {
-  if (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION &&
-      !HasGlass() &&
+  if (IsVistaOrLater() && !HasGlass() &&
       (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
        (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
     SetWindowRgn(mWnd, nullptr, false);
@@ -1241,8 +1238,7 @@ void nsWindow::SetThemeRegion()
   // so default constants are used for part and state. At some point we might need part and
   // state values from nsNativeThemeWin's GetThemePartAndState, but currently windows that
   // change shape based on state haven't come up.
-  if (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION &&
-      !HasGlass() &&
+  if (IsVistaOrLater() && !HasGlass() &&
       (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
        (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
     HRGN hRgn = nullptr;
@@ -3317,39 +3313,11 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
         }
       }
 #endif
-      if (!mLayerManager && prefs.mPreferOpenGL) {
-        nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
-        int32_t status = nsIGfxInfo::FEATURE_NO_INFO;
-
-        if (gfxInfo && !prefs.mForceAcceleration) {
-          gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_OPENGL_LAYERS, &status);
-        }
-
-        if (status == nsIGfxInfo::FEATURE_NO_INFO) {
-          nsRefPtr<LayerManagerOGL> layerManager =
-            new LayerManagerOGL(this);
-          if (layerManager->Initialize()) {
-            mLayerManager = layerManager;
-          }
-
-        } else {
-          NS_WARNING("OpenGL accelerated layers are not supported on this system.");
-        }
-      }
     }
 
     // Fall back to software if we couldn't use any hardware backends.
     if (!mLayerManager) {
-      // Try to use an async compositor first, if possible
-      if (ShouldUseOffMainThreadCompositing()) {
-        // e10s uses the parameter to pass in the shadow manager from the TabChild
-        // so we don't expect to see it there since this doesn't support e10s.
-        NS_ASSERTION(aShadowManager == nullptr, "Async Compositor not supported with e10s");
-        CreateCompositor();
-      }
-
-      if (!mLayerManager)
-        mLayerManager = CreateBasicLayerManager();
+      mLayerManager = CreateBasicLayerManager();
     }
   }
 
@@ -3495,7 +3463,7 @@ nsWindow::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
 
   // Only Vista and later, Windows has the system setting of horizontal
   // scrolling by the mouse wheel.
-  if (WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION) {
+  if (IsVistaOrLater()) {
     if (!::SystemParametersInfo(SPI_GETWHEELSCROLLCHARS, 0, &systemSpeed, 0)) {
       return NS_ERROR_FAILURE;
     }

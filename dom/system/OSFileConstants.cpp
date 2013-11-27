@@ -13,6 +13,9 @@
 #include "unistd.h"
 #include "dirent.h"
 #include "sys/stat.h"
+#if !defined(ANDROID)
+#include <spawn.h>
+#endif // !defined(ANDROID)
 #endif // defined(XP_UNIX)
 
 #if defined(XP_LINUX)
@@ -504,6 +507,11 @@ static const dom::ConstantSpec gLibcProperties[] =
   // The size of |time_t|.
   { "OSFILE_SIZEOF_TIME_T", INT_TO_JSVAL(sizeof (time_t)) },
 
+#if !defined(ANDROID)
+  // The size of |posix_spawn_file_actions_t|.
+  { "OSFILE_SIZEOF_POSIX_SPAWN_FILE_ACTIONS_T", INT_TO_JSVAL(sizeof (posix_spawn_file_actions_t)) },
+#endif // !defined(ANDROID)
+
   // Defining |dirent|.
   // Size
   { "OSFILE_SIZEOF_DIRENT", INT_TO_JSVAL(sizeof (dirent)) },
@@ -801,17 +809,16 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   }
 
   // Locate libxul
+  // Note that we don't actually provide the full path, only the name of the
+  // library, which is sufficient to link to the library using js-ctypes.
   {
-    nsAutoString xulPath(gPaths->libDir);
-
-    xulPath.Append(PR_GetDirectorySeparator());
-
 #if defined(XP_MACOSX)
     // Under MacOS X, for some reason, libxul is called simply "XUL"
-    xulPath.Append(NS_LITERAL_STRING("XUL"));
+    nsAutoString xulPath(NS_LITERAL_STRING("XUL"));
 #else
     // On other platforms, libxul is a library "xul" with regular
     // library prefix/suffix
+    nsAutoString xulPath;
     xulPath.Append(NS_LITERAL_STRING(DLL_PREFIX));
     xulPath.Append(NS_LITERAL_STRING("xul"));
     xulPath.Append(NS_LITERAL_STRING(DLL_SUFFIX));

@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <cerrno>
+#include <deque>
 
 #include "base/histogram.h"
 #include "vcm.h"
@@ -64,6 +65,7 @@
 #include "MediaStreamTrack.h"
 #include "nsIScriptGlobalObject.h"
 #include "DOMMediaStream.h"
+#include "rlogringbuffer.h"
 #endif
 
 #ifndef USE_FAKE_MEDIA_STREAMS
@@ -202,7 +204,7 @@ public:
         mStateStr(aInfo->callStateToString(mCallState)),
         mFsmStateStr(aInfo->fsmStateToString(mFsmState)) {
     if (mCallState == REMOTESTREAMADD) {
-      MediaStreamTable *streams = NULL;
+      MediaStreamTable *streams = nullptr;
       streams = aInfo->getMediaStreams();
       mRemoteStream = mPC->media()->GetRemoteStream(streams->media_stream_id);
       MOZ_ASSERT(mRemoteStream);
@@ -454,11 +456,12 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
   , mInternal(new Internal())
   , mReadyState(PCImplReadyState::New)
   , mSignalingState(PCImplSignalingState::SignalingStable)
-  , mIceState(PCImplIceState::IceGathering)
+  , mIceConnectionState(PCImplIceConnectionState::New)
+  , mIceGatheringState(PCImplIceGatheringState::New)
   , mWindow(nullptr)
-  , mIdentity(NULL)
-  , mSTSThread(NULL)
-  , mMedia(NULL)
+  , mIdentity(nullptr)
+  , mSTSThread(nullptr)
+  , mMedia(nullptr)
   , mNumAudioStreams(0)
   , mNumVideoStreams(0)
   , mHaveDataStream(false)
@@ -677,7 +680,7 @@ PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
   MOZ_ASSERT(aThread);
   mThread = do_QueryInterface(aThread);
 
-  mPCObserver.Set(&aObserver);
+  mPCObserver = do_GetWeakReference(&aObserver);
 
   // Find the STS thread
 
@@ -751,9 +754,12 @@ PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
   mMedia = new PeerConnectionMedia(this);
 
   // Connect ICE slots.
-  mMedia->SignalIceGatheringCompleted.connect(this, &PeerConnectionImpl::IceGatheringCompleted);
-  mMedia->SignalIceCompleted.connect(this, &PeerConnectionImpl::IceCompleted);
-  mMedia->SignalIceFailed.connect(this, &PeerConnectionImpl::IceFailed);
+  mMedia->SignalIceGatheringStateChange.connect(
+      this,
+      &PeerConnectionImpl::IceGatheringStateChange);
+  mMedia->SignalIceConnectionStateChange.connect(
+      this,
+      &PeerConnectionImpl::IceConnectionStateChange);
 
   // Initialize the media object.
   res = mMedia->Init(aConfiguration->getStunServers(),
@@ -978,6 +984,28 @@ PeerConnectionImpl::CreateDataChannel(const nsAString& aLabel,
   return NS_OK;
 }
 
+// do_QueryObjectReferent() - Helps get PeerConnectionObserver from nsWeakPtr.
+//
+// nsWeakPtr deals in XPCOM interfaces, while webidl bindings are concrete objs.
+// TODO: Turn this into a central (template) function somewhere (Bug 939178)
+//
+// Without it, each weak-ref call in this file would look like this:
+//
+//  nsCOMPtr<nsISupportsWeakReference> tmp = do_QueryReferent(mPCObserver);
+//  nsRefPtr<nsSupportsWeakReference> tmp2 = do_QueryObject(tmp);
+//  nsRefPtr<PeerConnectionObserver> pco = static_cast<PeerConnectionObserver*>(&*tmp2);
+//  if (!pco) {
+//    return;
+//  }
+
+static already_AddRefed<PeerConnectionObserver>
+do_QueryObjectReferent(nsIWeakReference* aRawPtr) {
+  nsCOMPtr<nsISupportsWeakReference> tmp = do_QueryReferent(aRawPtr);
+  nsRefPtr<nsSupportsWeakReference> tmp2 = do_QueryObject(tmp);
+  nsRefPtr<PeerConnectionObserver> tmp3 = static_cast<PeerConnectionObserver*>(&*tmp2);
+  return tmp3.forget();
+}
+
 void
 PeerConnectionImpl::NotifyConnection()
 {
@@ -986,7 +1014,7 @@ PeerConnectionImpl::NotifyConnection()
   CSFLogDebug(logTag, "%s", __FUNCTION__);
 
 #ifdef MOZILLA_INTERNAL_API
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1007,7 +1035,7 @@ PeerConnectionImpl::NotifyClosedConnection()
   CSFLogDebug(logTag, "%s", __FUNCTION__);
 
 #ifdef MOZILLA_INTERNAL_API
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1047,7 +1075,7 @@ PeerConnectionImpl::NotifyDataChannel(already_AddRefed<DataChannel> aChannel)
                                      getter_AddRefs(domchannel));
   NS_ENSURE_SUCCESS_VOID(rv);
 
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1179,6 +1207,23 @@ PeerConnectionImpl::GetStats(MediaStreamTrack *aSelector,
 }
 
 NS_IMETHODIMP
+PeerConnectionImpl::GetLogging(const nsAString& aPattern) {
+  PC_AUTO_ENTER_API_CALL(true);
+
+#ifdef MOZILLA_INTERNAL_API
+  std::string pattern(NS_ConvertUTF16toUTF8(aPattern).get());
+  nsRefPtr<PeerConnectionImpl> pc(this);
+  RUN_ON_THREAD(mSTSThread,
+                WrapRunnable(pc,
+                             &PeerConnectionImpl::GetLogging_s,
+                             pattern),
+                NS_DISPATCH_NORMAL);
+
+#endif
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 PeerConnectionImpl::AddIceCandidate(const char* aCandidate, const char* aMid, unsigned short aLevel) {
   PC_AUTO_ENTER_API_CALL(true);
 
@@ -1283,7 +1328,7 @@ PeerConnectionImpl::SetRemoteFingerprint(const char* hash, const char* fingerpri
   MOZ_ASSERT(hash);
   MOZ_ASSERT(fingerprint);
 
-  if (fingerprint != NULL && (strcmp(hash, "sha-1") == 0)) {
+  if (fingerprint != nullptr && (strcmp(hash, "sha-1") == 0)) {
     mRemoteFingerprint = std::string(fingerprint);
     CSFLogDebug(logTag, "Setting remote fingerprint to %s", mRemoteFingerprint.c_str());
     return NS_OK;
@@ -1377,12 +1422,22 @@ PeerConnectionImpl::SipccState(PCImplSipccState* aState)
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::IceState(PCImplIceState* aState)
+PeerConnectionImpl::IceConnectionState(PCImplIceConnectionState* aState)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
   MOZ_ASSERT(aState);
 
-  *aState = mIceState;
+  *aState = mIceConnectionState;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::IceGatheringState(PCImplIceGatheringState* aState)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+  MOZ_ASSERT(aState);
+
+  *aState = mIceGatheringState;
   return NS_OK;
 }
 
@@ -1391,7 +1446,7 @@ PeerConnectionImpl::CheckApiState(bool assert_ice_ready) const
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
   MOZ_ASSERT(mTrickle || !assert_ice_ready ||
-             (mIceState != PCImplIceState::IceGathering));
+             (mIceGatheringState == PCImplIceGatheringState::Complete));
 
   if (mReadyState == PCImplReadyState::Closed)
     return NS_ERROR_FAILURE;
@@ -1513,7 +1568,7 @@ PeerConnectionImpl::onCallEvent(const OnCallEventArgs& args)
       break;
   }
 
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1536,7 +1591,7 @@ PeerConnectionImpl::ChangeReadyState(PCImplReadyState aReadyState)
   mReadyState = aReadyState;
 
   // Note that we are passing an nsRefPtr which keeps the observer live.
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1558,7 +1613,7 @@ PeerConnectionImpl::SetSignalingState_m(PCImplSignalingState aSignalingState)
   }
 
   mSignalingState = aSignalingState;
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return;
   }
@@ -1589,75 +1644,100 @@ PeerConnectionImpl::GetHandle()
   return mHandle;
 }
 
+static mozilla::dom::PCImplIceConnectionState
+toDomIceConnectionState(NrIceCtx::ConnectionState state) {
+  switch (state) {
+    case NrIceCtx::ICE_CTX_INIT:
+      return PCImplIceConnectionState::New;
+    case NrIceCtx::ICE_CTX_CHECKING:
+      return PCImplIceConnectionState::Checking;
+    case NrIceCtx::ICE_CTX_OPEN:
+      return PCImplIceConnectionState::Connected;
+    case NrIceCtx::ICE_CTX_FAILED:
+      return PCImplIceConnectionState::Failed;
+  }
+  MOZ_CRASH();
+}
+
+static mozilla::dom::PCImplIceGatheringState
+toDomIceGatheringState(NrIceCtx::GatheringState state) {
+  switch (state) {
+    case NrIceCtx::ICE_CTX_GATHER_INIT:
+      return PCImplIceGatheringState::New;
+    case NrIceCtx::ICE_CTX_GATHER_STARTED:
+      return PCImplIceGatheringState::Gathering;
+    case NrIceCtx::ICE_CTX_GATHER_COMPLETE:
+      return PCImplIceGatheringState::Complete;
+  }
+  MOZ_CRASH();
+}
+
 // This is called from the STS thread and so we need to thunk
 // to the main thread.
-void
-PeerConnectionImpl::IceGatheringCompleted(NrIceCtx *aCtx)
-{
-  (void) aCtx;
+void PeerConnectionImpl::IceConnectionStateChange(
+    NrIceCtx* ctx,
+    NrIceCtx::ConnectionState state) {
+  (void)ctx;
   // Do an async call here to unwind the stack. refptr keeps the PC alive.
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceStateChange_m,
-                             PCImplIceState::IceWaiting),
+                             &PeerConnectionImpl::IceConnectionStateChange_m,
+                             toDomIceConnectionState(state)),
                 NS_DISPATCH_NORMAL);
 }
 
 void
-PeerConnectionImpl::IceCompleted(NrIceCtx *aCtx)
+PeerConnectionImpl::IceGatheringStateChange(
+    NrIceCtx* ctx,
+    NrIceCtx::GatheringState state)
 {
-  (void) aCtx;
+  (void)ctx;
   // Do an async call here to unwind the stack. refptr keeps the PC alive.
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceStateChange_m,
-                             PCImplIceState::IceConnected),
-                NS_DISPATCH_NORMAL);
-}
-
-void
-PeerConnectionImpl::IceFailed(NrIceCtx *aCtx)
-{
-  (void) aCtx;
-  // Do an async call here to unwind the stack. refptr keeps the PC alive.
-  nsRefPtr<PeerConnectionImpl> pc(this);
-  RUN_ON_THREAD(mThread,
-                WrapRunnable(pc,
-                             &PeerConnectionImpl::IceStateChange_m,
-                             PCImplIceState::IceFailed),
+                             &PeerConnectionImpl::IceGatheringStateChange_m,
+                             toDomIceGatheringState(state)),
                 NS_DISPATCH_NORMAL);
 }
 
 nsresult
-PeerConnectionImpl::IceStateChange_m(PCImplIceState aState)
+PeerConnectionImpl::IceConnectionStateChange_m(PCImplIceConnectionState aState)
 {
   PC_AUTO_ENTER_API_CALL(false);
 
   CSFLogDebug(logTag, "%s", __FUNCTION__);
 
-  mIceState = aState;
+  mIceConnectionState = aState;
 
-  switch (mIceState) {
-    case PCImplIceState::IceGathering:
-      STAMP_TIMECARD(mTimeCard, "Ice state: gathering");
+  // Would be nice if we had a means of converting one of these dom enums
+  // to a string that wasn't almost as much text as this switch statement...
+  switch (mIceConnectionState) {
+    case PCImplIceConnectionState::New:
+      STAMP_TIMECARD(mTimeCard, "Ice state: new");
       break;
-    case PCImplIceState::IceWaiting:
-      STAMP_TIMECARD(mTimeCard, "Ice state: waiting");
-      break;
-    case PCImplIceState::IceChecking:
+    case PCImplIceConnectionState::Checking:
       STAMP_TIMECARD(mTimeCard, "Ice state: checking");
       break;
-    case PCImplIceState::IceConnected:
+    case PCImplIceConnectionState::Connected:
       STAMP_TIMECARD(mTimeCard, "Ice state: connected");
       break;
-    case PCImplIceState::IceFailed:
+    case PCImplIceConnectionState::Completed:
+      STAMP_TIMECARD(mTimeCard, "Ice state: completed");
+      break;
+    case PCImplIceConnectionState::Failed:
       STAMP_TIMECARD(mTimeCard, "Ice state: failed");
+      break;
+    case PCImplIceConnectionState::Disconnected:
+      STAMP_TIMECARD(mTimeCard, "Ice state: disconnected");
+      break;
+    case PCImplIceConnectionState::Closed:
+      STAMP_TIMECARD(mTimeCard, "Ice state: closed");
       break;
   }
 
-  nsRefPtr<PeerConnectionObserver> pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (!pco) {
     return NS_OK;
   }
@@ -1665,7 +1745,44 @@ PeerConnectionImpl::IceStateChange_m(PCImplIceState aState)
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pco,
                              &PeerConnectionObserver::OnStateChange,
-                             PCObserverStateType::IceState,
+                             PCObserverStateType::IceConnectionState,
+                             rv, static_cast<JSCompartment*>(nullptr)),
+                NS_DISPATCH_NORMAL);
+  return NS_OK;
+}
+
+nsresult
+PeerConnectionImpl::IceGatheringStateChange_m(PCImplIceGatheringState aState)
+{
+  PC_AUTO_ENTER_API_CALL(false);
+
+  CSFLogDebug(logTag, "%s", __FUNCTION__);
+
+  mIceGatheringState = aState;
+
+  // Would be nice if we had a means of converting one of these dom enums
+  // to a string that wasn't almost as much text as this switch statement...
+  switch (mIceGatheringState) {
+    case PCImplIceGatheringState::New:
+      STAMP_TIMECARD(mTimeCard, "Ice gathering state: new");
+      break;
+    case PCImplIceGatheringState::Gathering:
+      STAMP_TIMECARD(mTimeCard, "Ice gathering state: gathering");
+      break;
+    case PCImplIceGatheringState::Complete:
+      STAMP_TIMECARD(mTimeCard, "Ice state: complete");
+      break;
+  }
+
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
+  if (!pco) {
+    return NS_OK;
+  }
+  WrappableJSErrorResult rv;
+  RUN_ON_THREAD(mThread,
+                WrapRunnable(pco,
+                             &PeerConnectionObserver::OnStateChange,
+                             PCObserverStateType::IceGatheringState,
                              rv, static_cast<JSCompartment*>(nullptr)),
                 NS_DISPATCH_NORMAL);
   return NS_OK;
@@ -1682,6 +1799,8 @@ void PeerConnectionImpl::GetStats_s(
   if (!report) {
     result = NS_ERROR_FAILURE;
   }
+
+  report->mPcid.Construct(NS_ConvertASCIItoUTF16(mHandle.c_str()));
   if (mMedia) {
     RefPtr<NrIceMediaStream> mediaStream(
         mMedia->ice_media_stream(trackId));
@@ -1693,10 +1812,8 @@ void PeerConnectionImpl::GetStats_s(
       NS_ConvertASCIItoUTF16 componentId(mediaStream->name().c_str());
       for (auto p = candPairs.begin(); p != candPairs.end(); ++p) {
         NS_ConvertASCIItoUTF16 codeword(p->codeword.c_str());
-        const nsString localCodeword(
-            NS_ConvertASCIItoUTF16("local_") + codeword);
-        const nsString remoteCodeword(
-            NS_ConvertASCIItoUTF16("remote_") + codeword);
+        NS_ConvertASCIItoUTF16 localCodeword(p->local.codeword.c_str());
+        NS_ConvertASCIItoUTF16 remoteCodeword(p->remote.codeword.c_str());
         // Only expose candidate-pair statistics to chrome, until we've thought
         // through the implications of exposing it to content.
 
@@ -1760,7 +1877,7 @@ void PeerConnectionImpl::OnStatsReport_m(
     uint32_t trackId,
     nsresult result,
     nsAutoPtr<RTCStatsReportInternal> report) {
-  PeerConnectionObserver* pco = mPCObserver.MayGet();
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
   if (pco) {
     JSErrorResult rv;
     if (NS_SUCCEEDED(result)) {
@@ -1776,6 +1893,45 @@ void PeerConnectionImpl::OnStatsReport_m(
     }
   }
 }
+
+void PeerConnectionImpl::GetLogging_s(const std::string& pattern) {
+  RLogRingBuffer* logs = RLogRingBuffer::GetInstance();
+  std::deque<std::string> result;
+  logs->Filter(pattern, 0, &result);
+  nsRefPtr<PeerConnectionImpl> pc(this);
+  RUN_ON_THREAD(mThread,
+                WrapRunnable(pc,
+                             &PeerConnectionImpl::OnGetLogging_m,
+                             pattern,
+                             result),
+                NS_DISPATCH_NORMAL);
+}
+
+void PeerConnectionImpl::OnGetLogging_m(const std::string& pattern,
+                                        const std::deque<std::string>& logging) {
+  nsRefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
+  if (!pco) {
+    return;
+  }
+
+  JSErrorResult rv;
+  if (!logging.empty()) {
+    Sequence<nsString> nsLogs;
+    for (auto l = logging.begin(); l != logging.end(); ++l) {
+      nsLogs.AppendElement(ObString(l->c_str()));
+    }
+    pco->OnGetLoggingSuccess(nsLogs, rv);
+  } else {
+    pco->OnGetLoggingError(kInternalError,
+        ObString(("No logging matching pattern " + pattern).c_str()), rv);
+  }
+
+  if (rv.Failed()) {
+    CSFLogError(logTag, "Error firing stats observer callback");
+  }
+}
+
+
 #endif
 
 void
@@ -1851,32 +2007,6 @@ PeerConnectionImpl::GetRemoteStreams(nsTArray<nsRefPtr<DOMMediaStream > >& resul
 #else
   return NS_ERROR_FAILURE;
 #endif
-}
-
-// WeakConcretePtr gets around WeakPtr not working on concrete types by using
-// the attribute getWeakReferent, a member that supports weak refs, as a guard.
-
-void
-PeerConnectionImpl::WeakConcretePtr::Set(PeerConnectionObserver *aObserver) {
-  mObserver = aObserver;
-#ifdef MOZILLA_INTERNAL_API
-  MOZ_ASSERT(NS_IsMainThread());
-  JSErrorResult rv;
-  nsCOMPtr<nsISupports> tmp = aObserver->GetWeakReferent(rv);
-  MOZ_ASSERT(!rv.Failed());
-  mWeakPtr = do_GetWeakReference(tmp);
-#else
-  mWeakPtr = do_GetWeakReference(aObserver);
-#endif
-}
-
-PeerConnectionObserver *
-PeerConnectionImpl::WeakConcretePtr::MayGet() {
-#ifdef MOZILLA_INTERNAL_API
-  MOZ_ASSERT(NS_IsMainThread());
-#endif
-  nsCOMPtr<nsISupports> guard = do_QueryReferent(mWeakPtr);
-  return (!guard) ? nullptr : mObserver;
 }
 
 }  // end sipcc namespace

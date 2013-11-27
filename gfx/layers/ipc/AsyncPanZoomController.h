@@ -13,6 +13,7 @@
 #include "mozilla/Monitor.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/Atomics.h"
 #include "InputData.h"
 #include "Axis.h"
 #include "TaskThrottler.h"
@@ -201,6 +202,13 @@ public:
   ViewTransform GetCurrentAsyncTransform();
 
   /**
+   * Returns the part of the async transform that will remain once Gecko does a
+   * repaint at the desired metrics. That is, in the steady state:
+   * gfx3DMatrix(GetCurrentAsyncTransform()) === GetNontransientAsyncTransform()
+   */
+  gfx3DMatrix GetNontransientAsyncTransform();
+
+  /**
    * Recalculates the displayport. Ideally, this should paint an area bigger
    * than the composite-to dimensions so that when you scroll down, you don't
    * checkerboard immediately. This includes a bunch of logic, including
@@ -223,6 +231,11 @@ public:
    * Does the work for ReceiveInputEvent().
    */
   nsEventStatus HandleInputEvent(const InputData& aEvent);
+
+  /**
+   * Populates the provided object with the scrollable guid of this apzc.
+   */
+  void GetGuid(ScrollableLayerGuid* aGuidOut);
 
   /**
    * Returns true if this APZC instance is for the layer identified by the guid.
@@ -258,8 +271,19 @@ public:
    * If this attempt causes overscroll (i.e. the layer cannot be scrolled
    * by the entire amount requested), the overscroll is passed back to the
    * tree manager via APZCTreeManager::HandleOverscroll().
+   * |aOverscrollHandoffChainIndex| is used by the tree manager to keep track
+   * of which APZC to hand off the overscroll to; this function simply
+   * propagates it to APZCTreeManager::HandleOverscroll() in the event of
+   * overscroll.
    */
-  void AttemptScroll(const ScreenPoint& aStartPoint, const ScreenPoint& aEndPoint);
+  void AttemptScroll(const ScreenPoint& aStartPoint, const ScreenPoint& aEndPoint,
+                     uint32_t aOverscrollHandoffChainIndex = 0);
+
+  /**
+   * Returns whether this APZC is for an element marked with the 'scrollgrab'
+   * attribute.
+   */
+  bool HasScrollgrab() const { return mFrameMetrics.mHasScrollgrab; }
 
 protected:
   /**
@@ -428,6 +452,12 @@ protected:
   void RequestContentRepaint();
 
   /**
+   * Tell the paint throttler to request a content repaint with the given
+   * metrics.  (Helper function used by RequestContentRepaint.)
+   */
+  void ScheduleContentRepaint(FrameMetrics &aFrameMetrics);
+
+  /**
    * Advances a fling by an interpolated amount based on the passed in |aDelta|.
    * This should be called whenever sampling the content transform for this
    * frame. Returns true if the fling animation should be advanced by one frame,
@@ -449,14 +479,6 @@ protected:
    * timeout should be cancelled.
    */
   void TimeoutTouchListeners();
-
-  /**
-   * Utility function that sets the zoom and resolution simultaneously. This is
-   * useful when we want to repaint at the current zoom level.
-   *
-   * *** The monitor must be held while calling this.
-   */
-  void SetZoomAndResolution(const mozilla::CSSToScreenScale& aZoom);
 
   /**
    * Timeout function for mozbrowserasyncscroll event. Because we throttle
@@ -488,6 +510,19 @@ private:
                     prevented the default actions yet. we still need to abort animations. */
   };
 
+  /**
+   * Helper to set the current state. Holds the monitor before actually setting
+   * it and fires content controller events based on state changes. Always set
+   * the state using this call, do not set it directly.
+   */
+  void SetState(PanZoomState aState);
+
+  /**
+   * Internal helpers for checking general state of this apzc.
+   */
+  bool IsTransformingState(PanZoomState aState);
+  bool IsPanningState(PanZoomState mState);
+
   enum AxisLockMode {
     FREE,     /* No locking at all */
     STANDARD, /* Default axis locking mode that remains locked until pan ends*/
@@ -495,15 +530,6 @@ private:
   };
 
   static AxisLockMode GetAxisLockMode();
-
-  /**
-   * Helper to set the current state. Holds the monitor before actually setting
-   * it. If the monitor is already held by the current thread, it is safe to
-   * instead use: |mState = NEWSTATE;|
-   */
-  void SetState(PanZoomState aState);
-
-  bool IsPanningState(PanZoomState mState);
 
   uint64_t mLayersId;
   nsRefPtr<CompositorParent> mCompositorParent;
@@ -638,13 +664,17 @@ public:
     return !mParent || (mParent->mLayersId != mLayersId);
   }
 
+  bool IsRootForLayersId(const uint64_t& aLayersId) const {
+    return (mLayersId == aLayersId) && IsRootForLayersId();
+  }
+
 private:
   // This is a raw pointer to avoid introducing a reference cycle between
   // AsyncPanZoomController and APZCTreeManager. Since these objects don't
   // live on the main thread, we can't use the cycle collector with them.
   // The APZCTreeManager owns the lifetime of the APZCs, so nulling this
   // pointer out in Destroy() will prevent accessing deleted memory.
-  APZCTreeManager* mTreeManager;
+  Atomic<APZCTreeManager*> mTreeManager;
 
   nsRefPtr<AsyncPanZoomController> mLastChild;
   nsRefPtr<AsyncPanZoomController> mPrevSibling;

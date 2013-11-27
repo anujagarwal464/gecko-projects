@@ -252,11 +252,6 @@ documenttab[selected] .documenttab-selection {
   transition-delay:    0s;
   transition-property: padding-bottom;
 }
-#browsers[findbar] browser {
-  /* delay setting padding-bottom until the findbar has transitioned in */
-  transition-delay:    @metro_animation_duration@;
-  padding-bottom: @findbar_height@;
-}
 /* Selection overlay and monocles */
 #page,
 .selection-overlay {
@@ -460,6 +455,9 @@ documenttab[selected] .documenttab-selection {
   box-shadow: 0 1px 0 hsla(210,5%,50%,.1) inset;
   -moz-user-focus: ignore;
 }
+#progress-container[startpage] {
+  visibility: collapse;
+}
 
 #progress-control {
   display: block;
@@ -595,11 +593,6 @@ documenttab[selected] .documenttab-selection {
   border-radius: 0;
   border: 0 none !important;
   padding: 0 !important;
-}
-
-#urlbar-edit > hbox > .textbox-input-box > .textbox-input::-moz-selection {
-  color: white;
-  background-color: @metro_orange@;
 }
 
 #urlbar-edit > hbox > .textbox-input-box > .textbox-input:invalid {
@@ -748,13 +741,16 @@ documenttab[selected] .documenttab-selection {
 }
 
 #download-progress {
-  -moz-image-region: rect(0px, 40px, 40px, 0px) !important;
+  width: 40px;
+  height: 40px;
+  list-style-image: url(chrome://browser/skin/images/navbar-download.png);
+  -moz-image-region: rect(0px, 40px, 40px, 0px);
 }
 #download-progress:hover {
-  -moz-image-region: rect(40px, 40px, 80px, 0px) !important;
+  -moz-image-region: rect(0px, 80px, 40px, 40px);
 }
 #download-progress:active {
-  -moz-image-region: rect(80px, 40px, 120px, 0px) !important;
+  -moz-image-region: rect(0px, 120px, 40px, 80px);
 }
 
 #pin-button {
@@ -770,6 +766,10 @@ documenttab[selected] .documenttab-selection {
 }
 
 @media (min-resolution: @min_res_140pc@) {
+  #download-progress {
+    list-style-image: url(chrome://browser/skin/images/navbar-download@1.4x.png);
+  }
+
   #pin-button {
     list-style-image: url(chrome://browser/skin/images/navbar-pin@1.4x.png);
   }
@@ -784,6 +784,10 @@ documenttab[selected] .documenttab-selection {
 }
 
 @media (min-resolution: @min_res_180pc@) {
+  #download-progress {
+    list-style-image: url(chrome://browser/skin/images/navbar-download@1.8x.png);
+  }
+
   #pin-button {
     list-style-image: url(chrome://browser/skin/images/navbar-pin@1.8x.png);
   }

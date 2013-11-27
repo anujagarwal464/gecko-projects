@@ -17,6 +17,7 @@ Cu.import("resource://gre/modules/LightweightThemeManager.jsm");
 Cu.import("resource://gre/modules/ctypes.jsm");
 Cu.import("resource://gre/modules/ThirdPartyCookieProbe.jsm");
 Cu.import("resource://gre/modules/TelemetryFile.jsm");
+Cu.import("resource://gre/modules/UITelemetry.jsm");
 
 // When modifying the payload in incompatible ways, please bump this version number
 const PAYLOAD_VERSION = 1;
@@ -64,6 +65,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "UpdateChannel",
                                   "resource://gre/modules/UpdateChannel.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManagerPrivate",
                                   "resource://gre/modules/AddonManager.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry",
+                                  "resource://gre/modules/UITelemetry.jsm");
 
 function generateUUID() {
   let str = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator).generateUUID().toString();
@@ -161,6 +164,9 @@ TelemetryPing.prototype = {
     } catch (ex) {}
     try {
       ret.addonManager = AddonManagerPrivate.getSimpleMeasures();
+    } catch (ex) {}
+    try {
+      ret.UITelemetry = UITelemetry.getSimpleMeasures();
     } catch (ex) {}
 
     if (si.process) {
@@ -311,6 +317,16 @@ TelemetryPing.prototype = {
     return ret;
   },
 
+  getThreadHangStats: function getThreadHangStats(stats) {
+    stats.forEach((thread) => {
+      thread.activity = this.packHistogram(thread.activity);
+      thread.hangs.forEach((hang) => {
+        hang.histogram = this.packHistogram(hang.histogram);
+      });
+    });
+    return stats;
+  },
+
   /**
    * Descriptive metadata
    *
@@ -374,10 +390,13 @@ TelemetryPing.prototype = {
     if (gfxInfo) {
       for each (let field in gfxfields) {
         try {
-          let value = "";
-          value = gfxInfo[field];
-          if (value != "")
+          let value = gfxInfo[field];
+          // bug 940806: We need to do a strict equality comparison here,
+          // otherwise a type conversion will occur and boolean false values
+          // will get filtered out
+          if (value !== "") {
             ret[field] = value;
+          }
         } catch (e) {
           continue
         }
@@ -452,6 +471,7 @@ TelemetryPing.prototype = {
     let p = (id, n) => h(id, Ci.nsIMemoryReporter.UNITS_PERCENTAGE, n);
 
     b("MEMORY_VSIZE", "vsize");
+    b("MEMORY_VSIZE_MAX_CONTIGUOUS", "vsizeMaxContiguous");
     b("MEMORY_RESIDENT", "residentFast");
     b("MEMORY_HEAP_ALLOCATED", "heapAllocated");
     p("MEMORY_HEAP_COMMITTED_UNUSED_RATIO", "heapOverheadRatio");
@@ -544,9 +564,11 @@ TelemetryPing.prototype = {
       histograms: this.getHistograms(Telemetry.histogramSnapshots),
       slowSQL: Telemetry.slowSQL,
       chromeHangs: Telemetry.chromeHangs,
+      threadHangStats: this.getThreadHangStats(Telemetry.threadHangStats),
       lateWrites: Telemetry.lateWrites,
       addonHistograms: this.getAddonHistograms(),
       addonDetails: AddonManagerPrivate.getTelemetryDetails(),
+      UIMeasurements: UITelemetry.getUIMeasurements(),
       info: info
     };
 

@@ -10,8 +10,6 @@
 
 #include "nsScanner.h"
 #include "nsDebug.h"
-#include "nsIServiceManager.h"
-#include "nsICharsetConverterManager.h"
 #include "nsReadableUtils.h"
 #include "nsIInputStream.h"
 #include "nsIFile.h"
@@ -46,12 +44,6 @@ nsReadEndCondition::nsReadEndCondition(const PRUnichar* aTerminateChars) :
     terminalChar = *current;
   }
 }
-
-#ifdef __INCREMENTAL
-const int   kBufsize=1;
-#else
-const int   kBufsize=64;
-#endif
 
 /**
  *  Use this constructor if you want i/o to be based on 
@@ -138,19 +130,10 @@ nsresult nsScanner::SetDocumentCharset(const nsACString& aCharset , int32_t aSou
 
   mCharset.Assign(charsetName);
 
-  NS_ASSERTION(nsParser::GetCharsetConverterManager(),
-               "Must have the charset converter manager!");
+  mUnicodeDecoder = EncodingUtils::DecoderForEncoding(mCharset);
+  mUnicodeDecoder->SetInputErrorBehavior(nsIUnicodeDecoder::kOnError_Signal);
 
-  nsresult res = nsParser::GetCharsetConverterManager()->
-    GetUnicodeDecoderRaw(mCharset.get(), getter_AddRefs(mUnicodeDecoder));
-  if (NS_SUCCEEDED(res) && mUnicodeDecoder)
-  {
-     // We need to detect conversion error of character to support XML
-     // encoding error.
-     mUnicodeDecoder->SetInputErrorBehavior(nsIUnicodeDecoder::kOnError_Signal);
-  }
-
-  return res;
+  return NS_OK;
 }
 
 

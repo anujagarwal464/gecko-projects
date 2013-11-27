@@ -31,6 +31,11 @@ class BluetoothOppManager : public BluetoothSocketObserver
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
+  BT_DECL_PROFILE_MGR_BASE
+  virtual void GetName(nsACString& aName)
+  {
+    aName.AssignLiteral("OPP");
+  }
 
   /*
    * Channel of reserved services are fixed values, please check
@@ -69,36 +74,6 @@ public:
   virtual void OnSocketConnectError(BluetoothSocket* aSocket) MOZ_OVERRIDE;
   virtual void OnSocketDisconnect(BluetoothSocket* aSocket) MOZ_OVERRIDE;
 
-  // The following functions are inherited from BluetoothProfileManagerBase
-  virtual void OnGetServiceChannel(const nsAString& aDeviceAddress,
-                                   const nsAString& aServiceUuid,
-                                   int aChannel) MOZ_OVERRIDE;
-  virtual void OnUpdateSdpRecords(const nsAString& aDeviceAddress) MOZ_OVERRIDE;
-  virtual void GetAddress(nsAString& aDeviceAddress) MOZ_OVERRIDE;
-  virtual bool IsConnected() MOZ_OVERRIDE;
-
-  virtual void GetName(nsACString& aName)
-  {
-    aName.AssignLiteral("OPP");
-  }
-
-  /*
-   * If an application wants to send a file, first, it needs to
-   * call Connect() to create a valid RFCOMM connection. After
-   * that, call SendFile()/StopSendingFile() to control file-sharing
-   * process. During the file transfering process, the application
-   * will receive several system messages which contain the processed
-   * percentage of file. At the end, the application will get another
-   * system message indicating that the process is complete, then it can
-   * either call Disconnect() to close RFCOMM connection or start another
-   * file-sending thread via calling SendFile() again.
-   */
-  virtual void Connect(const nsAString& aDeviceAddress,
-                       BluetoothProfileController* aController) MOZ_OVERRIDE;
-  virtual void Disconnect(BluetoothProfileController* aController) MOZ_OVERRIDE;
-  virtual void OnConnect(const nsAString& aErrorStr) MOZ_OVERRIDE;
-  virtual void OnDisconnect(const nsAString& aErrorStr) MOZ_OVERRIDE;
-
 private:
   BluetoothOppManager();
   bool Init();
@@ -132,6 +107,17 @@ private:
   void ConnectInternal(const nsAString& aDeviceAddress);
 
   /**
+   * Usually we won't get a full PUT packet in one operation, which means that
+   * a packet may be devided into several parts and BluetoothOppManager should
+   * be in charge of assembling.
+   *
+   * @return true if a packet has been fully received.
+   *         false if the received length exceeds/not reaches the expected
+   *         length.
+   */
+  bool ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage);
+
+  /**
    * OBEX session status.
    * Set when OBEX session is established.
    */
@@ -153,9 +139,9 @@ private:
    */
   int mLastCommand;
 
-  int mPacketLeftLength;
+  int mPacketLength;
+  int mPacketReceivedLength;
   int mBodySegmentLength;
-  int mReceivedDataBufferOffset;
   int mUpdateProgressCounter;
 
   /**
@@ -222,7 +208,6 @@ private:
   nsCOMPtr<nsIOutputStream> mOutputStream;
   nsCOMPtr<nsIInputStream> mInputStream;
   nsCOMPtr<nsIVolumeMountLock> mMountLock;
-  nsRefPtr<BluetoothProfileController> mController;
   nsRefPtr<DeviceStorageFile> mDsFile;
 
   // If a connection has been established, mSocket will be the socket

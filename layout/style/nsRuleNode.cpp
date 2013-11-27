@@ -104,7 +104,7 @@ nsRuleNode::ChildrenHashMatchEntry(PLDHashTable *aTable,
   return entry->mRuleNode->GetKey() == *key;
 }
 
-/* static */ PLDHashTableOps
+/* static */ const PLDHashTableOps
 nsRuleNode::ChildrenHashOps = {
   // It's probably better to allocate the table itself using malloc and
   // free rather than the pres shell's arena because the table doesn't
@@ -221,10 +221,11 @@ GetMetricsFor(nsPresContext* aPresContext,
   if (aUseUserFontSet) {
     fs = aPresContext->GetUserFontSet();
   }
+  gfxTextPerfMetrics *tp = aPresContext->GetTextPerfMetrics();
   nsRefPtr<nsFontMetrics> fm;
   aPresContext->DeviceContext()->GetMetricsFor(font,
                                                aStyleFont->mLanguage,
-                                               fs, *getter_AddRefs(fm));
+                                               fs, tp, *getter_AddRefs(fm));
   return fm.forget();
 }
 
@@ -6050,6 +6051,14 @@ nsRuleNode::ComputeBackgroundData(void* aStartStruct,
               parentBG->mBackgroundInlinePolicy,
               NS_STYLE_BG_INLINE_POLICY_CONTINUOUS, 0, 0, 0, 0);
 
+  // background-blend-mode: enum, inherit, initial [list]
+  SetBackgroundList(aContext, *aRuleData->ValueForBackgroundBlendMode(),
+                    bg->mLayers,
+                    parentBG->mLayers, &nsStyleBackground::Layer::mBlendMode,
+                    uint8_t(NS_STYLE_BLEND_NORMAL), parentBG->mBlendModeCount,
+                    bg->mBlendModeCount, maxItemCount, rebuild,
+                    canStoreInRuleTree);
+
   // background-origin: enum, inherit, initial [list]
   SetBackgroundList(aContext, *aRuleData->ValueForBackgroundOrigin(),
                     bg->mLayers,
@@ -6092,6 +6101,8 @@ nsRuleNode::ComputeBackgroundData(void* aStartStruct,
                        bg->mAttachmentCount, fillCount);
     FillBackgroundList(bg->mLayers, &nsStyleBackground::Layer::mClip,
                        bg->mClipCount, fillCount);
+    FillBackgroundList(bg->mLayers, &nsStyleBackground::Layer::mBlendMode,
+                       bg->mBlendModeCount, fillCount);
     FillBackgroundList(bg->mLayers, &nsStyleBackground::Layer::mOrigin,
                        bg->mOriginCount, fillCount);
     FillBackgroundList(bg->mLayers, &nsStyleBackground::Layer::mPosition,

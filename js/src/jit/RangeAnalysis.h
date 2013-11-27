@@ -63,6 +63,7 @@ struct SymbolicBound : public TempObject
     }
 
     void print(Sprinter &sp) const;
+    void dump() const;
 };
 
 class RangeAnalysis
@@ -75,6 +76,8 @@ class RangeAnalysis
   protected:
     MIRGenerator *mir;
     MIRGraph &graph_;
+
+    TempAllocator &alloc() const;
 
   public:
     MOZ_CONSTEXPR RangeAnalysis(MIRGenerator *mir, MIRGraph &graph) :
@@ -370,6 +373,7 @@ class Range : public TempObject {
 
     void print(Sprinter &sp) const;
     void dump(FILE *fp) const;
+    void dump() const;
     bool update(const Range *other);
 
     // Unlike the other operations, unionWith is an in-place

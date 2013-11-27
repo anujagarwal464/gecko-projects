@@ -47,8 +47,11 @@ class TestEmitterBasic(unittest.TestCase):
 
     def read_topsrcdir(self, reader):
         emitter = TreeMetadataEmitter(reader.config)
+        def ack(obj):
+            obj.ack()
+            return obj
 
-        objs = list(emitter.emit(reader.read_topsrcdir()))
+        objs = list(ack(o) for o in emitter.emit(reader.read_topsrcdir()))
         self.assertGreater(len(objs), 0)
         self.assertIsInstance(objs[-1], ReaderSummary)
 
@@ -145,23 +148,16 @@ class TestEmitterBasic(unittest.TestCase):
             EXTRA_PP_JS_MODULES=['bar.pp.jsm', 'foo.pp.jsm'],
             FAIL_ON_WARNINGS=True,
             FORCE_SHARED_LIB=True,
-            FORCE_STATIC_LIB=True,
-            GTEST_CSRCS=['test1.c', 'test2.c'],
-            GTEST_CMMSRCS=['test1.mm', 'test2.mm'],
-            GTEST_CPPSRCS=['test1.cpp', 'test2.cpp'],
             HOST_CPPSRCS=['fans.cpp', 'tans.cpp'],
             HOST_CSRCS=['fans.c', 'tans.c'],
             HOST_LIBRARY_NAME='host_fans',
             IS_COMPONENT=True,
-            LIBRARY_NAME='lib_name',
             LIBS=['fans.lib', 'tans.lib'],
             LIBXUL_LIBRARY=True,
             MSVC_ENABLE_PGO=True,
             NO_DIST_INSTALL=True,
-            MODULE='module_name',
             OS_LIBS=['foo.so', '-l123', 'aaa.a'],
             SDK_LIBRARY=['fans.sdk', 'tans.sdk'],
-            SHARED_LIBRARY_LIBS=['fans.sll', 'tans.sll'],
             SSRCS=['bans.S', 'fans.S'],
             VISIBILITY_FLAGS='',
         )

@@ -27,10 +27,6 @@ pref("general.useragent.compatMode.firefox", false);
 // overrides by default, don't initialize UserAgentOverrides.jsm.
 pref("general.useragent.site_specific_overrides", true);
 
-// This pref controls whether or not to enable UA overrides in the
-// product code that end users use (as opposed to testing code).
-pref("general.useragent.enable_overrides", false);
-
 pref("general.config.obscure_value", 13); // for MCD .cfg files
 
 pref("general.warnOnAboutConfig", true);
@@ -200,6 +196,17 @@ pref("media.windows-media-foundation.play-stand-alone", true);
 #ifdef MOZ_DIRECTSHOW
 pref("media.directshow.enabled", true);
 #endif
+#ifdef MOZ_FMP4
+pref("media.fragmented-mp4.enabled", true);
+// Denotes that the fragmented MP4 parser can be created by <video> elements.
+// This is for testing, since the parser can't yet handle non-fragmented MP4,
+// so it will fail to play most MP4 files.
+pref("media.fragmented-mp4.exposed", false);
+// Specifies whether the fragmented MP4 parser uses a test decoder that
+// just outputs blank frames/audio instead of actually decoding. The blank
+// decoder works on all platforms.
+pref("media.fragmented-mp4.use-blank-decoder", false);
+#endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -215,9 +222,6 @@ pref("media.wave.enabled", true);
 #ifdef MOZ_WEBM
 pref("media.webm.enabled", true);
 #endif
-#ifdef MOZ_DASH
-pref("media.dash.enabled", false);
-#endif
 #ifdef MOZ_GSTREAMER
 pref("media.gstreamer.enabled", true);
 #endif
@@ -226,14 +230,20 @@ pref("media.apple.mp3.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
+pref("media.navigator.load_adapt", false);
 pref("media.navigator.video.default_width",640);
 pref("media.navigator.video.default_height",480);
 pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
+#ifdef MOZ_WIDGET_GONK
+pref("media.peerconnection.enabled", false);
+pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
+pref("media.navigator.video.max_fr", 30);
+#else
+pref("media.peerconnection.enabled", true);
 pref("media.navigator.video.max_fs", 0); // unrestricted
 pref("media.navigator.video.max_fr", 0); // unrestricted
-pref("media.navigator.load_adapt", false);
-pref("media.peerconnection.enabled", true);
+#endif
 pref("media.navigator.permission.disabled", false);
 pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:stun.services.mozilla.com\"}]");
 pref("media.peerconnection.trickle_ice", true);
@@ -282,7 +292,7 @@ pref("media.video-queue.default-size", 10);
 pref("media.video_stats.enabled", true);
 
 // Whether to enable the audio writing APIs on the audio element
-pref("media.audio_data.enabled", true);
+pref("media.audio_data.enabled", false);
 
 // Whether to lock touch scrolling to one axis at a time
 // 0 = FREE (No locking at all)
@@ -976,6 +986,14 @@ pref("network.protocol-handler.external.disks", false);
 pref("network.protocol-handler.external.afp", false);
 pref("network.protocol-handler.external.moz-icon", false);
 
+// Don't allow  external protocol handlers for common typos
+pref("network.protocol-handler.external.ttp", false);  // http
+pref("network.protocol-handler.external.ttps", false); // https
+pref("network.protocol-handler.external.tps", false);  // https
+pref("network.protocol-handler.external.ps", false);   // https
+pref("network.protocol-handler.external.ile", false);  // file
+pref("network.protocol-handler.external.le", false);   // file
+
 // An exposed protocol handler is one that can be used in all contexts.  A
 // non-exposed protocol handler is one that can only be used internally by the
 // application.  For example, a non-exposed protocol would not be loaded by the
@@ -1042,7 +1060,16 @@ pref("network.http.request.max-start-delay", 10);
 
 // Headers
 pref("network.http.accept.default", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-pref("network.http.sendRefererHeader",      2); // 0=don't send any, 1=send only on clicks, 2=send on image requests as well
+
+// Prefs allowing granular control of referers
+// 0=don't send any, 1=send only on clicks, 2=send on image requests as well
+pref("network.http.sendRefererHeader",      2); 
+// false=real referer, true=spoof referer (use target URI as referer)                                              
+pref("network.http.referer.spoofSource", false); 
+// 0=full URI, 1=scheme+host+port+path, 2=scheme+host+port
+pref("network.http.referer.trimmingPolicy", 0); 
+// 0=always send, 1=send iff base domains match, 2=send iff hosts match
+pref("network.http.referer.XOriginPolicy", 0); 
 
 // Controls whether we send HTTPS referres to other HTTPS sites.
 // By default this is enabled for compatibility (see bug 141641)
@@ -1613,6 +1640,7 @@ pref("security.notification_enable_delay", 500);
 
 pref("security.csp.enable", true);
 pref("security.csp.debug", false);
+pref("security.csp.experimentalEnabled", false);
 
 // Mixed content blocking
 pref("security.mixed_content.block_active_content", false);
@@ -1880,9 +1908,6 @@ pref("layout.css.supports-rule.enabled", true);
 // Is support for CSS Filters enabled?
 pref("layout.css.filters.enabled", false);
 
-// Is support for CSS Flexbox enabled?
-pref("layout.css.flexbox.enabled", true);
-
 // Is support for CSS sticky positioning enabled?
 #ifdef RELEASE_BUILD
 pref("layout.css.sticky.enabled", false);
@@ -1920,6 +1945,13 @@ pref("layout.css.prefixes.animations", true);
 pref("layout.css.scope-pseudo.enabled", false);
 #else
 pref("layout.css.scope-pseudo.enabled", true);
+#endif
+
+// Is support for background-blend-mode enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.background-blend-mode.enabled", false);
+#else
+pref("layout.css.background-blend-mode.enabled", true);
 #endif
 
 // Is support for CSS vertical text enabled?
@@ -2006,6 +2038,15 @@ pref("hangmonitor.timeout", 0);
 pref("plugins.load_appdir_plugins", false);
 // If true, plugins will be click to play
 pref("plugins.click_to_play", false);
+
+// A comma-delimited list of plugin name prefixes matching plugins that will be
+// exposed when enumerating navigator.plugins[]. For example, prefix "Shockwave"
+// matches both Adobe Flash Player ("Shockwave Flash") and Adobe Shockwave
+// Player ("Shockwave for Director"). To hide all plugins from enumeration, use
+// the empty string "" to match no plugin names. To allow all plugins to be
+// enumerated, use the string "*" to match all plugin names.
+pref("plugins.enumerable_names", "Java,Nexus Personal,QuickTime,Shockwave");
+
 // The default value for nsIPluginTag.enabledState (STATE_ENABLED = 2)
 pref("plugin.default.state", 2);
 
@@ -2079,9 +2120,6 @@ pref("svg.marker-improvements.enabled", false);
 #else
 pref("svg.marker-improvements.enabled", true);
 #endif
-
-// Is support for the new SVG text implementation enabled?
-pref("svg.text.css-frames.enabled", true);
 
 pref("font.minimum-size.ar", 0);
 pref("font.minimum-size.x-armn", 0);
@@ -3395,8 +3433,8 @@ pref("font.alias-list", "sans,sans-serif,serif,monospace");
 // ar
 
 pref("font.name.serif.el", "Droid Serif");
-pref("font.name.sans-serif.el", "Fira Sans OT");
-pref("font.name.monospace.el", "Fira Mono OT");
+pref("font.name.sans-serif.el", "Roboto"); // To be updated once the Greek letters in Fira are revised
+pref("font.name.monospace.el", "Droid Sans Mono");
 
 pref("font.name.serif.he", "Charis SIL Compact");
 pref("font.name.sans-serif.he", "Fira Sans OT");
@@ -3969,6 +4007,8 @@ pref("ui.panel.default_level_parent", true);
 
 pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
+pref("ui.key.menuAccessKeyFocuses", true);
+
 # XP_UNIX
 #endif
 #endif
@@ -4191,6 +4231,7 @@ pref("layers.acceleration.force-enabled", false);
 
 pref("layers.acceleration.draw-fps", false);
 
+pref("layers.dump", false);
 pref("layers.draw-borders", false);
 pref("layers.draw-tile-borders", false);
 pref("layers.draw-bigimage-borders", false);
@@ -4359,6 +4400,9 @@ pref("dom.mozPermissionSettings.enabled", false);
 pref("dom.w3c_touch_events.enabled", 2);
 #endif
 
+// W3C draft pointer events
+pref("dom.w3c_pointer_events.enabled", false);
+
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false);
 
@@ -4494,7 +4538,7 @@ pref("ui.touch_activation.delay_ms", 100);
 // If the user has clicked an element, how long do we keep the
 // :active state before it is cleared by the mouse sequences
 // fired after a touchstart/touchend.
-pref("ui.touch_activation.duration_ms", 100);
+pref("ui.touch_activation.duration_ms", 10);
 
 // nsMemoryInfoDumper can watch a fifo in the temp directory and take various
 // actions when the fifo is written to.  Disable this in general.
@@ -4565,8 +4609,8 @@ pref("dom.inter-app-communication-api.enabled", false);
 // The tables used for Safebrowsing phishing and malware checks.
 pref("urlclassifier.malware_table", "goog-malware-shavar");
 pref("urlclassifier.phish_table", "goog-phish-shavar");
-pref("urlclassifier.download_block_table", "goog-badbinurl-shavar");
-pref("urlclassifier.download_allow_table", "goog-downloadwhite-digest256");
+pref("urlclassifier.download_block_table", "");
+pref("urlclassifier.download_allow_table", "");
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);

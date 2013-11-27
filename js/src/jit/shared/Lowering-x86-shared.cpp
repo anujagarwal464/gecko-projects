@@ -110,8 +110,8 @@ bool
 LIRGeneratorX86Shared::lowerForBitAndAndBranch(LBitAndAndBranch *baab, MInstruction *mir,
                                                MDefinition *lhs, MDefinition *rhs)
 {
-    baab->setOperand(0, useRegister(lhs));
-    baab->setOperand(1, useRegisterOrConstant(rhs));
+    baab->setOperand(0, useRegisterAtStart(lhs));
+    baab->setOperand(1, useRegisterOrConstantAtStart(rhs));
     return add(baab, mir);
 }
 
@@ -207,33 +207,36 @@ LIRGeneratorX86Shared::visitAsmJSNeg(MAsmJSNeg *ins)
 }
 
 bool
-LIRGeneratorX86Shared::lowerUDiv(MInstruction *div)
+LIRGeneratorX86Shared::lowerUDiv(MDiv *div)
 {
-    LUDivOrMod *lir = new LUDivOrMod(useFixed(div->getOperand(0), eax),
+    // Optimize x/x. The comments in lowerDivI apply here as well.
+    if (div->getOperand(0) == div->getOperand(1)) {
+        if (!div->canBeDivideByZero())
+            return define(new LInteger(1), div);
+
+        LDivSelfI *lir = new LDivSelfI(useRegisterAtStart(div->getOperand(0)));
+        if (div->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+            return false;
+        return define(lir, div);
+    }
+
+    LUDivOrMod *lir = new LUDivOrMod(useFixedAtStart(div->getOperand(0), eax),
                                      useRegister(div->getOperand(1)),
                                      tempFixed(edx));
+    if (div->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+        return false;
     return defineFixed(lir, div, LAllocation(AnyRegister(eax)));
 }
 
 bool
-LIRGeneratorX86Shared::visitAsmJSUDiv(MAsmJSUDiv *div)
-{
-    return lowerUDiv(div);
-}
-
-bool
-LIRGeneratorX86Shared::lowerUMod(MInstruction *mod)
+LIRGeneratorX86Shared::lowerUMod(MMod *mod)
 {
     LUDivOrMod *lir = new LUDivOrMod(useFixedAtStart(mod->getOperand(0), eax),
                                      useRegister(mod->getOperand(1)),
                                      tempFixed(eax));
+    if (mod->fallible() && !assignSnapshot(lir, Bailout_BaselineInfo))
+        return false;
     return defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
-}
-
-bool
-LIRGeneratorX86Shared::visitAsmJSUMod(MAsmJSUMod *mod)
-{
-    return lowerUMod(mod);
 }
 
 bool

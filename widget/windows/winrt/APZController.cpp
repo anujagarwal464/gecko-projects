@@ -17,6 +17,7 @@
 #include "nsIDOMWindowUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsLayoutUtils.h"
+#include "mozilla/TouchEvents.h"
 
 //#define DEBUG_CONTROLLER 1
 
@@ -82,19 +83,22 @@ GetDOMTargets(uint64_t aScrollId,
 class RequestContentRepaintEvent : public nsRunnable
 {
   typedef mozilla::layers::FrameMetrics FrameMetrics;
+  typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
 
 public:
   RequestContentRepaintEvent(const FrameMetrics& aFrameMetrics,
                              nsIWidgetListener* aListener,
-                             CSSIntPoint* aLastOffsetOut) :
+                             CSSIntPoint* aLastOffsetOut,
+                             ScrollableLayerGuid* aLastScrollId) :
     mFrameMetrics(aFrameMetrics),
     mWidgetListener(aListener),
-    mLastOffsetOut(aLastOffsetOut)
+    mLastOffsetOut(aLastOffsetOut),
+    mLastScrollIdOut(aLastScrollId)
   {
   }
 
   NS_IMETHOD Run() {
-    // This event shuts down the worker thread and so must be main thread.
+    // This must be on the gecko thread since we access the dom
     MOZ_ASSERT(NS_IsMainThread());
 
 #ifdef DEBUG_CONTROLLER
@@ -138,6 +142,10 @@ public:
         if (mLastOffsetOut) {
           *mLastOffsetOut = actualScrollOffset;
         }
+        if (mLastScrollIdOut) {
+          mLastScrollIdOut->mScrollId = mFrameMetrics.mScrollId;
+          mLastScrollIdOut->mPresShellId = mFrameMetrics.mPresShellId;
+        }
 
 #ifdef DEBUG_CONTROLLER
         WinUtils::Log("APZController: %I64d mDisplayPort: %0.2f %0.2f %0.2f %0.2f",
@@ -155,6 +163,7 @@ protected:
   FrameMetrics mFrameMetrics;
   nsIWidgetListener* mWidgetListener;
   CSSIntPoint* mLastOffsetOut;
+  ScrollableLayerGuid* mLastScrollIdOut;
 };
 
 void
@@ -163,24 +172,80 @@ APZController::SetWidgetListener(nsIWidgetListener* aWidgetListener)
   mWidgetListener = aWidgetListener;
 }
 
+void
+APZController::ContentReceivedTouch(const ScrollableLayerGuid& aGuid, bool aPreventDefault)
+{
+  if (!sAPZC) {
+    return;
+  }
+  sAPZC->ContentReceivedTouch(aGuid, aPreventDefault);
+}
+
+bool
+APZController::HitTestAPZC(ScreenIntPoint& aPoint)
+{
+  if (!sAPZC) {
+    return false;
+  }
+  return sAPZC->HitTestAPZC(aPoint);
+}
+
+void
+APZController::TransformCoordinateToGecko(const ScreenIntPoint& aPoint,
+                                          LayoutDeviceIntPoint* aRefPointOut)
+{
+  if (!sAPZC || !aRefPointOut) {
+    return;
+  }
+  sAPZC->TransformCoordinateToGecko(aPoint, aRefPointOut);
+}
+
+nsEventStatus
+APZController::ReceiveInputEvent(WidgetInputEvent* aEvent,
+                                 ScrollableLayerGuid* aOutTargetGuid)
+{
+  MOZ_ASSERT(aEvent);
+
+  if (!sAPZC) {
+    return nsEventStatus_eIgnore;
+  }
+  return sAPZC->ReceiveInputEvent(*aEvent->AsInputEvent(), aOutTargetGuid);
+}
+
+nsEventStatus
+APZController::ReceiveInputEvent(WidgetInputEvent* aInEvent,
+                                 ScrollableLayerGuid* aOutTargetGuid,
+                                 WidgetInputEvent* aOutEvent)
+{
+  MOZ_ASSERT(aInEvent);
+  MOZ_ASSERT(aOutEvent);
+
+  if (!sAPZC) {
+    return nsEventStatus_eIgnore;
+  }
+  return sAPZC->ReceiveInputEvent(*aInEvent->AsInputEvent(),
+                                  aOutTargetGuid,
+                                  aOutEvent);
+}
+
 // APZC sends us this request when we need to update the display port on
 // the scrollable frame the apzc is managing.
 void
 APZController::RequestContentRepaint(const FrameMetrics& aFrameMetrics)
 {
-  // Send the result back to the main thread so that it can shutdown
   if (!mWidgetListener) {
     NS_WARNING("Can't update display port, !mWidgetListener");
     return;
   }
 
 #ifdef DEBUG_CONTROLLER
-  WinUtils::Log("APZController::RequestContentRepaint scroll id = %I64d",
+  WinUtils::Log("APZController::RequestContentRepaint scrollid=%I64d",
     aFrameMetrics.mScrollId);
 #endif
   nsCOMPtr<nsIRunnable> r1 = new RequestContentRepaintEvent(aFrameMetrics,
                                                             mWidgetListener,
-                                                            &mLastScrollOffset);
+                                                            &mLastScrollOffset,
+                                                            &mLastScrollLayerGuid);
   if (!NS_IsMainThread()) {
     NS_DispatchToMainThread(r1);
   } else {
@@ -196,37 +261,51 @@ APZController::UpdateScrollOffset(const mozilla::layers::ScrollableLayerGuid& aS
                                   CSSIntPoint& aScrollOffset)
 {
 #ifdef DEBUG_CONTROLLER
-  WinUtils::Log("APZController::UpdateScrollOffset: %d %d == %d %d",
+  WinUtils::Log("APZController::UpdateScrollOffset: scrollid:%I64d == %I64d offsets: %d,%d == %d,%d",
+    aScrollLayerId.mScrollId, aScrollLayerId.mScrollId,
     aScrollOffset.x, aScrollOffset.y,
     mLastScrollOffset.x, mLastScrollOffset.y);
 #endif
-  
-  if (!sAPZC || mLastScrollOffset == aScrollOffset) {
+
+  // Bail if this the same scroll guid the apzc just scrolled and the offsets
+  // equal the offset the apzc set.
+  if (!sAPZC || (mLastScrollLayerGuid.mScrollId == aScrollLayerId.mScrollId &&
+                 mLastScrollLayerGuid.mPresShellId == aScrollLayerId.mPresShellId &&
+                 mLastScrollOffset == aScrollOffset)) {
+#ifdef DEBUG_CONTROLLER
+    WinUtils::Log("Skipping UpdateScrollOffset");
+#endif
     return;
   }
   sAPZC->UpdateScrollOffset(aScrollLayerId, aScrollOffset);
 }
 
-// Gesture event handlers from the APZC. Currently not in use.
-
 void
-APZController::HandleDoubleTap(const CSSIntPoint& aPoint)
+APZController::HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
+  NS_ConvertASCIItoUTF16 data(
+      nsPrintfCString("{ \"x\": %d, \"y\": %d, \"modifiers\": %d }",
+      (int32_t)aPoint.x, (int32_t)aPoint.y, aModifiers));
+  MetroUtils::FireObserver("Gesture:DoubleTap", data.get());
 }
 
 void
-APZController::HandleSingleTap(const CSSIntPoint& aPoint)
+APZController::HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
+  NS_ConvertASCIItoUTF16 data(
+      nsPrintfCString("{ \"x\": %d, \"y\": %d, \"modifiers\": %d }",
+      (int32_t)aPoint.x, (int32_t)aPoint.y, aModifiers));
+  MetroUtils::FireObserver("Gesture:SingleTap", data.get());
 }
 
 void
-APZController::HandleLongTap(const CSSIntPoint& aPoint)
+APZController::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
 }
 
 // requests that we send a mozbrowserasyncscroll domevent. not in use.
 void
-APZController::SendAsyncScrollDOMEvent(FrameMetrics::ViewID aScrollId,
+APZController::SendAsyncScrollDOMEvent(bool aIsRoot,
                                        const CSSRect &aContentRect,
                                        const CSSSize &aScrollableSize)
 {
@@ -238,18 +317,44 @@ APZController::PostDelayedTask(Task* aTask, int aDelayMs)
   MessageLoop::current()->PostDelayedTask(FROM_HERE, aTask, aDelayMs);
 }
 
-// async scroll notifications
+// apzc notifications
+
+class TransformedStartEvent : public nsRunnable
+{
+  NS_IMETHOD Run() {
+    MetroUtils::FireObserver("apzc-transform-start", L"");
+    return NS_OK;
+  }
+};
+
+class TransformedEndEvent : public nsRunnable
+{
+  NS_IMETHOD Run() {
+    MetroUtils::FireObserver("apzc-transform-end", L"");
+    return NS_OK;
+  }
+};
 
 void
-APZController::HandlePanBegin()
+APZController::NotifyTransformBegin()
 {
-  MetroUtils::FireObserver("apzc-handle-pan-begin", L"");
+  if (NS_IsMainThread()) {
+    MetroUtils::FireObserver("apzc-transform-begin", L"");
+    return;
+  }
+  nsCOMPtr<nsIRunnable> runnable = new TransformedStartEvent();
+  NS_DispatchToMainThread(runnable);
 }
 
 void
-APZController::HandlePanEnd()
+APZController::NotifyTransformEnd()
 {
-  MetroUtils::FireObserver("apzc-handle-pan-end", L"");
+  if (NS_IsMainThread()) {
+    MetroUtils::FireObserver("apzc-transform-end", L"");
+    return;
+  }
+  nsCOMPtr<nsIRunnable> runnable = new TransformedEndEvent();
+  NS_DispatchToMainThread(runnable);
 }
 
 } } }

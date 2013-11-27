@@ -28,7 +28,6 @@
 #include "nsBlockFrame.h"
 #include "nsViewportFrame.h"
 #include "nsSVGTextFrame2.h"
-#include "nsSVGTextPathFrame.h"
 #include "StickyScrollContainer.h"
 #include "nsIRootBox.h"
 #include "nsIDOMMutationEvent.h"
@@ -204,10 +203,7 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
       }
     }
     if (aChange & nsChangeHint_UpdateTextPath) {
-      if (aFrame->GetType() == nsGkAtoms::svgTextPathFrame) {
-        // Invalidate and reflow the entire nsSVGTextFrame:
-        static_cast<nsSVGTextPathFrame*>(aFrame)->NotifyGlyphMetricsChange();
-      } else if (aFrame->IsSVGText()) {
+      if (aFrame->IsSVGText()) {
         // Invalidate and reflow the entire nsSVGTextFrame2:
         NS_ASSERTION(aFrame->GetContent()->IsSVG(nsGkAtoms::textPath),
                      "expected frame for a <textPath> element");
@@ -331,21 +327,11 @@ RestyleManager::RecomputePosition(nsIFrame* aFrame)
 
   // For relative positioning, we can simply update the frame rect
   if (display->IsRelativelyPositionedStyle()) {
-    switch (display->mDisplay) {
-      case NS_STYLE_DISPLAY_TABLE_CAPTION:
-      case NS_STYLE_DISPLAY_TABLE_CELL:
-      case NS_STYLE_DISPLAY_TABLE_ROW:
-      case NS_STYLE_DISPLAY_TABLE_ROW_GROUP:
-      case NS_STYLE_DISPLAY_TABLE_HEADER_GROUP:
-      case NS_STYLE_DISPLAY_TABLE_FOOTER_GROUP:
-      case NS_STYLE_DISPLAY_TABLE_COLUMN:
-      case NS_STYLE_DISPLAY_TABLE_COLUMN_GROUP:
-        // We don't currently support relative positioning of inner
-        // table elements.  If we apply offsets to things we haven't
-        // previously offset, we'll get confused.  So bail.
-        return true;
-      default:
-        break;
+    if (display->IsInnerTableStyle()) {
+      // We don't currently support relative positioning of inner table
+      // elements (bug 35168).  If we apply offsets to things we haven't
+      // previously offset, we'll get confused.  So bail.
+      return true;
     }
 
 
@@ -703,6 +689,7 @@ RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
         ApplyRenderingChangeToTree(mPresContext, frame, hint);
       }
       if ((hint & nsChangeHint_RecomputePosition) && !didReflowThisFrame) {
+        ActiveLayerTracker::NotifyOffsetRestyle(frame);
         // It is possible for this to fall back to a reflow
         if (!RecomputePosition(frame)) {
           didReflowThisFrame = true;
@@ -1727,6 +1714,21 @@ ElementForStyleContext(nsIContent* aParentContent,
     return grandparentFrame->GetContent()->AsElement();
   }
 
+  if (aPseudoType == nsCSSPseudoElements::ePseudo_mozNumberText ||
+      aPseudoType == nsCSSPseudoElements::ePseudo_mozNumberWrapper ||
+      aPseudoType == nsCSSPseudoElements::ePseudo_mozNumberSpinBox ||
+      aPseudoType == nsCSSPseudoElements::ePseudo_mozNumberSpinUp ||
+      aPseudoType == nsCSSPseudoElements::ePseudo_mozNumberSpinDown) {
+    // Get content for nearest nsNumberControlFrame:
+    nsIFrame* f = aFrame->GetParent();
+    MOZ_ASSERT(f);
+    while (f->GetType() != nsGkAtoms::numberControlFrame) {
+      f = f->GetParent();
+      MOZ_ASSERT(f);
+    }
+    return f->GetContent()->AsElement();
+  }
+
   nsIContent* content = aParentContent ? aParentContent : aFrame->GetContent();
   return content->AsElement();
 }
@@ -2526,11 +2528,11 @@ ElementRestyler::RestyleUndisplayedChildren(nsRestyleHint aChildRestyleHint)
       !(mHintsHandled & nsChangeHint_ReconstructFrame)) {
     UndisplayedNode* undisplayed =
       frameConstructor->GetAllUndisplayedContentIn(undisplayedParent);
-    for (TreeMatchContext::AutoAncestorPusher
-           pushAncestor(undisplayed, mTreeMatchContext,
-                        undisplayedParent ? undisplayedParent->AsElement()
-                                          : nullptr);
-         undisplayed; undisplayed = undisplayed->mNext) {
+    TreeMatchContext::AutoAncestorPusher pusher(mTreeMatchContext);
+    if (undisplayed) {
+      pusher.PushAncestorAndStyleScope(undisplayedParent);
+    }
+    for (; undisplayed; undisplayed = undisplayed->mNext) {
       NS_ASSERTION(undisplayedParent ||
                    undisplayed->mContent ==
                      mPresContext->Document()->GetRootElement(),
@@ -2543,11 +2545,10 @@ ElementRestyler::RestyleUndisplayedChildren(nsRestyleHint aChildRestyleHint)
       // children element. Push the children element as an ancestor here because it does
       // not have a frame and would not otherwise be pushed as an ancestor.
       nsIContent* parent = undisplayed->mContent->GetParent();
-      bool pushInsertionPoint = parent && parent->IsActiveChildrenElement();
-      TreeMatchContext::AutoAncestorPusher
-        insertionPointPusher(pushInsertionPoint,
-                             mTreeMatchContext,
-                             parent && parent->IsElement() ? parent->AsElement() : nullptr);
+      TreeMatchContext::AutoAncestorPusher insertionPointPusher(mTreeMatchContext);
+      if (parent && parent->IsActiveChildrenElement()) {
+        insertionPointPusher.PushAncestorAndStyleScope(parent);
+      }
 
       nsRestyleHint thisChildHint = aChildRestyleHint;
       RestyleTracker::RestyleData undisplayedRestyleData;
@@ -2695,12 +2696,11 @@ ElementRestyler::RestyleContentChildren(nsIFrame* aParent,
                                         nsRestyleHint aChildRestyleHint)
 {
   nsIFrame::ChildListIterator lists(aParent);
-  for (TreeMatchContext::AutoAncestorPusher
-         pushAncestor(!lists.IsDone(),
-                      mTreeMatchContext,
-                      mContent && mContent->IsElement()
-                        ? mContent->AsElement() : nullptr);
-       !lists.IsDone(); lists.Next()) {
+  TreeMatchContext::AutoAncestorPusher ancestorPusher(mTreeMatchContext);
+  if (!lists.IsDone()) {
+    ancestorPusher.PushAncestorAndStyleScope(mContent);
+  }
+  for (; !lists.IsDone(); lists.Next()) {
     nsFrameList::Enumerator childFrames(lists.CurrentList());
     for (; !childFrames.AtEnd(); childFrames.Next()) {
       nsIFrame* child = childFrames.get();
@@ -2716,10 +2716,10 @@ ElementRestyler::RestyleContentChildren(nsIFrame* aParent,
         // Check if the frame has a content because |child| may be a
         // nsPageFrame that does not have a content.
         nsIContent* parent = child->GetContent() ? child->GetContent()->GetParent() : nullptr;
-        bool pushInsertionPoint = parent && parent->IsActiveChildrenElement();
-        TreeMatchContext::AutoAncestorPusher
-          insertionPointPusher(pushInsertionPoint, mTreeMatchContext,
-                               parent && parent->IsElement() ? parent->AsElement() : nullptr);
+        TreeMatchContext::AutoAncestorPusher insertionPointPusher(mTreeMatchContext);
+        if (parent && parent->IsActiveChildrenElement()) {
+          insertionPointPusher.PushAncestorAndStyleScope(parent);
+        }
 
         // only do frames that are in flow
         if (nsGkAtoms::placeholderFrame == child->GetType()) { // placeholder

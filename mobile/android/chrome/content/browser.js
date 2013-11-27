@@ -20,6 +20,7 @@ Cu.import("resource://gre/modules/PermissionPromptHelper.jsm");
 Cu.import("resource://gre/modules/ContactService.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource://gre/modules/SpatialNavigation.jsm");
+Cu.import("resource://gre/modules/UITelemetry.jsm");
 
 #ifdef ACCESSIBILITY
 Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
@@ -327,7 +328,6 @@ var BrowserApp = {
     IndexedDB.init();
     HealthReportStatusListener.init();
     XPInstallObserver.init();
-    ClipboardHelper.init();
     CharacterEncoding.init();
     ActivityObserver.init();
     WebappsUI.init();
@@ -337,6 +337,7 @@ var BrowserApp = {
     DesktopUserAgent.init();
     Distribution.init();
     Tabs.init();
+    UITelemetry.init();
 #ifdef ACCESSIBILITY
     AccessFu.attach(window);
 #endif
@@ -1397,10 +1398,17 @@ var BrowserApp = {
         if (!shouldShowProgress(url))
           params.showProgress = false;
 
-        if (data.newTab)
+        if (data.newTab) {
           this.addTab(url, params);
-        else
+        } else {
+          if (data.tabId) {
+            // Use a specific browser instead of the selected browser, if it exists
+            let specificBrowser = this.getTabForId(data.tabId).browser;
+            if (specificBrowser)
+              browser = specificBrowser;
+          }
           this.loadURI(url, browser, params);
+        }
         break;
       }
 
@@ -1717,6 +1725,10 @@ var NativeWindow = {
    *                     the checked state as an argument.                   
    */
     show: function(aMessage, aValue, aButtons, aTabID, aOptions) {
+      if (aButtons == null) {
+        aButtons = [];
+      }
+
       aButtons.forEach((function(aButton) {
         this._callbacks[this._callbacksId] = { cb: aButton.callback, prompt: this._promptId };
         aButton.callback = this._callbacksId;
@@ -2091,8 +2103,11 @@ var NativeWindow = {
         this._target = null;
         BrowserEventHandler._cancelTapHighlight();
 
-        if (SelectionHandler.canSelect(target))
-          SelectionHandler.startSelection(target, aX, aY);
+        if (SelectionHandler.canSelect(target)) {
+          if (!SelectionHandler.startSelection(target, aX, aY)) {
+            SelectionHandler.attachCaret(target);
+          }
+        }
       }
     },
 
@@ -3483,6 +3498,60 @@ Tab.prototype = {
             };
             sendMessageToJava(json);
           } catch (e) {}
+        } else if (list.indexOf("[search]" != -1)) {
+          let type = target.type && target.type.toLowerCase();
+
+          // Replace all starting or trailing spaces or spaces before "*;" globally w/ "".
+          type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
+
+          // Check that type matches opensearch.
+          let isOpenSearch = (type == "application/opensearchdescription+xml");
+          if (isOpenSearch && target.title && /^(?:https?|ftp):/i.test(target.href)) {
+            let visibleEngines = Services.search.getVisibleEngines();
+            // NOTE: Engines are currently identified by name, but this can be changed
+            // when Engines are identified by URL (see bug 335102).
+            if (visibleEngines.some(function(e) {
+              return e.name == target.title;
+            })) {
+              // This engine is already present, do nothing.
+              return;
+            }
+
+            if (this.browser.engines) {
+              // This engine has already been handled, do nothing.
+              if (this.browser.engines.some(function(e) {
+                return e.url == target.href;
+              })) {
+                  return;
+              }
+            } else {
+              this.browser.engines = [];
+            }
+
+            // Get favicon.
+            let iconURL = target.ownerDocument.documentURIObject.prePath + "/favicon.ico";
+
+            let newEngine = {
+              title: target.title,
+              url: target.href,
+              iconURL: iconURL
+            };
+
+            this.browser.engines.push(newEngine);
+
+            // Don't send a message to display engines if we've already handled an engine.
+            if (this.browser.engines.length > 1)
+              return;
+
+            // Broadcast message that this tab contains search engines that should be visible.
+            let newEngineMessage = {
+              type: "Link:OpenSearch",
+              tabID: this.id,
+              visible: true
+            };
+
+            sendMessageToJava(newEngineMessage);
+          }
         }
         break;
       }
@@ -3635,6 +3704,22 @@ Tab.prototype = {
         // We may receive a document stop event while a document is still loading
         // (such as when doing URI fixup). Don't notify Java UI in these cases.
         return;
+      }
+
+      // Clear page-specific opensearch engines and feeds for a new request.
+      if (aStateFlags & Ci.nsIWebProgressListener.STATE_START && aRequest && aWebProgress.isTopLevel) {
+          this.browser.engines = null;
+
+          // Send message to clear search engine option in context menu.
+          let newEngineMessage = {
+            type: "Link:OpenSearch",
+            tabID: this.id,
+            visible: false
+          };
+
+          sendMessageToJava(newEngineMessage);
+
+          this.browser.feeds = null;
       }
 
       // Check to see if we restoring the content from a previous presentation (session)
@@ -4303,15 +4388,15 @@ var BrowserEventHandler = {
               element = ElementTouchHelper.anyElementFromPoint(x, y);
             }
 
+            // Was the element already focused before it was clicked?
+            let isFocused = (element == BrowserApp.getFocusedInput(BrowserApp.selectedBrowser, true));
+
             this._sendMouseEvent("mousemove", element, x, y);
             this._sendMouseEvent("mousedown", element, x, y);
             this._sendMouseEvent("mouseup",   element, x, y);
 
-            // See if its an input element, and it isn't disabled, nor handled by Android native dialog
-            if (!element.disabled &&
-                !InputWidgetHelper.hasInputWidget(element) &&
-                ((element instanceof HTMLInputElement && element.mozIsTextField(false)) ||
-                (element instanceof HTMLTextAreaElement)))
+            // If the element was previously focused, show the caret attached to it.
+            if (isFocused)
               SelectionHandler.attachCaret(element);
 
             // scrollToFocusedInput does its own checks to find out if an element should be zoomed into
@@ -6100,36 +6185,6 @@ var ClipboardHelper = {
   // Recorded so search with option can be removed/replaced when default engine changed.
   _searchMenuItem: -1,
 
-  init: function() {
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copy"), ClipboardHelper.getCopyContext(false), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyAll"), ClipboardHelper.getCopyContext(true), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectWord"), ClipboardHelper.selectWordContext, ClipboardHelper.selectWord.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), ClipboardHelper.selectAllContext, ClipboardHelper.selectAll.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.share"), ClipboardHelper.shareContext, ClipboardHelper.share.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.paste"), ClipboardHelper.pasteContext, ClipboardHelper.paste.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"), NativeWindow.contextmenus.textContext, ClipboardHelper.inputMethod.bind(ClipboardHelper));
-
-    // We add this contextmenu item right before the menu is built to avoid having to initialise the search service early.
-    Services.obs.addObserver(this, "before-build-contextmenu", false);
-  },
-
-  uninit: function ch_uninit() {
-    Services.obs.removeObserver(this, "before-build-contextmenu");
-  },
-
-  observe: function observe(aSubject, aTopic) {
-    if (aTopic == "before-build-contextmenu") {
-      this._setSearchMenuItem();
-    }
-  },
-
-  _setSearchMenuItem: function setSearchMenuItem() {
-    if (this._searchMenuItem) {
-      NativeWindow.contextmenus.remove(this._searchMenuItem);
-    }
-    this._searchMenuItem = NativeWindow.contextmenus.add(Strings.browser.formatStringFromName("contextmenu.search", [Services.search.defaultEngine.name], 1), ClipboardHelper.searchWithContext, ClipboardHelper.searchWith.bind(ClipboardHelper));
-  },
-
   get clipboardHelper() {
     delete this.clipboardHelper;
     return this.clipboardHelper = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
@@ -6141,7 +6196,7 @@ var ClipboardHelper = {
   },
 
   copy: function(aElement, aX, aY) {
-    if (SelectionHandler.shouldShowContextMenu(aX, aY)) {
+    if (SelectionHandler.isSelectionActive()) {
       SelectionHandler.copySelection();
       return;
     }
@@ -6188,7 +6243,7 @@ var ClipboardHelper = {
     return {
       matches: function(aElement, aX, aY) {
         // Do not show "Copy All" for normal non-input text selection.
-        if (!isCopyAll && SelectionHandler.shouldShowContextMenu(aX, aY))
+        if (!isCopyAll && SelectionHandler.isSelectionActive())
           return true;
 
         if (NativeWindow.contextmenus.textContext.matches(aElement)) {
@@ -6221,7 +6276,7 @@ var ClipboardHelper = {
 
   selectAllContext: {
     matches: function selectAllContextMatches(aElement, aX, aY) {
-      if (SelectionHandler.shouldShowContextMenu(aX, aY))
+      if (SelectionHandler.isSelectionActive())
         return true;
 
       if (NativeWindow.contextmenus.textContext.matches(aElement))
@@ -6233,13 +6288,13 @@ var ClipboardHelper = {
 
   shareContext: {
     matches: function shareContextMatches(aElement, aX, aY) {
-      return SelectionHandler.shouldShowContextMenu(aX, aY);
+      return SelectionHandler.isSelectionActive();
     }
   },
 
   searchWithContext: {
     matches: function searchWithContextMatches(aElement, aX, aY) {
-      return SelectionHandler.shouldShowContextMenu(aX, aY);
+      return SelectionHandler.isSelectionActive();
     }
   },
 
@@ -6248,6 +6303,16 @@ var ClipboardHelper = {
       if (NativeWindow.contextmenus.textContext.matches(aElement)) {
         let flavors = ["text/unicode"];
         return ClipboardHelper.clipboard.hasDataMatchingFlavors(flavors, flavors.length, Ci.nsIClipboard.kGlobalClipboard);
+      }
+      return false;
+    }
+  },
+
+  cutContext: {
+    matches: function(aElement) {
+      let copyctx = ClipboardHelper.getCopyContext(false);
+      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+        return copyctx.matches(aElement);
       }
       return false;
     }
@@ -6552,20 +6617,30 @@ var SearchEngines = {
   PREF_SUGGEST_PROMPTED: "browser.search.suggest.prompted",
 
   init: function init() {
+    Services.obs.addObserver(this, "SearchEngines:Add", false);
     Services.obs.addObserver(this, "SearchEngines:Get", false);
     Services.obs.addObserver(this, "SearchEngines:GetVisible", false);
     Services.obs.addObserver(this, "SearchEngines:SetDefault", false);
     Services.obs.addObserver(this, "SearchEngines:Remove", false);
-    let contextName = Strings.browser.GetStringFromName("contextmenu.addSearchEngine");
+
     let filter = {
       matches: function (aElement) {
         return (aElement.form && NativeWindow.contextmenus.textContext.matches(aElement));
       }
     };
-    this._contextMenuId = NativeWindow.contextmenus.add(contextName, filter, this.addEngine);
+    SelectionHandler.actions.SEARCH_ADD = {
+      id: "add_search_action",
+      label: Strings.browser.GetStringFromName("contextmenu.addSearchEngine"),
+      icon: "drawable://ic_url_bar_search",
+      selector: filter,
+      action: function(aElement) {
+        SearchEngines.addEngine(aElement);
+      }
+    }
   },
 
   uninit: function uninit() {
+    Services.obs.removeObserver(this, "SearchEngines:Add");
     Services.obs.removeObserver(this, "SearchEngines:Get");
     Services.obs.removeObserver(this, "SearchEngines:GetVisible");
     Services.obs.removeObserver(this, "SearchEngines:SetDefault");
@@ -6647,6 +6722,9 @@ var SearchEngines = {
   observe: function observe(aSubject, aTopic, aData) {
     let engine;
     switch(aTopic) {
+      case "SearchEngines:Add":
+        this.displaySearchEnginesList(aData);
+        break;
       case "SearchEngines:GetVisible":
         Services.search.init(this._handleSearchEnginesGetVisible.bind(this));
         break;
@@ -6671,6 +6749,64 @@ var SearchEngines = {
         dump("Unexpected message type observed: " + aTopic);
         break;
     }
+  },
+
+  // Display context menu listing names of the search engines available to be added.
+  displaySearchEnginesList: function displaySearchEnginesList(aData) {
+    let data = JSON.parse(aData);
+    let tab = BrowserApp.getTabForId(data.tabId);
+
+    if (!tab)
+      return;
+
+    let browser = tab.browser;
+    let engines = browser.engines;
+
+    let p = new Prompt({
+      window: browser.contentWindow
+    }).setSingleChoiceItems(engines.map(function(e) {
+      return { label: e.title };
+    })).show((function(data) {
+      if (data.button == -1)
+        return;
+
+      this.addOpenSearchEngine(engines[data.button]);
+      engines.splice(data.button, 1);
+
+      if (engines.length < 1) {
+        // Broadcast message that there are no more add-able search engines.
+        let newEngineMessage = {
+          type: "Link:OpenSearch",
+          tabID: tab.id,
+          visible: false
+        };
+
+        sendMessageToJava(newEngineMessage);
+      }
+    }).bind(this));
+  },
+
+  addOpenSearchEngine: function addOpenSearchEngine(engine) {
+    Services.search.addEngine(engine.url, Ci.nsISearchEngine.DATA_XML, engine.iconURL, false, {
+      onSuccess: function() {
+        // Display a toast confirming addition of new search engine.
+        NativeWindow.toast.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [engine.title], 1), "long");
+      },
+
+      onError: function(aCode) {
+        let errorMessage;
+        if (aCode == 2) {
+          // Engine is a duplicate.
+          errorMessage = "alertSearchEngineDuplicateToast";
+
+        } else {
+          // Unknown failure. Display general error message.
+          errorMessage = "alertSearchEngineErrorToast";
+        }
+
+        NativeWindow.toast.show(Strings.browser.formatStringFromName(errorMessage, [engine.title], 1), "long");
+      }
+    });
   },
 
   addEngine: function addEngine(aElement) {
@@ -7114,6 +7250,7 @@ var RemoteDebugger = {
     // Make prompt. Note: button order is in reverse.
     let prompt = new Prompt({
       window: null,
+      hint: "remotedebug",
       title: title,
       message: msg,
       buttons: [ agree, cancel, disable ],

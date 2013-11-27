@@ -146,10 +146,10 @@ pref("app.update.certs.1.commonName", "aus4.mozilla.org");
 pref("app.update.certs.2.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
 pref("app.update.certs.2.commonName", "aus4.mozilla.org");
 #else
-pref("app.update.certs.1.issuerName", "OU=Equifax Secure Certificate Authority,O=Equifax,C=US");
+pref("app.update.certs.1.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
 pref("app.update.certs.1.commonName", "aus3.mozilla.org");
 
-pref("app.update.certs.2.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
+pref("app.update.certs.2.issuerName", "CN=DigiCert Secure Server CA,O=DigiCert Inc,C=US");
 pref("app.update.certs.2.commonName", "aus3.mozilla.org");
 #endif
 #endif
@@ -444,11 +444,10 @@ pref("browser.tabs.loadDivertedInBackground", false);
 pref("browser.tabs.loadBookmarksInBackground", false);
 pref("browser.tabs.tabClipWidth", 140);
 pref("browser.tabs.animate", true);
-pref("browser.tabs.onTop", true);
-#ifdef XP_WIN
-pref("browser.tabs.drawInTitlebar", true);
-#else
+#ifdef UNIX_BUT_NOT_MAC
 pref("browser.tabs.drawInTitlebar", false);
+#else
+pref("browser.tabs.drawInTitlebar", true);
 #endif
 
 // Where to show tab close buttons:
@@ -660,9 +659,18 @@ pref("plugins.update.notifyUser", false);
 
 pref("plugins.click_to_play", true);
 
-// let all plugins except Flash default to click-to-play
+#ifdef RELEASE_BUILD
+// For now, plugins other than Java and Flash are enabled in beta/release
+// and click-to-activate in earlier channels.
+pref("plugin.default.state", 2);
+#else
 pref("plugin.default.state", 1);
+#endif
+
+// Flash is enabled by default, and Java is click-to-activate by default on
+// all channels.
 pref("plugin.state.flash", 2);
+pref("plugin.state.java", 1);
 
 // display door hanger if flash not installed
 pref("plugins.notifyMissingFlash", true);
@@ -818,6 +826,9 @@ pref("urlclassifier.gethashnoise", 4);
 // a gethash request will be forced to check that the result is still in
 // the database.
 pref("urlclassifier.max-complete-age", 2700);
+// Tables for application reputation.
+pref("urlclassifier.download_block_table", "goog-badbinurl-shavar");
+pref("urlclassifier.download_allow_table", "goog-downloadwhite-digest256");
 #endif
 
 pref("browser.geolocation.warning.infoURL", "https://www.mozilla.org/%LOCALE%/firefox/geolocation/");
@@ -1078,7 +1089,7 @@ pref("devtools.commands.dir", "");
 
 // Enable the app manager
 pref("devtools.appmanager.enabled", true);
-pref("devtools.appmanager.firstrun", true);
+pref("devtools.appmanager.lastTab", "help");
 pref("devtools.appmanager.manifestEditor.enabled", false);
 
 // Toolbox preferences
@@ -1207,6 +1218,11 @@ pref("devtools.webconsole.fontSize", 0);
 // be cleared each time page navigation happens.
 pref("devtools.webconsole.persistlog", false);
 
+// Web Console timestamp: |true| if you want the logs and instructions
+// in the Web Console to display a timestamp, or |false| to not display
+// any timestamps.
+pref("devtools.webconsole.timestampMessages", false);
+
 // The number of lines that are displayed in the web console for the Net,
 // CSS, JS and Web Developer categories.
 pref("devtools.hud.loglimit.network", 200);
@@ -1219,14 +1235,6 @@ pref("devtools.hud.loglimit.console", 200);
 // - expandtab: expand Tab characters to spaces.
 pref("devtools.editor.tabsize", 4);
 pref("devtools.editor.expandtab", true);
-
-// Tells which component you want to use for source editing in developer tools.
-//
-// Available components:
-//   "orion" - this is the Orion source code editor from the Eclipse project. It
-//   provides programmer-specific editor features such as syntax highlighting,
-//   indenting and bracket recognition.
-pref("devtools.editor.component", "orion");
 
 // Enable the Font Inspector
 pref("devtools.fontinspector.enabled", true);
@@ -1324,3 +1332,6 @@ pref("geo.wifi.uri", "https://www.googleapis.com/geolocation/v1/geolocate?key=%G
 // Necko IPC security checks only needed for app isolation for cookies/cache/etc:
 // currently irrelevant for desktop e10s
 pref("network.disable.ipc.security", true);
+
+// CustomizableUI debug logging.
+pref("browser.uiCustomization.debug", false);

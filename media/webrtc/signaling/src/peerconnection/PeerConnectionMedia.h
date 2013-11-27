@@ -199,7 +199,7 @@ public:
       : SourceStreamInfo(aMediaStream, aParent) {}
 
   ~LocalSourceStreamInfo() {
-    mMediaStream = NULL;
+    mMediaStream = nullptr;
   }
 
   DOMMediaStream* GetMediaStream() {
@@ -262,7 +262,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     // TODO(ekr@rtfm.com): If someone asks for a value that doesn't exist,
     // make one.
     if (i >= mIceStreams.size()) {
-      return NULL;
+      return nullptr;
     }
     return mIceStreams[i];
   }
@@ -301,7 +301,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     int index_inner = aStreamIndex * 2 + (aIsRtcp ? 1 : 0);
 
     if (mTransportFlows.find(index_inner) == mTransportFlows.end())
-      return NULL;
+      return nullptr;
 
     return mTransportFlows[index_inner];
   }
@@ -319,7 +319,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     int index_inner = aStreamIndex * 2 + (aReceive ? 0 : 1);
 
     if (mConduits.find(index_inner) == mConduits.end())
-      return NULL;
+      return nullptr;
 
     return mConduits[index_inner];
   }
@@ -334,9 +334,10 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   }
 
   // ICE state signals
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceGatheringCompleted;  // Done gathering
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceCompleted;  // Done handshaking
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceFailed;  // Self explanatory
+  sigslot::signal2<mozilla::NrIceCtx*, mozilla::NrIceCtx::GatheringState>
+      SignalIceGatheringStateChange;
+  sigslot::signal2<mozilla::NrIceCtx*, mozilla::NrIceCtx::ConnectionState>
+      SignalIceConnectionStateChange;
 
  private:
   // Shutdown media transport. Must be called on STS thread.
@@ -347,9 +348,10 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   void SelfDestruct_m();
 
   // ICE events
-  void IceGatheringCompleted(mozilla::NrIceCtx *aCtx);
-  void IceCompleted(mozilla::NrIceCtx *aCtx);
-  void IceFailed(mozilla::NrIceCtx *aCtx);
+  void IceGatheringStateChange(mozilla::NrIceCtx* ctx,
+                               mozilla::NrIceCtx::GatheringState state);
+  void IceConnectionStateChange(mozilla::NrIceCtx* ctx,
+                                mozilla::NrIceCtx::ConnectionState state);
   void IceStreamReady(mozilla::NrIceMediaStream *aStream);
 
   // The parent PC

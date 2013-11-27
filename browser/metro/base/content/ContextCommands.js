@@ -170,8 +170,8 @@ var ContextCommands = {
   // Link specific
 
   openLinkInNewTab: function cc_openLinkInNewTab() {
-    Browser.addTab(ContextMenuUI.popupState.linkURL, false, Browser.selectedTab);
-    ContextUI.peekTabs(kOpenInNewTabAnimationDelayMsec);
+    let url = ContextMenuUI.popupState.linkURL;
+    BrowserUI.openLinkInNewTab(url, false, Browser.selectedTab);
   },
 
   copyLink: function cc_copyLink() {

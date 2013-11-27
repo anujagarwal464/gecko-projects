@@ -194,7 +194,7 @@ typedef nsIAtom*
 (* RuleHashGetKey) (PLDHashTable *table, const PLDHashEntryHdr *entry);
 
 struct RuleHashTableOps {
-  PLDHashTableOps ops;
+  const PLDHashTableOps ops;
   // Extra callback to avoid duplicating the matchEntry callback for
   // each table.  (There used to be a getKey callback in
   // PLDHashTableOps.)
@@ -1166,6 +1166,11 @@ InitSystemMetrics()
   rv = LookAndFeel::GetInt(LookAndFeel::eIntID_WindowsGlass, &metricResult);
   if (NS_SUCCEEDED(rv) && metricResult) {
     sSystemMetrics->AppendElement(nsGkAtoms::windows_glass);
+  }
+
+  rv = LookAndFeel::GetInt(LookAndFeel::eIntID_ColorPickerAvailable, &metricResult);
+  if (NS_SUCCEEDED(rv) && metricResult) {
+    sSystemMetrics->AppendElement(nsGkAtoms::color_picker_available);
   }
 
   rv = LookAndFeel::GetInt(LookAndFeel::eIntID_WindowsClassic, &metricResult);
@@ -3092,7 +3097,7 @@ InitWeightEntry(PLDHashTable *table, PLDHashEntryHdr *hdr,
   return true;
 }
 
-static PLDHashTableOps gRulesByWeightOps = {
+static const PLDHashTableOps gRulesByWeightOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     HashIntKey,

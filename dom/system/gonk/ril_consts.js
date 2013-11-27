@@ -508,6 +508,7 @@ this.ICC_EF_CFIS   = 0x6fcb;
 this.ICC_EF_SPDI   = 0x6fcd;
 
 // CSIM files
+this.ICC_EF_CSIM_IMSI_M   = 0x6f22;
 this.ICC_EF_CSIM_CDMAHOME = 0x6f28;
 this.ICC_EF_CSIM_CST      = 0x6f32; // CDMA Service table
 this.ICC_EF_CSIM_SPN      = 0x6f41;
@@ -665,6 +666,14 @@ this.USIM_TAG_NAME[ICC_USIM_EFGSD_TAG] = "gsd";
 this.USIM_TAG_NAME[ICC_USIM_EFUID_TAG] = "uid";
 this.USIM_TAG_NAME[ICC_USIM_EFEMAIL_TAG] = "email";
 this.USIM_TAG_NAME[ICC_USIM_EFCCP1_TAG] = "ccp1";
+
+// CDMA IMSI_M's byte const.
+// 3GPP2 C.S0065 Sec. 5.2.2
+this.CSIM_IMSI_M_MIN2_BYTE = 1;
+this.CSIM_IMSI_M_MIN1_BYTE = 3;
+this.CSIM_IMSI_M_MNC_BYTE = 6;
+this.CSIM_IMSI_M_PROGRAMMED_BYTE = 7;
+this.CSIM_IMSI_M_MCC_BYTE = 8;
 
 /**
  * STK constants.
@@ -2370,10 +2379,15 @@ this.GECKO_RADIOSTATE_UNAVAILABLE   = null;
 this.GECKO_RADIOSTATE_OFF           = "off";
 this.GECKO_RADIOSTATE_READY         = "ready";
 
-this.GECKO_CARDSTATE_NOT_READY                     = null;
+this.GECKO_DETAILED_RADIOSTATE_UNKNOWN    = null;
+this.GECKO_DETAILED_RADIOSTATE_ENABLING   = "enabling";
+this.GECKO_DETAILED_RADIOSTATE_ENABLED    = "enabled";
+this.GECKO_DETAILED_RADIOSTATE_DISABLING  = "disabling";
+this.GECKO_DETAILED_RADIOSTATE_DISABLED   = "disabled";
+
+this.GECKO_CARDSTATE_UNDETECTED                    = null;
 this.GECKO_CARDSTATE_ILLEGAL                       = "illegal";
 this.GECKO_CARDSTATE_UNKNOWN                       = "unknown";
-this.GECKO_CARDSTATE_ABSENT                        = "absent";
 this.GECKO_CARDSTATE_PIN_REQUIRED                  = "pinRequired";
 this.GECKO_CARDSTATE_PUK_REQUIRED                  = "pukRequired";
 this.GECKO_CARDSTATE_PERSONALIZATION_IN_PROGRESS   = "personalizationInProgress";
@@ -2389,6 +2403,7 @@ this.GECKO_CARDSTATE_CORPORATE_PUK_REQUIRED        = "corporatePukRequired";
 this.GECKO_CARDSTATE_SERVICE_PROVIDER_PUK_REQUIRED = "serviceProviderPukRequired";
 this.GECKO_CARDSTATE_SIM_PUK_REQUIRED              = "simPersonalizationPukRequired";
 this.GECKO_CARDSTATE_READY                         = "ready";
+this.GECKO_CARDSTATE_PERMANENT_BLOCKED             = "permanentBlocked";
 
 this.GECKO_CARDLOCK_PIN      = "pin";
 this.GECKO_CARDLOCK_PIN2     = "pin2";
@@ -2772,16 +2787,18 @@ this.PDU_CDMA_MSG_CODING_7BITS_GSM = 0x09;    // GSM 7-bit default alphabet(7-bi
 this.PDU_CDMA_MSG_CODING_GSM_DCS = 0x0A;      // GSM Data-Coding-Scheme, Not supported
 
 // SMS Message Type, as defined in 3GPP2 C.S0015-A v2.0, Table 4.5.1-1
-this.PDU_CDMA_MSG_TYPE_DELIVER = 0x01;        // Receive
-this.PDU_CDMA_MSG_TYPE_SUBMIT = 0x02;         // Send
+this.PDU_CDMA_MSG_TYPE_DELIVER     = 0x01;         // Deliver
+this.PDU_CDMA_MSG_TYPE_SUBMIT      = 0x02;         // Submit
+this.PDU_CDMA_MSG_TYPE_DELIVER_ACK = 0x04;         // Delivery Acknowledgment
 
 // SMS User Data Subparameters, as defined in 3GPP2 C.S0015-A v2.0, Table 4.5-1
-this.PDU_CDMA_MSG_USERDATA_MSG_ID = 0x00;           // Message Identifier
-this.PDU_CDMA_MSG_USERDATA_BODY = 0x01;             // User Data Body
-this.PDU_CDMA_MSG_USERDATA_TIMESTAMP = 0x03;        // Message Center Time Stamp
-this.PDU_CDMA_REPLY_OPTION = 0x0A;                  // Reply Option
-this.PDU_CDMA_LANGUAGE_INDICATOR = 0x0D;            // Language Indicator
+this.PDU_CDMA_MSG_USERDATA_MSG_ID          = 0x00;  // Message Identifier
+this.PDU_CDMA_MSG_USERDATA_BODY            = 0x01;  // User Data Body
+this.PDU_CDMA_MSG_USERDATA_TIMESTAMP       = 0x03;  // Message Center Time Stamp
+this.PDU_CDMA_MSG_USERDATA_REPLY_OPTION    = 0x0A;  // Reply Option
+this.PDU_CDMA_LANGUAGE_INDICATOR           = 0x0D;  // Language Indicator
 this.PDU_CDMA_MSG_USERDATA_CALLBACK_NUMBER = 0x0E;  // Callback Number
+this.PDU_CDMA_MSG_USER_DATA_MSG_STATUS     = 0x14;  // Message Status
 
 // CDMA Language Indicator: Language groups
 // see 3GPP2 C.R1001-F table 9.2-1

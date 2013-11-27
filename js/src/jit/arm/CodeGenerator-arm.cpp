@@ -722,7 +722,7 @@ CodeGeneratorARM::visitModI(LModI *ins)
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
     Register output = ToRegister(ins->output());
-    Register callTemp = ToRegister(ins->getTemp(0));
+    Register callTemp = ToRegister(ins->callTemp());
     MMod *mir = ins->mir();
 
     // save the lhs in case we end up with a 0 that should be a -0.0 because lhs < 0.
@@ -758,9 +758,10 @@ CodeGeneratorARM::visitSoftModI(LSoftModI *ins)
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
     Register output = ToRegister(ins->output());
-    Register callTemp = ToRegister(ins->getTemp(2));
+    Register callTemp = ToRegister(ins->callTemp());
     MMod *mir = ins->mir();
     Label done;
+
     // save the lhs in case we end up with a 0 that should be a -0.0 because lhs < 0.
     JS_ASSERT(callTemp.code() > r3.code() && callTemp.code() < r12.code());
     masm.ma_mov(lhs, callTemp);
@@ -1044,8 +1045,9 @@ class js::jit::OutOfLineTableSwitch : public OutOfLineCodeBase<CodeGeneratorARM>
     }
 
   public:
-    OutOfLineTableSwitch(MTableSwitch *mir)
-      : mir_(mir)
+    OutOfLineTableSwitch(TempAllocator &alloc, MTableSwitch *mir)
+      : mir_(mir),
+        codeLabels_(alloc)
     {}
 
     MTableSwitch *mir() const {
@@ -1125,7 +1127,7 @@ CodeGeneratorARM::emitTableSwitchDispatch(MTableSwitch *mir, const Register &ind
     // To fill in the CodeLabels for the case entries, we need to first
     // generate the case entries (we don't yet know their offsets in the
     // instruction stream).
-    OutOfLineTableSwitch *ool = new OutOfLineTableSwitch(mir);
+    OutOfLineTableSwitch *ool = new OutOfLineTableSwitch(alloc(), mir);
     for (int32_t i = 0; i < cases; i++) {
         CodeLabel cl;
         masm.writeCodePointer(cl.dest());
@@ -1871,7 +1873,7 @@ CodeGeneratorARM::visitInterruptCheck(LInterruptCheck *lir)
     if (!ool)
         return false;
 
-    void *interrupt = (void*)&GetIonContext()->runtime->interrupt;
+    void *interrupt = (void*)GetIonContext()->runtime->addressOfInterrupt();
     masm.load32(AbsoluteAddress(interrupt), lr);
     masm.ma_cmp(lr, Imm32(0));
     masm.ma_b(ool->entry(), Assembler::NonZero);
@@ -2106,7 +2108,32 @@ CodeGeneratorARM::visitUDiv(LUDiv *ins)
     Register rhs = ToRegister(ins->rhs());
     Register output = ToRegister(ins->output());
 
+    Label done;
+    if (ins->mir()->canBeDivideByZero()) {
+        masm.ma_cmp(rhs, Imm32(0));
+        if (ins->mir()->isTruncated()) {
+            // Infinity|0 == 0
+            Label skip;
+            masm.ma_b(&skip, Assembler::NotEqual);
+            masm.ma_mov(Imm32(0), output);
+            masm.ma_b(&done);
+            masm.bind(&skip);
+        } else {
+            JS_ASSERT(ins->mir()->fallible());
+            if (!bailoutIf(Assembler::Equal, ins->snapshot()))
+                return false;
+        }
+    }
+
     masm.ma_udiv(lhs, rhs, output);
+
+    if (!ins->mir()->isTruncated()) {
+        masm.ma_cmp(output, Imm32(0));
+        if (!bailoutIf(Assembler::LessThan, ins->snapshot()))
+            return false;
+    }
+
+    masm.bind(&done);
     return true;
 }
 
@@ -2116,16 +2143,31 @@ CodeGeneratorARM::visitUMod(LUMod *ins)
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
     Register output = ToRegister(ins->output());
-    Label notzero;
     Label done;
 
-    masm.ma_cmp(rhs, Imm32(0));
-    masm.ma_b(&notzero, Assembler::NonZero);
-    masm.ma_mov(Imm32(0), output);
-    masm.ma_b(&done);
+    if (ins->mir()->canBeDivideByZero()) {
+        masm.ma_cmp(rhs, Imm32(0));
+        if (ins->mir()->isTruncated()) {
+            // Infinity|0 == 0
+            Label skip;
+            masm.ma_b(&skip, Assembler::NotEqual);
+            masm.ma_mov(Imm32(0), output);
+            masm.ma_b(&done);
+            masm.bind(&skip);
+        } else {
+            JS_ASSERT(ins->mir()->fallible());
+            if (!bailoutIf(Assembler::Equal, ins->snapshot()))
+                return false;
+        }
+    }
 
-    masm.bind(&notzero);
     masm.ma_umod(lhs, rhs, output);
+
+    if (!ins->mir()->isTruncated()) {
+        masm.ma_cmp(output, Imm32(0));
+        if (!bailoutIf(Assembler::LessThan, ins->snapshot()))
+            return false;
+    }
 
     masm.bind(&done);
     return true;
@@ -2140,10 +2182,9 @@ CodeGeneratorARM::visitSoftUDivOrMod(LSoftUDivOrMod *ins)
 
     JS_ASSERT(lhs == r0);
     JS_ASSERT(rhs == r1);
-    JS_ASSERT(ins->mirRaw()->isDiv() || ins->mirRaw()->isAsmJSUDiv() ||
-              ins->mirRaw()->isMod() || ins->mirRaw()->isAsmJSUMod());
-    JS_ASSERT_IF(ins->mirRaw()->isDiv() || ins->mirRaw()->isAsmJSUDiv(), output == r0);
-    JS_ASSERT_IF(ins->mirRaw()->isMod() || ins->mirRaw()->isAsmJSUMod(), output == r1);
+    JS_ASSERT(ins->mirRaw()->isDiv() || ins->mirRaw()->isMod());
+    JS_ASSERT_IF(ins->mirRaw()->isDiv(), output == r0);
+    JS_ASSERT_IF(ins->mirRaw()->isMod(), output == r1);
 
     Label afterDiv;
 

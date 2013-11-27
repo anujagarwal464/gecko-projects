@@ -1199,7 +1199,7 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
   if (mViewManagerFlushIsPending) {
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
-      printf("Starting ProcessPendingUpdates\n");
+      printf_stderr("Starting ProcessPendingUpdates\n");
     }
 #endif
 #ifndef MOZ_WIDGET_GONK
@@ -1215,7 +1215,7 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
     vm->ProcessPendingUpdates();
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
-      printf("Ending ProcessPendingUpdates\n");
+      printf_stderr("Ending ProcessPendingUpdates\n");
     }
 #endif
   }
@@ -1383,3 +1383,5 @@ nsRefreshDriver::RevokeFrameRequestCallbacks(nsIDocument* aDocument)
   // No need to worry about restarting our timer in slack mode if it's already
   // running; that will happen automatically when it fires.
 }
+
+#undef LOG

@@ -42,12 +42,8 @@ nsresult SetMinidumpPath(const nsAString& aPath);
 nsresult AnnotateCrashReport(const nsACString& key, const nsACString& data);
 nsresult AppendAppNotesToCrashReport(const nsACString& data);
 
+void AnnotateOOMAllocationSize(size_t size);
 nsresult SetGarbageCollecting(bool collecting);
-
-#ifdef XP_WIN
-// Implemented by the blocklist, this method writes the blocklist annotation
-void WriteBlockedDlls(HANDLE file);
-#endif
 
 nsresult SetRestartArgs(int argc, char** argv);
 nsresult SetupExtraData(nsIFile* aAppDataDirectory,

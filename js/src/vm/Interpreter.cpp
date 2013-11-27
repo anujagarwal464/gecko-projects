@@ -73,7 +73,7 @@ static bool
 #endif
 ToBooleanOp(const FrameRegs &regs)
 {
-    return ToBoolean(regs.sp[-1]);
+    return ToBoolean(regs.stackHandleAt(-1));
 }
 
 template <bool Eq>
@@ -1412,52 +1412,55 @@ CASE(EnableInterruptsPseudoOpcode)
         moreInterrupts = true;
     }
 
-    JSInterruptHook hook = cx->runtime()->debugHooks.interruptHook;
-    if (hook || script->stepModeEnabled()) {
-        RootedValue rval(cx);
-        JSTrapStatus status = JSTRAP_CONTINUE;
-        if (hook)
-            status = hook(cx, script, REGS.pc, rval.address(), cx->runtime()->debugHooks.interruptHookData);
-        if (status == JSTRAP_CONTINUE && script->stepModeEnabled())
-            status = Debugger::onSingleStep(cx, &rval);
-        switch (status) {
-          case JSTRAP_ERROR:
-            goto error;
-          case JSTRAP_CONTINUE:
-            break;
-          case JSTRAP_RETURN:
-            REGS.fp()->setReturnValue(rval);
-            interpReturnOK = true;
-            goto forced_return;
-          case JSTRAP_THROW:
-            cx->setPendingException(rval);
-            goto error;
-          default:;
+    if (cx->compartment()->debugMode()) {
+        JSInterruptHook hook = cx->runtime()->debugHooks.interruptHook;
+        if (hook || script->stepModeEnabled()) {
+            RootedValue rval(cx);
+            JSTrapStatus status = JSTRAP_CONTINUE;
+            if (hook)
+                status = hook(cx, script, REGS.pc, rval.address(),
+                              cx->runtime()->debugHooks.interruptHookData);
+            if (status == JSTRAP_CONTINUE && script->stepModeEnabled())
+                status = Debugger::onSingleStep(cx, &rval);
+            switch (status) {
+              case JSTRAP_ERROR:
+                goto error;
+              case JSTRAP_CONTINUE:
+                break;
+              case JSTRAP_RETURN:
+                REGS.fp()->setReturnValue(rval);
+                interpReturnOK = true;
+                goto forced_return;
+              case JSTRAP_THROW:
+                cx->setPendingException(rval);
+                goto error;
+              default:;
+            }
+            moreInterrupts = true;
         }
-        moreInterrupts = true;
-    }
 
-    if (script->hasAnyBreakpointsOrStepMode())
-        moreInterrupts = true;
+        if (script->hasAnyBreakpointsOrStepMode())
+            moreInterrupts = true;
 
-    if (script->hasBreakpointsAt(REGS.pc)) {
-        RootedValue rval(cx);
-        JSTrapStatus status = Debugger::onTrap(cx, &rval);
-        switch (status) {
-          case JSTRAP_ERROR:
-            goto error;
-          case JSTRAP_RETURN:
-            REGS.fp()->setReturnValue(rval);
-            interpReturnOK = true;
-            goto forced_return;
-          case JSTRAP_THROW:
-            cx->setPendingException(rval);
-            goto error;
-          default:
-            break;
+        if (script->hasBreakpointsAt(REGS.pc)) {
+            RootedValue rval(cx);
+            JSTrapStatus status = Debugger::onTrap(cx, &rval);
+            switch (status) {
+              case JSTRAP_ERROR:
+                goto error;
+              case JSTRAP_RETURN:
+                REGS.fp()->setReturnValue(rval);
+                interpReturnOK = true;
+                goto forced_return;
+              case JSTRAP_THROW:
+                cx->setPendingException(rval);
+                goto error;
+              default:
+                break;
+            }
+            JS_ASSERT(status == JSTRAP_CONTINUE);
+            JS_ASSERT(rval.isInt32() && rval.toInt32() == op);
         }
-        JS_ASSERT(status == JSTRAP_CONTINUE);
-        JS_ASSERT(rval.isInt32() && rval.toInt32() == op);
     }
 
     JS_ASSERT(activation.opMask() == EnableInterruptsPseudoOpcode);
@@ -1660,7 +1663,7 @@ CASE(JSOP_RETRVAL)
         if (!REGS.fp()->isYielding())
             REGS.fp()->epilogue(cx);
         else
-            probes::ExitScript(cx, script, script->function(), REGS.fp());
+            probes::ExitScript(cx, script, script->function(), REGS.fp()->hasPushedSPSFrame());
 
 #if defined(JS_ION)
   jit_return_pop_frame:
@@ -1758,7 +1761,7 @@ CASE(JSOP_IN)
 {
     HandleValue rref = REGS.stackHandleAt(-1);
     if (!rref.isObject()) {
-        js_ReportValueError(cx, JSMSG_IN_NOT_OBJECT, -1, rref, NullPtr());
+        js_ReportValueError(cx, JSMSG_IN_NOT_OBJECT, -1, rref, js::NullPtr());
         goto error;
     }
     RootedObject &obj = rootObject0;
@@ -2787,8 +2790,9 @@ CASE(JSOP_SETALIASEDVAR)
 
     // Avoid computing the name if no type updates are needed, as this may be
     // expensive on scopes with large numbers of variables.
-    PropertyName *name = obj.hasSingletonType() ? ScopeCoordinateName(cx, script, REGS.pc)
-                                                : nullptr;
+    PropertyName *name = (obj.hasSingletonType() && !obj.hasLazyType())
+                         ? ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, REGS.pc)
+                         : nullptr;
 
     obj.setAliasedVar(cx, sc, name, REGS.sp[-1]);
 }
@@ -3180,7 +3184,7 @@ CASE(JSOP_INSTANCEOF)
     RootedValue &rref = rootValue0;
     rref = REGS.sp[-1];
     if (rref.isPrimitive()) {
-        js_ReportValueError(cx, JSMSG_BAD_INSTANCEOF_RHS, -1, rref, NullPtr());
+        js_ReportValueError(cx, JSMSG_BAD_INSTANCEOF_RHS, -1, rref, js::NullPtr());
         goto error;
     }
     RootedObject &obj = rootObject0;
@@ -3286,7 +3290,7 @@ CASE(JSOP_YIELD)
     if (cx->innermostGenerator()->state == JSGEN_CLOSING) {
         RootedValue &val = rootValue0;
         val.setObject(REGS.fp()->callee());
-        js_ReportValueError(cx, JSMSG_BAD_GENERATOR_YIELD, JSDVG_SEARCH_STACK, val, NullPtr());
+        js_ReportValueError(cx, JSMSG_BAD_GENERATOR_YIELD, JSDVG_SEARCH_STACK, val, js::NullPtr());
         goto error;
     }
     REGS.fp()->setReturnValue(REGS.sp[-1]);
@@ -3437,7 +3441,7 @@ DEFAULT()
     if (!REGS.fp()->isYielding())
         REGS.fp()->epilogue(cx);
     else
-        probes::ExitScript(cx, script, script->function(), REGS.fp());
+        probes::ExitScript(cx, script, script->function(), REGS.fp()->hasPushedSPSFrame());
 
     gc::MaybeVerifyBarriers(cx, true);
 

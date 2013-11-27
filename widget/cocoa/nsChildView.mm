@@ -56,7 +56,6 @@
 #include "gfxUtils.h"
 #include "nsRegion.h"
 #include "Layers.h"
-#include "LayerManagerOGL.h"
 #include "ClientLayerManager.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "GLTextureImage.h"
@@ -168,7 +167,6 @@ uint32_t nsChildView::sLastInputEventCount = 0;
 - (void)clearCorners;
 
 // Overlay drawing functions for traditional CGContext drawing
-- (void)drawTitleString;
 - (void)drawTitlebarHighlight;
 - (void)maskTopCornersInContext:(CGContextRef)aContext;
 
@@ -1989,7 +1987,6 @@ nsChildView::NotifyDirtyRegion(const nsIntRegion& aDirtyRegion)
   if ([(ChildView*)mView isCoveringTitlebar]) {
     // We store the dirty region so that we know what to repaint in the titlebar.
     mDirtyTitlebarRegion.Or(mDirtyTitlebarRegion, aDirtyRegion);
-    mDirtyTitlebarRegion.And(mDirtyTitlebarRegion, RectContainingTitlebarControls());
   }
 }
 
@@ -2181,7 +2178,8 @@ DrawTitlebarHighlight(NSSize aWindowSize, CGFloat aRadius, CGFloat aDevicePixelW
 void
 nsChildView::UpdateTitlebarImageBuffer()
 {
-  nsIntRegion dirtyTitlebarRegion = mDirtyTitlebarRegion;
+  nsIntRegion dirtyTitlebarRegion;
+  dirtyTitlebarRegion.And(mDirtyTitlebarRegion, mTitlebarRect);
   mDirtyTitlebarRegion.SetEmpty();
 
   nsIntSize texSize = RectTextureImage::TextureSizeForSize(mTitlebarRect.Size());
@@ -2199,7 +2197,8 @@ nsChildView::UpdateTitlebarImageBuffer()
   if (dirtyTitlebarRegion.IsEmpty())
     return;
 
-  ClearRegion(mTitlebarImageBuffer, dirtyTitlebarRegion);
+  gfxUtils::ClipToRegion(mTitlebarImageBuffer, dirtyTitlebarRegion);
+  mTitlebarImageBuffer->ClearRect(gfx::Rect(0, 0, titlebarBufferSize.width, titlebarBufferSize.height));
 
   gfx::BorrowedCGContext borrow(mTitlebarImageBuffer);
   CGContextRef ctx = borrow.cg;
@@ -2219,18 +2218,11 @@ nsChildView::UpdateTitlebarImageBuffer()
   NSGraphicsContext* context = [NSGraphicsContext graphicsContextWithGraphicsPort:ctx flipped:[frameView isFlipped]];
   [NSGraphicsContext setCurrentContext:context];
 
-  // Draw the title string.
-  if ([frameView respondsToSelector:@selector(_drawTitleBar:)]) {
-    [frameView _drawTitleBar:[frameView bounds]];
-  }
-
   // Draw the titlebar controls into the titlebar image.
   for (id view in [window titlebarControls]) {
     NSRect viewFrame = [view frame];
     nsIntRect viewRect = CocoaPointsToDevPixels([mView convertRect:viewFrame fromView:frameView]);
-    nsIntRegion intersection;
-    intersection.And(dirtyTitlebarRegion, viewRect);
-    if (intersection.IsEmpty()) {
+    if (!dirtyTitlebarRegion.Intersects(viewRect)) {
       continue;
     }
     // All of the titlebar controls we're interested in are subclasses of
@@ -2255,8 +2247,7 @@ nsChildView::UpdateTitlebarImageBuffer()
 
     [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithGraphicsPort:ctx flipped:[view isFlipped]]];
 
-    NSRect intersectRect = DevPixelsToCocoaPoints(intersection.GetBounds());
-    [cell drawWithFrame:[view convertRect:intersectRect fromView:mView] inView:button];
+    [cell drawWithFrame:[button bounds] inView:button];
 
     [NSGraphicsContext setCurrentContext:context];
     CGContextRestoreGState(ctx);
@@ -2269,6 +2260,8 @@ nsChildView::UpdateTitlebarImageBuffer()
 
   [NSGraphicsContext setCurrentContext:oldContext];
   borrow.Finish();
+
+  mTitlebarImageBuffer->PopClip();
 
   mUpdatedTitlebarRegion.Or(mUpdatedTitlebarRegion, dirtyTitlebarRegion);
 }
@@ -2388,6 +2381,19 @@ FindUnifiedToolbarBottom(const nsTArray<nsIWidget::ThemeGeometry>& aThemeGeometr
   }
   return unifiedToolbarBottom;
 }
+ 
+static nsIntRect
+FindFirstRectOfType(const nsTArray<nsIWidget::ThemeGeometry>& aThemeGeometries,
+                    uint8_t aWidgetType)
+{
+  for (uint32_t i = 0; i < aThemeGeometries.Length(); ++i) {
+    const nsIWidget::ThemeGeometry& g = aThemeGeometries[i];
+    if (g.mWidgetType == aWidgetType) {
+      return g.mRect;
+    }
+  }
+  return nsIntRect();
+}
 
 void
 nsChildView::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries)
@@ -2395,6 +2401,7 @@ nsChildView::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometri
   if (![mView window] || ![[mView window] isKindOfClass:[ToolbarWindow class]])
     return;
 
+  // Update unified toolbar height.
   int32_t windowWidth = mBounds.width;
   int32_t titlebarBottom = FindTitlebarBottom(aThemeGeometries, windowWidth);
   int32_t unifiedToolbarBottom =
@@ -2406,6 +2413,12 @@ nsChildView::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometri
   int32_t contentOffset = drawsContentsIntoWindowFrame ? titlebarHeight : 0;
   int32_t devUnifiedHeight = titlebarHeight + unifiedToolbarBottom - contentOffset;
   [win setUnifiedToolbarHeight:DevPixelsToCocoaPoints(devUnifiedHeight)];
+
+  // Update titlebar control offsets.
+  nsIntRect windowButtonRect = FindFirstRectOfType(aThemeGeometries, NS_THEME_WINDOW_BUTTON_BOX);
+  [win placeWindowButtons:[mView convertRect:DevPixelsToCocoaPoints(windowButtonRect) toView:nil]];
+  nsIntRect fullScreenButtonRect = FindFirstRectOfType(aThemeGeometries, NS_THEME_MOZ_MAC_FULLSCREEN_BUTTON);
+  [win placeFullScreenButton:[mView convertRect:DevPixelsToCocoaPoints(fullScreenButtonRect) toView:nil]];
 }
 
 TemporaryRef<gfx::DrawTarget>
@@ -3458,7 +3471,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 
   if ([self isCoveringTitlebar]) {
-    [self drawTitleString];
     [self drawTitlebarHighlight];
     [self maskTopCornersInContext:aContext];
   }
@@ -3507,17 +3519,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
   nsIntRect geckoBounds;
   mGeckoChild->GetBounds(geckoBounds);
   nsIntRegion region(geckoBounds);
-
-  if ([self isUsingMainThreadOpenGL]) {
-    LayerManagerOGL *manager = static_cast<LayerManagerOGL*>(mGeckoChild->GetLayerManager(nullptr));
-    manager->SetClippingRegion(region);
-    NSOpenGLContext *glContext = (NSOpenGLContext *)manager->GetNSOpenGLContext();
-
-    if (!mGLContext) {
-      [self setGLContext:glContext];
-      [self updateGLContext];
-    }
-  }
 
   mGeckoChild->PaintWindow(region);
 
@@ -3624,26 +3625,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
   CGContextDrawImage(aContext, destRect, mTopLeftCornerMask);
 
   CGContextRestoreGState(aContext);
-}
-
-- (void)drawTitleString
-{
-  NSView* frameView = [[[self window] contentView] superview];
-  if (![frameView respondsToSelector:@selector(_drawTitleBar:)]) {
-    return;
-  }
-
-  NSGraphicsContext* oldContext = [NSGraphicsContext currentContext];
-  CGContextRef ctx = (CGContextRef)[oldContext graphicsPort];
-  CGContextSaveGState(ctx);
-  if ([oldContext isFlipped] != [frameView isFlipped]) {
-    CGContextTranslateCTM(ctx, 0, [self bounds].size.height);
-    CGContextScaleCTM(ctx, 1, -1);
-  }
-  [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithGraphicsPort:ctx flipped:[frameView isFlipped]]];
-  [frameView _drawTitleBar:[frameView bounds]];
-  CGContextRestoreGState(ctx);
-  [NSGraphicsContext setCurrentContext:oldContext];
 }
 
 - (void)drawTitlebarHighlight

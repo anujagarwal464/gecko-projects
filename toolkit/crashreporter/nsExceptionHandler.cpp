@@ -83,6 +83,7 @@ using mozilla::InjectCrashRunnable;
 
 #include "mozilla/mozalloc_oom.h"
 #include "mozilla/LateWriteChecks.h"
+#include "mozilla/WindowsDllBlocklist.h"
 
 #if defined(XP_MACOSX)
 CFStringRef reporterClientAppID = CFSTR("org.mozilla.crashreporter");
@@ -221,11 +222,6 @@ static const int kAvailablePhysicalMemoryParameterLen =
 static const char kIsGarbageCollectingParameter[] = "IsGarbageCollecting=";
 static const int kIsGarbageCollectingParameterLen =
   sizeof(kIsGarbageCollectingParameter)-1;
-
-#ifdef XP_WIN
-static const char kBlockedDllsParameter[] = "BlockedDllList=";
-static const int kBlockedDllsParameterLen = sizeof(kBlockedDllsParameter) - 1;
-#endif
 
 // this holds additional data sent via the API
 static Mutex* crashReporterAPILock;
@@ -545,9 +541,10 @@ bool MinidumpCallback(
         WriteFile(hFile, isGarbageCollecting ? "1" : "0", 1, &nBytes, nullptr);
         WriteFile(hFile, "\n", 1, &nBytes, nullptr);
       }
-      WriteFile(hFile, kBlockedDllsParameter, kBlockedDllsParameterLen, &nBytes, nullptr);
-      WriteBlockedDlls(hFile);
-      WriteFile(hFile, "\n", 1, &nBytes, nullptr);
+
+#ifdef HAS_DLL_BLOCKLIST
+      DllBlocklist_WriteNotes(hFile);
+#endif
 
       // Try to get some information about memory.
       MEMORYSTATUSEX statex;
@@ -722,14 +719,18 @@ static void* gBreakpadReservedVM;
  * Reserve some VM space. In the event that we crash because VM space is
  * being leaked without leaking memory, freeing this space before taking
  * the minidump will allow us to collect a minidump.
+ *
+ * This size is bigger than xul.dll plus some extra for MinidumpWriteDump
+ * allocations.
  */
-static const SIZE_T kReserveSize = 0xc00000; // 12 MB
+static const SIZE_T kReserveSize = 0x2400000; // 36 MB
 
 static void
 ReserveBreakpadVM()
 {
   if (!gBreakpadReservedVM) {
-    gBreakpadReservedVM = VirtualAlloc(nullptr, kReserveSize, MEM_RESERVE, 0);
+    gBreakpadReservedVM = VirtualAlloc(nullptr, kReserveSize, MEM_RESERVE,
+                                       PAGE_NOACCESS);
   }
 }
 
@@ -737,7 +738,7 @@ static void
 FreeBreakpadVM()
 {
   if (gBreakpadReservedVM) {
-    VirtualFree(gBreakpadReservedVM, kReserveSize, MEM_RELEASE);
+    VirtualFree(gBreakpadReservedVM, 0, MEM_RELEASE);
   }
 }
 

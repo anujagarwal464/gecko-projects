@@ -28,18 +28,12 @@ class LBinaryMath : public LInstructionHelper<1, 2 + ExtraUses, Temps>
     }
 };
 
-// Used for jumps from other blocks. Also simplifies register allocation since
-// the first instruction of a block is guaranteed to have no uses.
+// Simplifies register allocation since the first instruction of a block is
+// guaranteed to have no uses.
 class LLabel : public LInstructionHelper<0, 0, 0>
 {
-    Label label_;
-
   public:
     LIR_HEADER(Label)
-
-    Label *label() {
-        return &label_;
-    }
 };
 
 class LNop : public LInstructionHelper<0, 0, 0>
@@ -104,6 +98,10 @@ class LMoveGroup : public LInstructionHelper<0, 0, 0>
 
   public:
     LIR_HEADER(MoveGroup)
+
+    LMoveGroup(TempAllocator &alloc)
+      : moves_(alloc)
+    { }
 
     void printOperands(FILE *fp);
 
@@ -1204,6 +1202,23 @@ class LGetDOMProperty : public LDOMPropertyInstructionHelper<BOX_PIECES, 0>
 
     MGetDOMProperty *mir() const {
         return mir_->toGetDOMProperty();
+    }
+};
+
+class LGetDOMMember : public LInstructionHelper<BOX_PIECES, 1, 0>
+{
+  public:
+    LIR_HEADER(GetDOMMember);
+    LGetDOMMember(const LAllocation &object) {
+        setOperand(0, object);
+    }
+
+    const LAllocation *object() {
+        return getOperand(0);
+    }
+
+    MGetDOMMember *mir() const {
+        return mir_->toGetDOMMember();
     }
 };
 
@@ -2369,6 +2384,33 @@ class LAtan2D : public LCallInstructionHelper<1, 2, 1>
     }
 };
 
+class LHypot : public LCallInstructionHelper<1, 2, 1>
+{
+  public:
+    LIR_HEADER(Hypot)
+    LHypot(const LAllocation &x, const LAllocation &y, const LDefinition &temp) {
+        setOperand(0, x);
+        setOperand(1, y);
+        setTemp(0, temp);
+    }
+
+    const LAllocation *x() {
+        return getOperand(0);
+    }
+
+    const LAllocation *y() {
+        return getOperand(1);
+    }
+
+    const LDefinition *temp() {
+        return getTemp(0);
+    }
+
+    const LDefinition *output() {
+        return getDef(0);
+    }
+};
+
 // Double raised to an integer power.
 class LPowI : public LCallInstructionHelper<1, 2, 1>
 {
@@ -2717,6 +2759,26 @@ class LFromCharCode : public LInstructionHelper<1, 1, 0>
 
     const LAllocation *code() {
         return this->getOperand(0);
+    }
+};
+
+class LStringSplit : public LCallInstructionHelper<1, 2, 0>
+{
+  public:
+    LIR_HEADER(StringSplit)
+
+    LStringSplit(const LAllocation &string, const LAllocation &separator) {
+        setOperand(0, string);
+        setOperand(1, separator);
+    }
+    const LAllocation *string() {
+        return getOperand(0);
+    }
+    const LAllocation *separator() {
+        return getOperand(1);
+    }
+    const MStringSplit *mir() const {
+        return mir_->toStringSplit();
     }
 };
 
@@ -5059,6 +5121,20 @@ class LPostWriteBarrierAllSlots : public LInstructionHelper<0, 1, 0>
     }
     const LAllocation *object() {
         return getOperand(0);
+    }
+};
+
+// Guard against an object's identity.
+class LGuardObjectIdentity : public LInstructionHelper<0, 1, 0>
+{
+  public:
+    LIR_HEADER(GuardObjectIdentity)
+
+    LGuardObjectIdentity(const LAllocation &in) {
+        setOperand(0, in);
+    }
+    const MGuardObjectIdentity *mir() const {
+        return mir_->toGuardObjectIdentity();
     }
 };
 

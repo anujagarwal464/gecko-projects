@@ -477,6 +477,9 @@ public:
                          const JS::ContextOptions& aContentOptions);
 
   void
+  UpdatePreference(JSContext* aCx, WorkerPreference aPref, bool aValue);
+
+  void
   UpdateJSWorkerMemoryParameter(JSContext* aCx, JSGCParamKey key,
                                 uint32_t value);
 
@@ -815,6 +818,8 @@ class WorkerPrivate : public WorkerPrivateParent<WorkerPrivate>
   nsCOMPtr<nsIThread> mThread;
 #endif
 
+  bool mPreferences[WORKERPREF_COUNT];
+
 protected:
   ~WorkerPrivate();
 
@@ -824,7 +829,6 @@ public:
               ErrorResult& aRv);
 
   static already_AddRefed<WorkerPrivate>
-
   Constructor(const GlobalObject& aGlobal, const nsAString& aScriptURL,
               bool aIsChromeWorker, WorkerType aWorkerType,
               const nsAString& aSharedWorkerName,
@@ -932,7 +936,7 @@ public:
   PostMessageToParentMessagePort(
                              JSContext* aCx,
                              uint64_t aMessagePortSerial,
-                             JS::HandleValue aMessage,
+                             JS::Handle<JS::Value> aMessage,
                              const Optional<Sequence<JS::Value>>& aTransferable,
                              ErrorResult& aRv);
 
@@ -977,6 +981,9 @@ public:
   void
   UpdateJSContextOptionsInternal(JSContext* aCx, const JS::ContextOptions& aContentOptions,
                                  const JS::ContextOptions& aChromeOptions);
+
+  void
+  UpdatePreferenceInternal(JSContext* aCx, WorkerPreference aPref, bool aValue);
 
   void
   UpdateJSWorkerMemoryParameterInternal(JSContext* aCx, JSGCParamKey key, uint32_t aValue);
@@ -1070,6 +1077,20 @@ public:
   bool
   RegisterBindings(JSContext* aCx, JS::Handle<JSObject*> aGlobal);
 
+  bool
+  DumpEnabled() const
+  {
+    AssertIsOnWorkerThread();
+    return mPreferences[WORKERPREF_DUMP];
+  }
+
+  bool
+  PromiseEnabled() const
+  {
+    AssertIsOnWorkerThread();
+    return mPreferences[WORKERPREF_PROMISE];
+  }
+
 private:
   WorkerPrivate(JSContext* aCx, WorkerPrivate* aParent,
                 const nsAString& aScriptURL, bool aIsChromeWorker,
@@ -1147,6 +1168,13 @@ private:
                               bool aToMessagePort,
                               uint64_t aMessagePortSerial,
                               ErrorResult& aRv);
+
+  void
+  GetAllPreferences(bool aPreferences[WORKERPREF_COUNT]) const
+  {
+    AssertIsOnWorkerThread();
+    memcpy(aPreferences, mPreferences, WORKERPREF_COUNT * sizeof(bool));
+  }
 };
 
 // This class is only used to trick the DOM bindings.  We never create
