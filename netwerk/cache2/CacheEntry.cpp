@@ -37,30 +37,34 @@ static uint32_t const ENTRY_NEEDS_REVALIDATION =
 static uint32_t const ENTRY_NOT_WANTED =
   nsICacheEntryOpenCallback::ENTRY_NOT_WANTED;
 
-NS_IMPL_ISUPPORTS1(CacheEntry::Handle, nsICacheEntry)
+NS_IMPL_ISUPPORTS1(CacheEntryHandle, nsICacheEntry)
 
-// CacheEntry::Handle
+// CacheEntryHandle
 
-CacheEntry::Handle::Handle(CacheEntry* aEntry)
+CacheEntryHandle::CacheEntryHandle(CacheEntry* aEntry)
 : mEntry(aEntry)
 {
-  MOZ_COUNT_CTOR(CacheEntry::Handle);
+  MOZ_COUNT_CTOR(CacheEntryHandle);
+  ++mEntry->mHandlersCount;
 
-  LOG(("New CacheEntry::Handle %p for entry %p", this, aEntry));
+  LOG(("New CacheEntryHandle %p for entry %p", this, aEntry));
 }
 
-CacheEntry::Handle::~Handle()
+CacheEntryHandle::~CacheEntryHandle()
 {
-  mEntry->OnWriterClosed(this);
+  --mEntry->mHandlersCount;
+  mEntry->OnHandleClosed(this);
 
-  MOZ_COUNT_DTOR(CacheEntry::Handle);
+  MOZ_COUNT_DTOR(CacheEntryHandle);
 }
 
 // CacheEntry::Callback
 
-CacheEntry::Callback::Callback(nsICacheEntryOpenCallback *aCallback,
+CacheEntry::Callback::Callback(CacheEntry* aEntry,
+                               nsICacheEntryOpenCallback *aCallback,
                                bool aReadOnly, bool aCheckOnAnyThread)
-: mCallback(aCallback)
+: mEntry(aEntry)
+, mCallback(aCallback)
 , mTargetThread(do_GetCurrentThread())
 , mReadOnly(aReadOnly)
 , mCheckOnAnyThread(aCheckOnAnyThread)
@@ -68,10 +72,12 @@ CacheEntry::Callback::Callback(nsICacheEntryOpenCallback *aCallback,
 , mNotWanted(false)
 {
   MOZ_COUNT_CTOR(CacheEntry::Callback);
+  ++mEntry->mHandlersCount;
 }
 
 CacheEntry::Callback::Callback(CacheEntry::Callback const &aThat)
-: mCallback(aThat.mCallback)
+: mEntry(aThat.mEntry)
+, mCallback(aThat.mCallback)
 , mTargetThread(aThat.mTargetThread)
 , mReadOnly(aThat.mReadOnly)
 , mCheckOnAnyThread(aThat.mCheckOnAnyThread)
@@ -79,11 +85,23 @@ CacheEntry::Callback::Callback(CacheEntry::Callback const &aThat)
 , mNotWanted(aThat.mNotWanted)
 {
   MOZ_COUNT_CTOR(CacheEntry::Callback);
+  ++mEntry->mHandlersCount;
 }
 
 CacheEntry::Callback::~Callback()
 {
+  --mEntry->mHandlersCount;
   MOZ_COUNT_DTOR(CacheEntry::Callback);
+}
+
+void CacheEntry::Callback::ExchangeEntry(CacheEntry* aEntry)
+{
+  if (mEntry == aEntry)
+    return;
+
+  ++aEntry->mHandlersCount;
+  --mEntry->mHandlersCount;
+  mEntry = aEntry;
 }
 
 nsresult CacheEntry::Callback::OnCheckThread(bool *aOnCheckThread) const
@@ -220,7 +238,7 @@ void CacheEntry::AsyncOpen(nsICacheEntryOpenCallback* aCallback, uint32_t aFlags
   MOZ_ASSERT(!readonly || !truncate, "Bad flags combination");
   MOZ_ASSERT(!(truncate && mState > LOADING), "Must not call truncate on already loaded entry");
 
-  Callback callback(aCallback, readonly, multithread);
+  Callback callback(this, aCallback, readonly, multithread);
 
   mozilla::MutexAutoLock lock(mLock);
 
@@ -366,6 +384,7 @@ already_AddRefed<CacheEntry> CacheEntry::ReopenTruncated(nsICacheEntryOpenCallba
   // Hold callbacks invocation, AddStorageEntry would invoke from doom prematurly
   mPreventCallbacks = true;
 
+  nsRefPtr<CacheEntryHandle> handle;
   nsRefPtr<CacheEntry> newEntry;
   {
     mozilla::MutexAutoUnlock unlock(mLock);
@@ -376,11 +395,12 @@ already_AddRefed<CacheEntry> CacheEntry::ReopenTruncated(nsICacheEntryOpenCallba
       mUseDisk,
       true, // always create
       true, // truncate existing (this one)
-      getter_AddRefs(newEntry));
+      getter_AddRefs(handle));
 
     LOG(("  exchanged entry %p by entry %p, rv=0x%08x", this, newEntry.get(), rv));
 
     if (NS_SUCCEEDED(rv)) {
+      newEntry = handle->Entry();
       newEntry->AsyncOpen(aCallback, nsICacheStorage::OPEN_TRUNCATE);
     }
     else {
@@ -411,8 +431,14 @@ void CacheEntry::TransferCallbacks(CacheEntry & aFromEntry)
   else
     mCallbacks.AppendElements(aFromEntry.mCallbacks);
 
-  if (mCallbacks.Length())
+  uint32_t callbacksLength = mCallbacks.Length();
+  if (callbacksLength) {
+    // Carry the entry reference (unfortunatelly, needs to be done manually...)
+    for (uint32_t i = 0; i < callbacksLength; ++i)
+      mCallbacks[i].ExchangeEntry(this);
+
     BackgroundOp(Ops::CALLBACKS, true);
+  }
 }
 
 void CacheEntry::RememberCallback(Callback const& aCallback)
@@ -656,8 +682,9 @@ void CacheEntry::InvokeAvailableCallback(Callback const & aCallback)
       BackgroundOp(Ops::FRECENCYUPDATE);
     }
 
+    nsRefPtr<CacheEntryHandle> handle = NewHandle();
     aCallback.mCallback->OnCacheEntryAvailable(
-      this, false, nullptr, NS_OK);
+      handle, false, nullptr, NS_OK);
     return;
   }
 
@@ -669,13 +696,13 @@ void CacheEntry::InvokeAvailableCallback(Callback const & aCallback)
   }
 
   // This is a new or potentially non-valid entry and needs to be fetched first.
-  // The Handle blocks other consumers until the channel
+  // The CacheEntryHandle blocks other consumers until the channel
   // either releases the entry or marks metadata as filled or whole entry valid,
   // i.e. until MetaDataReady() or SetValid() on the entry is called respectively.
 
   // Consumer will be responsible to fill or validate the entry metadata and data.
 
-  nsRefPtr<Handle> handle = NewWriteHandle();
+  nsRefPtr<CacheEntryHandle> handle = NewWriteHandle();
   rv = aCallback.mCallback->OnCacheEntryAvailable(
     handle, state == WRITING, nullptr, NS_OK);
 
@@ -683,24 +710,29 @@ void CacheEntry::InvokeAvailableCallback(Callback const & aCallback)
     LOG(("  writing/revalidating failed (0x%08x)", rv));
 
     // Consumer given a new entry failed to take care of the entry.
-    OnWriterClosed(handle);
+    OnHandleClosed(handle);
     return;
   }
 
   LOG(("  writing/revalidating"));
 }
 
-CacheEntry::Handle* CacheEntry::NewWriteHandle()
+CacheEntryHandle* CacheEntry::NewHandle()
+{
+  return new CacheEntryHandle(this);
+}
+
+CacheEntryHandle* CacheEntry::NewWriteHandle()
 {
   mozilla::MutexAutoLock lock(mLock);
 
   BackgroundOp(Ops::FRECENCYUPDATE);
-  return (mWriter = new Handle(this));
+  return (mWriter = new CacheEntryHandle(this));
 }
 
-void CacheEntry::OnWriterClosed(Handle const* aHandle)
+void CacheEntry::OnHandleClosed(CacheEntryHandle const* aHandle)
 {
-  LOG(("CacheEntry::OnWriterClosed [this=%p, state=%s, handle=%p]", this, StateString(mState), aHandle));
+  LOG(("CacheEntry::OnHandleClosed [this=%p, state=%s, handle=%p]", this, StateString(mState), aHandle));
 
   nsCOMPtr<nsIOutputStream> outputStream;
 
@@ -708,7 +740,7 @@ void CacheEntry::OnWriterClosed(Handle const* aHandle)
     mozilla::MutexAutoLock lock(mLock);
 
     if (mWriter != aHandle) {
-      LOG(("  not the current writer"));
+      LOG(("  not the writer"));
       return;
     }
 
@@ -771,6 +803,17 @@ bool CacheEntry::SetUsingDisk(bool aUsingDisk)
   bool changed = mUseDisk != aUsingDisk;
   mUseDisk = aUsingDisk;
   return changed;
+}
+
+bool CacheEntry::IsReferenced() const
+{
+  CacheStorageService::Self()->Lock().AssertCurrentThreadOwns();
+
+  // No need to lock, since:
+  // 1. increasing this counter from 0 to non-null happens only under
+  //    the the service lock
+  // 2. this check is made also only under the service lock
+  return mHandlersCount > 0;
 }
 
 uint32_t CacheEntry::GetMetadataMemoryConsumption()
@@ -1153,7 +1196,7 @@ NS_IMETHODIMP CacheEntry::Recreate(nsICacheEntry **_retval)
 
   nsRefPtr<CacheEntry> newEntry = ReopenTruncated(nullptr);
   if (newEntry) {
-    nsRefPtr<Handle> handle = newEntry->NewWriteHandle();
+    nsRefPtr<CacheEntryHandle> handle = newEntry->NewWriteHandle();
     handle.forget(_retval);
     return NS_OK;
   }
@@ -1312,8 +1355,12 @@ bool CacheEntry::Purge(uint32_t aWhat)
   case PURGE_WHOLE_ONLY_DISK_BACKED:
   case PURGE_WHOLE:
     {
+      if (!CacheStorageService::Self()->RemoveEntry(this, true)) {
+        LOG(("  not purging, still referenced"));
+        return false;
+      }
+
       CacheStorageService::Self()->UnregisterEntry(this);
-      CacheStorageService::Self()->RemoveEntry(this);
 
       // Entry removed it self from control arrays, return true
       return true;
@@ -1392,55 +1439,56 @@ void CacheEntry::BackgroundOp(uint32_t aOperations, bool aForceAsync)
     return;
   }
 
-  mozilla::MutexAutoUnlock unlock(mLock);
+  {
+    mozilla::MutexAutoUnlock unlock(mLock);
 
-  MOZ_ASSERT(CacheStorageService::IsOnManagementThread());
+    MOZ_ASSERT(CacheStorageService::IsOnManagementThread());
 
-  if (aOperations & Ops::FRECENCYUPDATE) {
-    #ifndef M_LN2
-    #define M_LN2 0.69314718055994530942
-    #endif
+    if (aOperations & Ops::FRECENCYUPDATE) {
+      #ifndef M_LN2
+      #define M_LN2 0.69314718055994530942
+      #endif
 
-    // Half-life is 90 days.
-    static double const half_life = 90.0 * (24 * 60 * 60);
-    // Must convert from seconds to milliseconds since PR_Now() gives usecs.
-    static double const decay = (M_LN2 / half_life) / static_cast<double>(PR_USEC_PER_SEC);
+      // Half-life is 90 days.
+      static double const half_life = 90.0 * (24 * 60 * 60);
+      // Must convert from seconds to milliseconds since PR_Now() gives usecs.
+      static double const decay = (M_LN2 / half_life) / static_cast<double>(PR_USEC_PER_SEC);
 
-    double now_decay = static_cast<double>(PR_Now()) * decay;
+      double now_decay = static_cast<double>(PR_Now()) * decay;
 
-    if (mFrecency == 0) {
-      mFrecency = now_decay;
+      if (mFrecency == 0) {
+        mFrecency = now_decay;
+      }
+      else {
+        // TODO: when C++11 enabled, use std::log1p(n) which is equal to log(n + 1) but
+        // more precise.
+        mFrecency = log(exp(mFrecency - now_decay) + 1) + now_decay;
+      }
+      LOG(("CacheEntry FRECENCYUPDATE [this=%p, frecency=%1.10f]", this, mFrecency));
+
+      // Because CacheFile::Set*() are not thread-safe to use (uses WeakReference that
+      // is not thread-safe) we must post to the main thread...
+      nsRefPtr<nsRunnableMethod<CacheEntry> > event =
+        NS_NewRunnableMethod(this, &CacheEntry::StoreFrecency);
+      NS_DispatchToMainThread(event);
     }
-    else {
-      // TODO: when C++11 enabled, use std::log1p(n) which is equal to log(n + 1) but
-      // more precise.
-      mFrecency = log(exp(mFrecency - now_decay) + 1) + now_decay;
+
+    if (aOperations & Ops::REGISTER) {
+      LOG(("CacheEntry REGISTER [this=%p]", this));
+
+      CacheStorageService::Self()->RegisterEntry(this);
     }
-    LOG(("CacheEntry FRECENCYUPDATE [this=%p, frecency=%1.10f]", this, mFrecency));
 
-    // Because CacheFile::Set*() are not thread-safe to use (uses WeakReference that
-    // is not thread-safe) we must post to the main thread...
-    nsRefPtr<nsRunnableMethod<CacheEntry> > event =
-      NS_NewRunnableMethod(this, &CacheEntry::StoreFrecency);
-    NS_DispatchToMainThread(event);
-  }
+    if (aOperations & Ops::DOOM) {
+      LOG(("CacheEntry DOOM [this=%p]", this));
 
-  if (aOperations & Ops::REGISTER) {
-    LOG(("CacheEntry REGISTER [this=%p]", this));
-
-    CacheStorageService::Self()->RegisterEntry(this);
-  }
-
-  if (aOperations & Ops::DOOM) {
-    LOG(("CacheEntry DOOM [this=%p]", this));
-
-    DoomAlreadyRemoved();
-  }
+      DoomAlreadyRemoved();
+    }
+  } // unlock
 
   if (aOperations & Ops::CALLBACKS) {
     LOG(("CacheEntry CALLBACKS (invoke) [this=%p]", this));
 
-    mozilla::MutexAutoLock lock(mLock);
     InvokeCallbacks();
   }
 }
