@@ -8,6 +8,7 @@
 #include "CacheFileChunk.h"
 #include "CacheFileInputStream.h"
 #include "CacheFileOutputStream.h"
+#include "nsILoadContextInfo.h"
 #include "nsITimer.h"
 #include "nsThreadUtils.h"
 #include "mozilla/DebugOnly.h"
@@ -257,6 +258,12 @@ public:
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult)
   {
     MOZ_CRASH("DoomFileHelper::OnEOFSet should not be called!");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
+  {
+    MOZ_CRASH("DoomFileHelper::OnFileRenamed should not be called!");
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -653,10 +660,12 @@ CacheFile::OnFileOpened(CacheFileHandle *aHandle, nsresult aResult)
       mHandle = aHandle;
 
       if (mMetadata) {
+        InitIndexEntry();
+
         // The entry was initialized as createNew, don't try to read metadata.
         mMetadata->SetHandle(mHandle);
 
-        // Write all cached chunks, otherwise thay may stay unwritten.
+        // Write all cached chunks, otherwise they may stay unwritten.
         mCachedChunks.Enumerate(&CacheFile::WriteAllCachedChunks, this);
 
         return NS_OK;
@@ -721,6 +730,8 @@ CacheFile::OnMetadataRead(nsresult aResult)
       isNew = true;
       mMetadata->MarkDirty();
     }
+
+    InitIndexEntry();
   }
 
   nsCOMPtr<CacheFileListener> listener;
@@ -785,6 +796,13 @@ nsresult
 CacheFile::OnEOFSet(CacheFileHandle *aHandle, nsresult aResult)
 {
   MOZ_CRASH("CacheFile::OnEOFSet should not be called!");
+  return NS_ERROR_UNEXPECTED;
+}
+
+nsresult
+CacheFile::OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
+{
+  MOZ_CRASH("CacheFile::OnFileRenamed should not be called!");
   return NS_ERROR_UNEXPECTED;
 }
 
@@ -966,6 +984,11 @@ CacheFile::SetExpirationTime(uint32_t aExpirationTime)
   NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
 
   PostWriteTimer();
+
+  if (mHandle && !mHandle->IsDoomed())
+    CacheFileIOManager::UpdateIndexEntry(mHandle, nullptr, &aExpirationTime,
+                                         nullptr);
+
   return mMetadata->SetExpirationTime(aExpirationTime);
 }
 
@@ -1008,6 +1031,10 @@ CacheFile::SetFrecency(uint32_t aFrecency)
   NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
 
   PostWriteTimer();
+
+  if (mHandle && !mHandle->IsDoomed())
+    CacheFileIOManager::UpdateIndexEntry(mHandle, &aFrecency, nullptr, nullptr);
+
   return mMetadata->SetFrecency(aFrecency);
 }
 
@@ -1659,6 +1686,67 @@ CacheFile::PadChunkWithZeroes(uint32_t aChunkIdx)
                         false);
 
   ReleaseOutsideLock(chunk.forget().get());
+
+  return NS_OK;
+}
+
+nsresult
+CacheFile::InitIndexEntry()
+{
+  MOZ_ASSERT(mHandle);
+
+  if (mHandle->IsDoomed())
+    return NS_OK;
+
+  nsresult rv;
+  bool anonymous;
+  bool inBrowser;
+  uint32_t appId;
+
+  // parse mKey
+  MOZ_ASSERT(!mKeyIsHash);
+  MOZ_ASSERT(mKey.Length() >= 4);
+
+  if (mKey[1] == '-') {
+    anonymous = false;
+  } else {
+    MOZ_ASSERT(mKey[1] == 'A');
+    anonymous = true;
+  }
+
+  MOZ_ASSERT(mKey[2] == ':');
+  int32_t appIdEndIdx = mKey.FindChar(':', 3);
+  MOZ_ASSERT(appIdEndIdx != kNotFound);
+
+  if (mKey[appIdEndIdx - 1] == 'B') {
+    inBrowser = true;
+    appIdEndIdx--;
+  } else {
+    inBrowser = false;
+  }
+
+  MOZ_ASSERT(appIdEndIdx > 2);
+  if (appIdEndIdx == 3) {
+    appId = nsILoadContextInfo::NO_APP_ID;
+  }
+  else {
+    nsAutoCString appIdStr(Substring(mKey, 3, appIdEndIdx - 4));
+    appId = appIdStr.ToInteger(&rv);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+  }
+
+  rv = CacheFileIOManager::InitIndexEntry(mHandle, appId, anonymous, inBrowser);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  uint32_t expirationTime;
+  mMetadata->GetExpirationTime(&expirationTime);
+
+  uint32_t frecency;
+  mMetadata->GetFrecency(&frecency);
+
+  rv = CacheFileIOManager::UpdateIndexEntry(mHandle, &frecency, &expirationTime,
+                                            nullptr);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
 }
