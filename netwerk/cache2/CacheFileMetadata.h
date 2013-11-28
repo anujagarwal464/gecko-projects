@@ -65,6 +65,9 @@ public:
 
   void SetHandle(CacheFileHandle *aHandle);
 
+  nsresult GetKey(nsACString &_retval);
+  bool     KeyIsHash();
+
   nsresult ReadMetadata(CacheFileMetadataListener *aListener);
   nsresult WriteMetadata(uint32_t aOffset,
                          CacheFileMetadataListener *aListener);
