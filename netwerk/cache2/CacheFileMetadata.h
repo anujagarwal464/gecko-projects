@@ -75,9 +75,8 @@ public:
   const char * GetElement(const char *aKey);
   nsresult     SetElement(const char *aKey, const char *aValue);
 
-  CacheHashUtils::Hash16_t GetHash(uint32_t aIndex);
-  nsresult                 SetHash(uint32_t aIndex,
-                                   CacheHashUtils::Hash16_t aHash);
+  CacheHash::Hash16_t GetHash(uint32_t aIndex);
+  nsresult            SetHash(uint32_t aIndex, CacheHash::Hash16_t aHash);
 
   nsresult SetExpirationTime(uint32_t aExpirationTime);
   nsresult GetExpirationTime(uint32_t *_retval);
@@ -100,6 +99,7 @@ public:
   NS_IMETHOD OnDataRead(CacheFileHandle *aHandle, char *aBuf, nsresult aResult);
   NS_IMETHOD OnFileDoomed(CacheFileHandle *aHandle, nsresult aResult);
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult);
+  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult);
 
 private:
   virtual ~CacheFileMetadata();
@@ -112,7 +112,7 @@ private:
   nsRefPtr<CacheFileHandle>           mHandle;
   nsCString                           mKey;
   bool                                mKeyIsHash;
-  CacheHashUtils::Hash16_t           *mHashArray;
+  CacheHash::Hash16_t                *mHashArray;
   uint32_t                            mHashArraySize;
   uint32_t                            mHashCount;
   int64_t                             mOffset;
