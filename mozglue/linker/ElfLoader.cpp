@@ -848,7 +848,8 @@ ElfLoader::DebuggerHelper::Remove(ElfLoader::link_map *map)
   dbg->r_brk();
 }
 
-#if defined(ANDROID)
+#if defined(ANDROID) && (defined(__i386__) || defined(__arm__))
+
 /* As some system libraries may be calling signal() or sigaction() to
  * set a SIGSEGV handler, effectively breaking MappableSeekableZStream,
  * or worse, restore our SIGSEGV handler with wrong flags (which using
@@ -881,7 +882,7 @@ sys_sigaction(int signum, const struct sigaction *act,
 /* Replace the first instructions of the given function with a jump
  * to the given new function. */
 template <typename T>
-static bool
+static void
 Divert(T func, T new_func)
 {
   void *ptr = FunctionPtr(func);
@@ -893,7 +894,6 @@ Divert(T func, T new_func)
   *reinterpret_cast<unsigned char *>(addr) = 0xe9; // jmp
   *reinterpret_cast<intptr_t *>(addr + 1) =
     reinterpret_cast<uintptr_t>(new_func) - addr - 5; // target displacement
-  return true;
 #elif defined(__arm__)
   const unsigned char trampoline[] = {
                             // .thumb
@@ -924,20 +924,9 @@ Divert(T func, T new_func)
   memcpy(reinterpret_cast<void *>(addr), start, len);
   *reinterpret_cast<void **>(addr + len) = FunctionPtr(new_func);
   cacheflush(addr, addr + len + sizeof(void *), 0);
-  return true;
-#else
-  return false;
 #endif
 }
-#else
-#define sys_sigaction sigaction
-template <typename T>
-static bool
-Divert(T func, T new_func)
-{
-  return false;
-}
-#endif
+
 
 namespace {
 
@@ -972,8 +961,6 @@ SEGVHandler::SEGVHandler()
    * an alternative stack, meaning we haven't got information about the
    * original alternative stack and thus don't mean to restore it */
   oldStack.ss_flags = SS_ONSTACK;
-  if (!Divert(sigaction, __wrap_sigaction))
-    return;
 
   /* Get the current segfault signal handler. */
   sys_sigaction(SIGSEGV, nullptr, &this->action);
@@ -997,19 +984,21 @@ SEGVHandler::SEGVHandler()
   stackPtr.Assign(MemoryRange::mmap(nullptr, PageSize(),
                                     PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-  if (stackPtr.get() == MAP_FAILED)
+  if (stackPtr.get() == MAP_FAILED) {
+    /* Attempt to restore the original segfault signal handler. */
+    sys_sigaction(SIGSEGV, &this->action, nullptr);
     return;
+  }
 
   TmpData *data = reinterpret_cast<TmpData*>(stackPtr.get());
   data->crash_timestamp = ProcessTimeStamp_Now();
   mprotect(stackPtr, stackPtr.GetLength(), PROT_NONE);
   data->crash_int = 123;
   stackPtr.Assign(MAP_FAILED, 0);
-  if (signalHandlingBroken || signalHandlingSlow) {
-    /* Restore the original segfault signal handler. */
-    sys_sigaction(SIGSEGV, &this->action, nullptr);
+  /* Restore the original segfault signal handler. */
+  sys_sigaction(SIGSEGV, &this->action, nullptr);
+  if (signalHandlingBroken || signalHandlingSlow)
     return;
-  }
 
   /* Setup an alternative stack if the already existing one is not big
    * enough, or if there is none. */
@@ -1030,11 +1019,15 @@ SEGVHandler::SEGVHandler()
         return;
     }
   }
+
   /* Register our own handler, and store the already registered one in
    * SEGVHandler's struct sigaction member */
   action.sa_sigaction = &SEGVHandler::handler;
   action.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
   registeredHandler = !sys_sigaction(SIGSEGV, &action, nullptr);
+
+  if (registeredHandler)
+    Divert(sigaction, __wrap_sigaction);
 }
 
 SEGVHandler::~SEGVHandler()
@@ -1122,5 +1115,7 @@ SEGVHandler::__wrap_sigaction(int signum, const struct sigaction *act,
     that.action = *act;
   return 0;
 }
+
+#endif // defined(ANDROID) && (defined(__i386__) || defined(__arm__))
 
 Logging Logging::Singleton;
