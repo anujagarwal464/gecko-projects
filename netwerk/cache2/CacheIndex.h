@@ -13,6 +13,7 @@
 #include "nsTHashtable.h"
 #include "mozilla/SHA1.h"
 #include "mozilla/Mutex.h"
+#include "prnetdb.h"
 
 class nsIFile;
 
@@ -169,10 +170,10 @@ public:
     dst->mFlags &= ~eFreshMask;
 
 #if defined(IS_LITTLE_ENDIAN)
-    dst->mFrecency = htonl(dst->mFrecency);
-    dst->mExpirationTime = htonl(dst->mExpirationTime);
-    dst->mAppId = htonl(dst->mAppId);
-    dst->mFlags = htonl(dst->mFlags);
+    dst->mFrecency = PR_htonl(dst->mFrecency);
+    dst->mExpirationTime = PR_htonl(dst->mExpirationTime);
+    dst->mAppId = PR_htonl(dst->mAppId);
+    dst->mFlags = PR_htonl(dst->mFlags);
 #endif
   }
 
@@ -182,10 +183,10 @@ public:
     MOZ_ASSERT(memcmp(&mRec.mHash, &src->mHash,
                sizeof(SHA1Sum::Hash)) == 0);
 
-    mRec.mFrecency = ntohl(src->mFrecency);
-    mRec.mExpirationTime = ntohl(src->mExpirationTime);
-    mRec.mAppId = ntohl(src->mAppId);
-    mRec.mFlags = ntohl(src->mFlags);
+    mRec.mFrecency = PR_ntohl(src->mFrecency);
+    mRec.mExpirationTime = PR_ntohl(src->mExpirationTime);
+    mRec.mAppId = PR_ntohl(src->mAppId);
+    mRec.mFlags = PR_ntohl(src->mFlags);
   }
 
 private:

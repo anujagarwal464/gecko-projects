@@ -746,9 +746,9 @@ CacheIndex::WriteIndexHeader(CacheFileHandle *aHandle, nsresult aResult)
   mHash = new CacheHash();
 
   CacheIndexHeader *hdr = reinterpret_cast<CacheIndexHeader *>(mRWBuf);
-  hdr->mVersion = htonl(kIndexVersion);
-  hdr->mTimeStamp = htonl(static_cast<uint32_t>(PR_Now() / PR_USEC_PER_SEC));
-  hdr->mIsDirty = htonl(1);
+  hdr->mVersion = PR_htonl(kIndexVersion);
+  hdr->mTimeStamp = PR_htonl(static_cast<uint32_t>(PR_Now() / PR_USEC_PER_SEC));
+  hdr->mIsDirty = PR_htonl(1);
 
   mRWBufPos = sizeof(CacheIndexHeader);
   mSkipEntries = 0;
@@ -802,7 +802,7 @@ CacheIndex::WriteRecords()
     }
 
     *(reinterpret_cast<uint32_t *>(mRWBuf + mRWBufPos)) =
-      htonl(mHash->GetHash());
+      PR_htonl(mHash->GetHash());
 
     mRWBufPos += sizeof(CacheHash::Hash32_t);
     mSkipEntries = 0;
@@ -1042,7 +1042,7 @@ WriteLogHelper::Finish()
     MOZ_ASSERT(mBufPos + sizeof(CacheHash::Hash32_t) <= mBufSize);
   }
 
-  *(reinterpret_cast<uint32_t *>(mBuf + mBufPos)) = htonl(mHash->GetHash());
+  *(reinterpret_cast<uint32_t *>(mBuf + mBufPos)) = PR_htonl(mHash->GetHash());
   mBufPos += sizeof(CacheHash::Hash32_t);
 
   rv = FlushBuffer();
@@ -1108,7 +1108,7 @@ CacheIndex::WriteLogToDisk()
     return NS_ERROR_FAILURE;
   }
 
-  header.mIsDirty = htonl(0);
+  header.mIsDirty = PR_htonl(0);
 
   int64_t offset = PR_Seek64(fd, 0, PR_SEEK_SET);
   if (offset == -1) {
@@ -1247,15 +1247,15 @@ CacheIndex::ParseRecords()
                               moz_xmalloc(sizeof(CacheIndexHeader)));
     memcpy(hdr, mRWBuf, sizeof(CacheIndexHeader));
 
-    if (ntohl(hdr->mVersion) != kIndexVersion) {
+    if (PR_ntohl(hdr->mVersion) != kIndexVersion) {
       free(hdr);
       FinishRead(false);
       return;
     }
 
-    mIndexTimeStamp = ntohl(hdr->mTimeStamp);
+    mIndexTimeStamp = PR_ntohl(hdr->mTimeStamp);
 
-    if (ntohl(hdr->mIsDirty)) {
+    if (PR_ntohl(hdr->mIsDirty)) {
       if (mHandle2) {
         CacheFileIOManager::DoomFile(mHandle2, nullptr);
         mHandle2 = nullptr;
@@ -1263,7 +1263,7 @@ CacheIndex::ParseRecords()
       free(hdr);
     }
     else {
-      hdr->mIsDirty = htonl(1);
+      hdr->mIsDirty = PR_htonl(1);
       // Mark index dirty
       rv = CacheFileIOManager::Write(mHandle, 0, reinterpret_cast<char *>(hdr),
                                      sizeof(CacheIndexHeader), true, nullptr);
@@ -1317,9 +1317,10 @@ CacheIndex::ParseRecords()
 
   MOZ_ASSERT(fileOffset <= mHandle->FileSize());
   if (fileOffset == mHandle->FileSize()) {
-    if (mHash->GetHash() != ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
+    if (mHash->GetHash() != PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
       LOG(("CacheIndex::ParseRecords() - Hash mismatch, [is %x, should be %x]",
-           mHash->GetHash(), ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
+           mHash->GetHash(),
+           PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
       FinishRead(false);
       return;
     }
@@ -1433,11 +1434,12 @@ CacheIndex::ParseJournal()
 
   MOZ_ASSERT(fileOffset <= mHandle2->FileSize());
   if (fileOffset == mHandle2->FileSize()) {
-    if (mHash->GetHash() != ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
+    if (mHash->GetHash() != PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
       LOG(("CacheIndex::ParseJournal() - Hash mismatch, [is %x, should be %x]",
-           mHash->GetHash(), ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
-           FinishRead(false);
-           return;
+           mHash->GetHash(),
+           PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
+      FinishRead(false);
+      return;
     }
 
     mIndexNeedsUpdate = false;
