@@ -8,6 +8,7 @@
 #include "CacheFileIOManager.h"
 #include "nsThreadUtils.h"
 #include "nsPrintfCString.h"
+#include "mozilla/DebugOnly.h"
 #include "prinrval.h"
 #include "nsIFile.h"
 #include <algorithm>
@@ -263,7 +264,7 @@ CacheIndex::EnsureEntryExists(const SHA1Sum::Hash *aHash)
   }
   else {
     CacheIndexEntry *updated = index->mPendingUpdates.GetEntry(*aHash);
-    bool removed = index->mPendingRemovals.Contains(*aHash);
+    DebugOnly<bool> removed = index->mPendingRemovals.Contains(*aHash);
 
     if (index->mState == WRITING) {
       MOZ_ASSERT(updated || !removed);
@@ -343,7 +344,7 @@ CacheIndex::InitEntry(const SHA1Sum::Hash *aHash,
   }
   else {
     CacheIndexEntry *updated = index->mPendingUpdates.GetEntry(*aHash);
-    bool removed = index->mPendingRemovals.Contains(*aHash);
+    DebugOnly<bool> removed = index->mPendingRemovals.Contains(*aHash);
 
     MOZ_ASSERT(updated || !removed);
     MOZ_ASSERT(updated || entry);
@@ -507,7 +508,7 @@ CacheIndex::UpdateEntry(const SHA1Sum::Hash *aHash,
   }
   else {
     CacheIndexEntry *updated = index->mPendingUpdates.GetEntry(*aHash);
-    bool removed = index->mPendingRemovals.Contains(*aHash);
+    DebugOnly<bool> removed = index->mPendingRemovals.Contains(*aHash);
 
     MOZ_ASSERT(updated || !removed);
     MOZ_ASSERT(updated || entry);
