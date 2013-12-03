@@ -1731,8 +1731,10 @@ CacheFile::InitIndexEntry()
   }
   else {
     nsAutoCString appIdStr(Substring(mKey, 3, appIdEndIdx - 3));
-    appId = appIdStr.ToInteger(&rv);
+    int64_t appId64 = appIdStr.ToInteger64(&rv);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
+    MOZ_ASSERT(appId64 <= PR_UINT32_MAX);
+    appId = appId64;;
   }
 
   rv = CacheFileIOManager::InitIndexEntry(mHandle, appId, anonymous, inBrowser);
