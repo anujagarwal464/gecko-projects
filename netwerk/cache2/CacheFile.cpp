@@ -1730,7 +1730,7 @@ CacheFile::InitIndexEntry()
     appId = nsILoadContextInfo::NO_APP_ID;
   }
   else {
-    nsAutoCString appIdStr(Substring(mKey, 3, appIdEndIdx - 4));
+    nsAutoCString appIdStr(Substring(mKey, 3, appIdEndIdx - 3));
     appId = appIdStr.ToInteger(&rv);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   }
