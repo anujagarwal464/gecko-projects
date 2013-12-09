@@ -38,11 +38,10 @@ InnermostStaticScope(JSScript *script, jsbytecode *pc)
     JS_ASSERT(script->containsPC(pc));
     JS_ASSERT(JOF_OPTYPE(*pc) == JOF_SCOPECOORD);
 
-    uint32_t blockIndex = GET_UINT32_INDEX(pc + 2 * sizeof(uint16_t));
-
-    if (blockIndex == UINT32_MAX)
-        return script->function();
-    return &script->getObject(blockIndex)->as<StaticBlockObject>();
+    StaticBlockObject *block = GetBlockChainAtPC(script, pc);
+    if (block)
+        return block;
+    return script->function();
 }
 
 Shape *
@@ -94,7 +93,7 @@ js::ScopeCoordinateName(ScopeCoordinateNameCache &cache, JSScript *script, jsbyt
     ScopeCoordinate sc(pc);
     if (shape == cache.shape) {
         ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot);
-        id = p->value;
+        id = p->value();
     } else {
         Shape::Range<NoGC> r(shape);
         while (r.front().slot() != sc.slot)
@@ -1592,13 +1591,13 @@ DebugScopes::sweep(JSRuntime *rt)
      * creating an uncollectable cycle with suspended generator frames.
      */
     for (MissingScopeMap::Enum e(missingScopes); !e.empty(); e.popFront()) {
-        if (IsObjectAboutToBeFinalized(e.front().value.unsafeGet()))
+        if (IsObjectAboutToBeFinalized(e.front().value().unsafeGet()))
             e.removeFront();
     }
 
     for (LiveScopeMap::Enum e(liveScopes); !e.empty(); e.popFront()) {
-        ScopeObject *scope = e.front().key;
-        AbstractFramePtr frame = e.front().value;
+        ScopeObject *scope = e.front().key();
+        AbstractFramePtr frame = e.front().value();
 
         /*
          * Scopes can be finalized when a debugger-synthesized ScopeObject is
@@ -1661,7 +1660,7 @@ DebugScopes::hasDebugScope(JSContext *cx, ScopeObject &scope)
 
     if (ObjectWeakMap::Ptr p = scopes->proxiedScopes.lookup(&scope)) {
         JS_ASSERT(CanUseDebugScopeMaps(cx));
-        return &p->value->as<DebugScopeObject>();
+        return &p->value()->as<DebugScopeObject>();
     }
 
     return nullptr;
@@ -1701,7 +1700,7 @@ DebugScopes::hasDebugScope(JSContext *cx, const ScopeIter &si)
 
     if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
         JS_ASSERT(CanUseDebugScopeMaps(cx));
-        return p->value;
+        return p->value();
     }
     return nullptr;
 }
@@ -1758,11 +1757,11 @@ DebugScopes::onPopCall(AbstractFramePtr frame, JSContext *cx)
         CallObject &callobj = frame.scopeChain()->as<CallObject>();
         scopes->liveScopes.remove(&callobj);
         if (ObjectWeakMap::Ptr p = scopes->proxiedScopes.lookup(&callobj))
-            debugScope = &p->value->as<DebugScopeObject>();
+            debugScope = &p->value()->as<DebugScopeObject>();
     } else {
         ScopeIter si(frame, cx);
         if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
-            debugScope = p->value;
+            debugScope = p->value();
             scopes->liveScopes.remove(&debugScope->scope().as<CallObject>());
             scopes->missingScopes.remove(p);
         }
@@ -1831,7 +1830,7 @@ DebugScopes::onPopBlock(JSContext *cx, AbstractFramePtr frame)
     } else {
         ScopeIter si(frame, cx);
         if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
-            ClonedBlockObject &clone = p->value->scope().as<ClonedBlockObject>();
+            ClonedBlockObject &clone = p->value()->scope().as<ClonedBlockObject>();
             clone.copyUnaliasedValues(frame);
             scopes->liveScopes.remove(&clone);
             scopes->missingScopes.remove(p);
@@ -1881,7 +1880,7 @@ DebugScopes::onGeneratorFrameChange(AbstractFramePtr from, AbstractFramePtr to, 
             JS_ASSERT(toIter.scope().compartment() == cx->compartment());
             LiveScopeMap::AddPtr livePtr = scopes->liveScopes.lookupForAdd(&toIter.scope());
             if (livePtr) {
-                livePtr->value = to;
+                livePtr->value() = to;
             } else {
                 scopes->liveScopes.add(livePtr, &toIter.scope(), to);  // OOM here?
                 liveScopesPostWriteBarrier(cx->runtime(), &scopes->liveScopes, &toIter.scope());
@@ -1890,8 +1889,8 @@ DebugScopes::onGeneratorFrameChange(AbstractFramePtr from, AbstractFramePtr to, 
             ScopeIter si(toIter, from, cx);
             JS_ASSERT(si.frame().scopeChain()->compartment() == cx->compartment());
             if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
-                DebugScopeObject &debugScope = *p->value;
-                scopes->liveScopes.lookup(&debugScope.scope())->value = to;
+                DebugScopeObject &debugScope = *p->value();
+                scopes->liveScopes.lookup(&debugScope.scope())->value() = to;
                 scopes->missingScopes.remove(p);
                 scopes->missingScopes.put(toIter, &debugScope);  // OOM here?
             }
@@ -1967,7 +1966,7 @@ DebugScopes::hasLiveFrame(ScopeObject &scope)
         return NullFramePtr();
 
     if (LiveScopeMap::Ptr p = scopes->liveScopes.lookup(&scope)) {
-        AbstractFramePtr frame = p->value;
+        AbstractFramePtr frame = p->value();
 
         /*
          * Since liveScopes is effectively a weak pointer, we need a read

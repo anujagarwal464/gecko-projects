@@ -36,13 +36,13 @@ BaselineCompiler::init()
     if (!analysis_.init(alloc_, cx->runtime()->gsnCache))
         return false;
 
-    if (!labels_.init(script->length()))
+    if (!labels_.init(alloc_, script->length()))
         return false;
 
     for (size_t i = 0; i < script->length(); i++)
         new (&labels_[i]) Label();
 
-    if (!frame.init())
+    if (!frame.init(alloc_))
         return false;
 
     return true;
@@ -2365,6 +2365,10 @@ BaselineCompiler::emit_JSOP_CALLARG()
 bool
 BaselineCompiler::emit_JSOP_SETARG()
 {
+    // Ionmonkey can't inline functions with SETARG with magic arguments.
+    if (!script->argsObjAliasesFormals() && script->argumentsAliasesFormals())
+        script->uninlineable = true;
+
     modifiesArguments_ = true;
 
     uint32_t arg = GET_SLOTNO(pc);
@@ -2504,6 +2508,8 @@ BaselineCompiler::emit_JSOP_THROW()
 bool
 BaselineCompiler::emit_JSOP_TRY()
 {
+    // Ionmonkey can't inline function with JSOP_TRY.
+    script->uninlineable = true;
     return true;
 }
 

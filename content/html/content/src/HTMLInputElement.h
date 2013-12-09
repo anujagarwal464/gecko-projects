@@ -166,6 +166,12 @@ public:
 
   virtual nsEventStates IntrinsicState() const MOZ_OVERRIDE;
 
+  // Element
+private:
+  virtual void AddStates(nsEventStates aStates);
+  virtual void RemoveStates(nsEventStates aStates);
+public:
+
   // nsITextControlElement
   NS_IMETHOD SetValueChanged(bool aValueChanged) MOZ_OVERRIDE;
   NS_IMETHOD_(bool) IsSingleLineTextControl() const MOZ_OVERRIDE;
@@ -202,6 +208,9 @@ public:
 
   void SetFiles(const nsTArray<nsCOMPtr<nsIDOMFile> >& aFiles, bool aSetValueChanged);
   void SetFiles(nsIDOMFileList* aFiles, bool aSetValueChanged);
+
+  // Called when a nsIFilePicker or a nsIColorPicker terminate.
+  void PickerClosed();
 
   void SetCheckedChangedInternal(bool aCheckedChanged);
   bool GetCheckedChanged() const {
@@ -680,12 +689,23 @@ public:
 
   void StartNumberControlSpinnerSpin();
   void StopNumberControlSpinnerSpin();
+  void StepNumberControlForUserEvent(int32_t aDirection);
 
   /**
    * The callback function used by the nsRepeatService that we use to spin the
    * spinner for <input type=number>.
    */
   static void HandleNumberControlSpin(void* aData);
+
+  bool NumberSpinnerUpButtonIsDepressed() const
+  {
+    return mNumberControlSpinnerIsSpinning && mNumberControlSpinnerSpinsUp;
+  }
+
+  bool NumberSpinnerDownButtonIsDepressed() const
+  {
+    return mNumberControlSpinnerIsSpinning && !mNumberControlSpinnerSpinsUp;
+  }
 
   bool MozIsTextField(bool aExcludePassword);
 
@@ -1093,6 +1113,20 @@ protected:
   Decimal GetDefaultStep() const;
 
   /**
+   * Sets the aValue outparam to the value that this input would take if
+   * someone tries to step aStep steps and this input's value would change as
+   * a result. Leaves aValue untouched if this inputs value would not change
+   * (e.g. already at max, and asking for the next step up).
+   *
+   * Negative aStep means step down, positive means step up.
+   *
+   * Returns NS_OK or else the error values that should be thrown if this call
+   * was initiated by a stepUp()/stepDown() call from script under conditions
+   * that such a call should throw.
+   */
+  nsresult GetValueIfStepped(int32_t aStep, Decimal* aNextStep);
+
+  /**
    * Apply a step change from stepUp or stepDown by multiplying aStep by the
    * current step value.
    *
@@ -1242,6 +1276,7 @@ protected:
   bool                     mProgressTimerIsActive : 1;
   bool                     mNumberControlSpinnerIsSpinning : 1;
   bool                     mNumberControlSpinnerSpinsUp : 1;
+  bool                     mPickerRunning : 1;
 
 private:
   static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,

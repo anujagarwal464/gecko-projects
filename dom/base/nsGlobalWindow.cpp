@@ -9,7 +9,6 @@
 #include <algorithm>
 
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 
 // Local Includes
 #include "Navigator.h"
@@ -210,6 +209,7 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "nsITabChild.h"
 #include "nsIDOMMediaQueryList.h"
+#include "mozilla/dom/DOMJSClass.h"
 
 #ifdef MOZ_WEBSPEECH
 #include "mozilla/dom/SpeechSynthesis.h"
@@ -1280,7 +1280,7 @@ nsGlobalWindow::~nsGlobalWindow()
     }
   }
 
-  mDoc = nullptr;
+  ClearDelayedEventsAndDropDocument();
 
   // Outer windows are always supposed to call CleanUp before letting themselves
   // be destroyed. And while CleanUp generally seems to be intended to clean up
@@ -1349,6 +1349,15 @@ nsGlobalWindow::MaybeForgiveSpamCount()
     NS_ASSERTION(gOpenPopupSpamCount >= 0,
                  "Unbalanced decrement of gOpenPopupSpamCount");
   }
+}
+
+void
+nsGlobalWindow::ClearDelayedEventsAndDropDocument()
+{
+  if (mDoc && mDoc->EventHandlingSuppressed()) {
+    mDoc->UnsuppressEventHandlingAndFireEvents(false);
+  }
+  mDoc = nullptr;
 }
 
 void
@@ -2770,7 +2779,7 @@ nsGlobalWindow::DetachFromDocShell()
     mDocBaseURI = mDoc->GetDocBaseURI();
 
     // Release our document reference
-    mDoc = nullptr;
+    ClearDelayedEventsAndDropDocument();
     mFocusedNode = nullptr;
   }
 
@@ -12701,6 +12710,13 @@ nsGlobalWindow::AddSizeOfIncludingThis(nsWindowSizes* aWindowSizes) const
     const_cast<nsTHashtable<nsPtrHashKey<nsDOMEventTargetHelper> >*>
       (&mEventTargetObjects)->EnumerateEntries(CollectSizeAndListenerCount,
                                                aWindowSizes);
+
+  JSObject* global = FastGetGlobalJSObject();
+  if (IsInnerWindow() && global) {
+    ProtoAndIfaceArray* cache = GetProtoAndIfaceArray(global);
+    aWindowSizes->mProtoIfaceCacheSize +=
+      cache->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf);
+  }
 }
 
 

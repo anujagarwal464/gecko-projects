@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/Casting.h"
@@ -19,7 +20,6 @@
 #include "mozilla/StartupTimeline.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/unused.h"
-#include "mozilla/Util.h"
 #include "mozilla/VisualEventTracer.h"
 
 #ifdef MOZ_LOGGING
@@ -4210,9 +4210,6 @@ nsDocShell::LoadURI(const PRUnichar * aURI,
         uint32_t fixupFlags = 0;
         if (aLoadFlags & LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
           fixupFlags |= nsIURIFixup::FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
-        }
-        if (aLoadFlags & LOAD_FLAGS_URI_IS_UTF8) {
-          fixupFlags |= nsIURIFixup::FIXUP_FLAG_USE_UTF8;
         }
         nsCOMPtr<nsIInputStream> fixupStream;
         rv = sURIFixup->CreateFixupURI(uriString, fixupFlags,

@@ -44,7 +44,6 @@
 #include "mozilla/dom/MessagePortList.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Util.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
@@ -1573,7 +1572,7 @@ public:
 
   void
   PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-                bool aDispatchResult)
+               bool aDispatchResult)
   {
     // Silence bad assertions, this can be dispatched from either the main
     // thread or the timer thread..
@@ -1583,6 +1582,41 @@ public:
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   {
     aWorkerPrivate->GarbageCollectInternal(aCx, mShrinking, mCollectChildren);
+    return true;
+  }
+};
+
+class CycleCollectRunnable : public WorkerControlRunnable
+{
+protected:
+  bool mCollectChildren;
+
+public:
+  CycleCollectRunnable(WorkerPrivate* aWorkerPrivate, bool aCollectChildren)
+  : WorkerControlRunnable(aWorkerPrivate, WorkerThread, UnchangedBusyCount),
+    mCollectChildren(aCollectChildren)
+  { }
+
+  bool
+  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+  {
+    // Silence bad assertions, this can be dispatched from either the main
+    // thread or the timer thread..
+    return true;
+  }
+
+  void
+  PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+               bool aDispatchResult)
+  {
+    // Silence bad assertions, this can be dispatched from either the main
+    // thread or the timer thread..
+  }
+
+  bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+  {
+    aWorkerPrivate->CycleCollectInternal(aCx, mCollectChildren);
     return true;
   }
 };
@@ -1984,8 +2018,7 @@ class WorkerPrivate::MemoryReporter MOZ_FINAL : public MemoryMultiReporter
 
 public:
   MemoryReporter(WorkerPrivate* aWorkerPrivate)
-  : MemoryMultiReporter("workers"),
-    mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate),
+  : mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate),
     mAlreadyMappedToAddon(false)
   {
     aWorkerPrivate->AssertIsOnWorkerThread();
@@ -2892,9 +2925,25 @@ WorkerPrivateParent<Derived>::GarbageCollect(JSContext* aCx, bool aShrinking)
   AssertIsOnParentThread();
 
   nsRefPtr<GarbageCollectRunnable> runnable =
-    new GarbageCollectRunnable(ParentAsWorkerPrivate(), aShrinking, true);
+    new GarbageCollectRunnable(ParentAsWorkerPrivate(), aShrinking,
+                               /* collectChildren = */ true);
   if (!runnable->Dispatch(aCx)) {
-    NS_WARNING("Failed to update worker heap size!");
+    NS_WARNING("Failed to GC worker!");
+    JS_ClearPendingException(aCx);
+  }
+}
+
+template <class Derived>
+void
+WorkerPrivateParent<Derived>::CycleCollect(JSContext* aCx, bool aDummy)
+{
+  AssertIsOnParentThread();
+
+  nsRefPtr<CycleCollectRunnable> runnable =
+    new CycleCollectRunnable(ParentAsWorkerPrivate(),
+                             /* collectChildren = */ true);
+  if (!runnable->Dispatch(aCx)) {
+    NS_WARNING("Failed to CC worker!");
     JS_ClearPendingException(aCx);
   }
 }
@@ -5214,6 +5263,20 @@ WorkerPrivate::GarbageCollectInternal(JSContext* aCx, bool aShrinking,
   if (aCollectChildren) {
     for (uint32_t index = 0; index < mChildWorkers.Length(); index++) {
       mChildWorkers[index]->GarbageCollect(aCx, aShrinking);
+    }
+  }
+}
+
+void
+WorkerPrivate::CycleCollectInternal(JSContext* aCx, bool aCollectChildren)
+{
+  AssertIsOnWorkerThread();
+
+  nsCycleCollector_collect(nullptr);
+
+  if (aCollectChildren) {
+    for (uint32_t index = 0; index < mChildWorkers.Length(); index++) {
+      mChildWorkers[index]->CycleCollect(aCx, /* dummy = */ false);
     }
   }
 }

@@ -106,11 +106,10 @@ pref("dom.workers.sharedWorkers.enabled", false);
 pref("dom.enable_performance", true);
 
 // Whether the Gamepad API is enabled
+pref("dom.gamepad.enabled", true);
 #ifdef RELEASE_BUILD
-pref("dom.gamepad.enabled", false);
 pref("dom.gamepad.non_standard_events.enabled", false);
 #else
-pref("dom.gamepad.enabled", true);
 pref("dom.gamepad.non_standard_events.enabled", true);
 #endif
 
@@ -230,6 +229,7 @@ pref("media.apple.mp3.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
+pref("media.navigator.video.enabled", true);
 pref("media.navigator.load_adapt", false);
 pref("media.navigator.video.default_width",640);
 pref("media.navigator.video.default_height",480);
@@ -237,10 +237,12 @@ pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
 #ifdef MOZ_WIDGET_GONK
 pref("media.peerconnection.enabled", false);
+pref("media.peerconnection.video.enabled", false);
 pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
 pref("media.navigator.video.max_fr", 30);
 #else
 pref("media.peerconnection.enabled", true);
+pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 0); // unrestricted
 pref("media.navigator.video.max_fr", 0); // unrestricted
 #endif
@@ -404,7 +406,6 @@ pref("gfx.content.azure.backends", "cairo");
 pref("gfx.content.azure.backends", "cairo");
 #endif
 #ifdef ANDROID
-pref("gfx.textures.poweroftwo.force-enabled", false);
 pref("gfx.content.azure.backends", "cairo");
 #endif
 
@@ -867,7 +868,9 @@ pref("dom.min_background_timeout_value", 1000);
 
 // Don't use new input types
 pref("dom.experimental_forms", false);
-pref("dom.forms.number", false);
+
+// Enable <input type=number>:
+pref("dom.forms.number", true);
 
 // Enable <input type=color> by default. It will be turned off for remaining
 // platforms which don't have a color picker implemented yet.
@@ -961,6 +964,11 @@ pref("security.fileuri.strict_origin_policy", true);
 // telemetry is also enabled as otherwise there is no way to report
 // the results
 pref("network.allow-experiments", true);
+#if defined(EARLY_BETA_OR_EARLIER)
+pref("network.dns.allow-srv-experiment", true);
+#else
+pref("network.dns.allow-srv-experiment", false);
+#endif
 
 // Transmit UDP busy-work to the LAN when anticipating low latency
 // network reads and on wifi to mitigate 802.11 Power Save Polling delays
@@ -1640,7 +1648,7 @@ pref("signed.applets.codebase_principal_support", false);
 pref("security.checkloaduri", true);
 pref("security.xpconnect.plugin.unrestricted", true);
 // security-sensitive dialogs should delay button enabling. In milliseconds.
-pref("security.dialog_enable_delay", 2000);
+pref("security.dialog_enable_delay", 1000);
 pref("security.notification_enable_delay", 500);
 
 pref("security.csp.enable", true);
@@ -4243,6 +4251,10 @@ pref("layers.draw-bigimage-borders", false);
 pref("layers.frame-counter", false);
 // Max number of layers per container. See Overwrite in mobile prefs.
 pref("layers.max-active", -1);
+// When a layer is moving it will add a scroll graph to measure the smoothness
+// of the movement. NOTE: This pref triggers composites to refresh
+// the graph.
+pref("layers.scroll-graph", false);
 
 // Set the default values, and then override per-platform as needed
 pref("layers.offmainthreadcomposition.enabled", false);

@@ -1288,7 +1288,7 @@ void
 jit::AssertGraphCoherency(MIRGraph &graph)
 {
 #ifdef DEBUG
-    if (!js_IonOptions.assertGraphConsistency)
+    if (!js_IonOptions.checkGraphConsistency)
         return;
     AssertBasicGraphCoherency(graph);
     AssertReversePostOrder(graph);
@@ -1303,7 +1303,7 @@ jit::AssertExtendedGraphCoherency(MIRGraph &graph)
     // are split)
 
 #ifdef DEBUG
-    if (!js_IonOptions.assertGraphConsistency)
+    if (!js_IonOptions.checkGraphConsistency)
         return;
     AssertGraphCoherency(graph);
 
@@ -1377,7 +1377,7 @@ FindDominatingBoundsCheck(BoundsCheckMap &checks, MBoundsCheck *check, size_t in
     // See the comment in ValueNumberer::findDominatingDef.
     HashNumber hash = BoundsCheckHashIgnoreOffset(check);
     BoundsCheckMap::Ptr p = checks.lookup(hash);
-    if (!p || index > p->value.validUntil) {
+    if (!p || index > p->value().validUntil) {
         // We didn't find a dominating bounds check.
         BoundsCheckInfo info;
         info.check = check;
@@ -1389,7 +1389,7 @@ FindDominatingBoundsCheck(BoundsCheckMap &checks, MBoundsCheck *check, size_t in
         return check;
     }
 
-    return p->value.check;
+    return p->value().check;
 }
 
 // Extract a linear sum from ins, if possible (otherwise giving the sum 'ins + 0').
@@ -1449,7 +1449,7 @@ jit::ExtractLinearInequality(MTest *test, BranchDirection direction,
     MDefinition *rhs = compare->getOperand(1);
 
     // TODO: optimize Compare_UInt32
-    if (compare->compareType() != MCompare::Compare_Int32)
+    if (!compare->isInt32Comparison())
         return false;
 
     JS_ASSERT(lhs->type() == MIRType_Int32);

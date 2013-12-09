@@ -211,7 +211,7 @@ class Debugger::FrameRange
 
     JSObject *frontFrame() const {
         JS_ASSERT(!empty());
-        return entry->value;
+        return entry->value();
     }
 
     Debugger *frontDebugger() const {
@@ -398,14 +398,14 @@ Debugger::Debugger(JSContext *cx, JSObject *dbg)
 
 Debugger::~Debugger()
 {
-    JS_ASSERT(debuggees.empty());
-
-    /* This always happens in the GC thread, so no locking is required. */
-    JS_ASSERT(object->runtimeFromMainThread()->isHeapBusy());
+    JS_ASSERT_IF(debuggees.initialized(), debuggees.empty());
 
     /*
      * Since the inactive state for this link is a singleton cycle, it's always
      * safe to apply JS_REMOVE_LINK to it, regardless of whether we're in the list or not.
+     *
+     * We don't have to worry about locking here since Debugger is not
+     * background finalized.
      */
     JS_REMOVE_LINK(&onNewGlobalObjectWatchersLink);
 }
@@ -468,7 +468,7 @@ Debugger::getScriptFrame(JSContext *cx, AbstractFramePtr frame, MutableHandleVal
             return false;
         }
     }
-    vp.setObject(*p->value);
+    vp.setObject(*p->value());
     return true;
 }
 
@@ -501,7 +501,7 @@ Debugger::hasAnyLiveHooks() const
     }
 
     for (FrameMap::Range r = frames.all(); !r.empty(); r.popFront()) {
-        JSObject *frameObj = r.front().value;
+        JSObject *frameObj = r.front().value();
         if (!frameObj->getReservedSlot(JSSLOT_DEBUGFRAME_ONSTEP_HANDLER).isUndefined() ||
             !frameObj->getReservedSlot(JSSLOT_DEBUGFRAME_ONPOP_HANDLER).isUndefined())
             return true;
@@ -674,7 +674,7 @@ Debugger::wrapEnvironment(JSContext *cx, Handle<Env*> env, MutableHandleValue rv
     JSObject *envobj;
     DependentAddPtr<ObjectWeakMap> p(cx, environments, env);
     if (p) {
-        envobj = p->value;
+        envobj = p->value();
     } else {
         /* Create a new Debugger.Environment for env. */
         JSObject *proto = &object->getReservedSlot(JSSLOT_DEBUG_ENV_PROTO).toObject();
@@ -715,7 +715,7 @@ Debugger::wrapDebuggeeValue(JSContext *cx, MutableHandleValue vp)
 
         DependentAddPtr<ObjectWeakMap> p(cx, objects, obj);
         if (p) {
-            vp.setObject(*p->value);
+            vp.setObject(*p->value());
         } else {
             /* Create a new Debugger.Object for obj. */
             JSObject *proto = &object->getReservedSlot(JSSLOT_DEBUG_OBJECT_PROTO).toObject();
@@ -1267,8 +1267,8 @@ Debugger::onSingleStep(JSContext *cx, MutableHandleValue vp)
             for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++) {
                 Debugger *dbg = *p;
                 for (FrameMap::Range r = dbg->frames.all(); !r.empty(); r.popFront()) {
-                    AbstractFramePtr frame = r.front().key;
-                    JSObject *frameobj = r.front().value;
+                    AbstractFramePtr frame = r.front().key();
+                    JSObject *frameobj = r.front().value();
                     if (frame.script() == trappingScript &&
                         !frameobj->getReservedSlot(JSSLOT_DEBUGFRAME_ONSTEP_HANDLER).isUndefined())
                     {
@@ -1594,7 +1594,7 @@ Debugger::trace(JSTracer *trc)
      * frames.)
      */
     for (FrameMap::Range r = frames.all(); !r.empty(); r.popFront()) {
-        RelocatablePtrObject &frameobj = r.front().value;
+        RelocatablePtrObject &frameobj = r.front().value();
         JS_ASSERT(frameobj->getPrivate());
         MarkObject(trc, &frameobj, "live Debugger.Frame");
     }
@@ -1684,7 +1684,6 @@ Debugger::finalize(FreeOp *fop, JSObject *obj)
     Debugger *dbg = fromJSObject(obj);
     if (!dbg)
         return;
-    JS_ASSERT(dbg->debuggees.empty());
     fop->delete_(dbg);
 }
 
@@ -2127,14 +2126,16 @@ Debugger::construct(JSContext *cx, unsigned argc, Value *vp)
     for (unsigned slot = JSSLOT_DEBUG_PROTO_START; slot < JSSLOT_DEBUG_PROTO_STOP; slot++)
         obj->setReservedSlot(slot, proto->getReservedSlot(slot));
 
+    /* Construct the underlying C++ object. */
     Debugger *dbg = cx->new_<Debugger>(cx, obj.get());
     if (!dbg)
         return false;
-    obj->setPrivate(dbg);
     if (!dbg->init(cx)) {
         js_delete(dbg);
         return false;
     }
+    obj->setPrivate(dbg);
+    /* Now the JSObject owns the js::Debugger instance, so we needn't delete it. */
 
     /* Add the initial debuggees, if any. */
     for (unsigned i = 0; i < argc; i++) {
@@ -2272,9 +2273,9 @@ Debugger::removeDebuggeeGlobal(FreeOp *fop, GlobalObject *global,
      * which slowPathOnLeaveFrame would have to examine.
      */
     for (FrameMap::Enum e(frames); !e.empty(); e.popFront()) {
-        AbstractFramePtr frame = e.front().key;
+        AbstractFramePtr frame = e.front().key();
         if (&frame.script()->global() == global) {
-            DebuggerFrame_freeScriptFrameIterData(fop, e.front().value);
+            DebuggerFrame_freeScriptFrameIterData(fop, e.front().value());
             e.removeFront();
         }
     }
@@ -2454,7 +2455,7 @@ class Debugger::ScriptQuery {
             for (CompartmentToScriptMap::Range r = innermostForCompartment.all();
                  !r.empty();
                  r.popFront()) {
-                if (!v->append(r.front().value)) {
+                if (!v->append(r.front().value())) {
                     js_ReportOutOfMemory(cx);
                     return false;
                 }
@@ -2599,9 +2600,9 @@ class Debugger::ScriptQuery {
             CompartmentToScriptMap::AddPtr p = innermostForCompartment.lookupForAdd(compartment);
             if (p) {
                 /* Is our newly found script deeper than the last one we found? */
-                JSScript *incumbent = p->value;
+                JSScript *incumbent = p->value();
                 if (script->staticLevel > incumbent->staticLevel)
-                    p->value = script;
+                    p->value() = script;
             } else {
                 /*
                  * This is the first matching script we've encountered for this
@@ -2818,8 +2819,8 @@ Debugger::wrapScript(JSContext *cx, HandleScript script)
         }
     }
 
-    JS_ASSERT(GetScriptReferent(p->value) == script);
-    return p->value;
+    JS_ASSERT(GetScriptReferent(p->value()) == script);
+    return p->value();
 }
 
 static JSObject *
@@ -3711,8 +3712,8 @@ Debugger::wrapSource(JSContext *cx, HandleScriptSource source)
         }
     }
 
-    JS_ASSERT(GetSourceReferent(p->value) == source);
-    return p->value;
+    JS_ASSERT(GetSourceReferent(p->value()) == source);
+    return p->value();
 }
 
 static bool

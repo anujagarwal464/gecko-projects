@@ -8,7 +8,7 @@
  * values they accept
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsCSSProps.h"
 #include "nsCSSKeywords.h"
@@ -529,6 +529,7 @@ const int32_t nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword_button_arrow_previous,  NS_THEME_BUTTON_ARROW_PREVIOUS,
   eCSSKeyword_meterbar,               NS_THEME_METERBAR,
   eCSSKeyword_meterchunk,             NS_THEME_METERBAR_CHUNK,
+  eCSSKeyword_number_input,           NS_THEME_NUMBER_INPUT,
   eCSSKeyword_separator,              NS_THEME_TOOLBAR_SEPARATOR,
   eCSSKeyword_splitter,               NS_THEME_SPLITTER,
   eCSSKeyword_statusbar,              NS_THEME_STATUSBAR,
@@ -973,6 +974,16 @@ const int32_t nsCSSProps::kEmptyCellsKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
+const int32_t nsCSSProps::kAlignContentKTable[] = {
+  eCSSKeyword_flex_start,    NS_STYLE_ALIGN_CONTENT_FLEX_START,
+  eCSSKeyword_flex_end,      NS_STYLE_ALIGN_CONTENT_FLEX_END,
+  eCSSKeyword_center,        NS_STYLE_ALIGN_CONTENT_CENTER,
+  eCSSKeyword_space_between, NS_STYLE_ALIGN_CONTENT_SPACE_BETWEEN,
+  eCSSKeyword_space_around,  NS_STYLE_ALIGN_CONTENT_SPACE_AROUND,
+  eCSSKeyword_stretch,       NS_STYLE_ALIGN_CONTENT_STRETCH,
+  eCSSKeyword_UNKNOWN,-1
+};
+
 const int32_t nsCSSProps::kAlignItemsKTable[] = {
   eCSSKeyword_flex_start, NS_STYLE_ALIGN_ITEMS_FLEX_START,
   eCSSKeyword_flex_end,   NS_STYLE_ALIGN_ITEMS_FLEX_END,
@@ -998,6 +1009,13 @@ const int32_t nsCSSProps::kFlexDirectionKTable[] = {
   eCSSKeyword_row_reverse,    NS_STYLE_FLEX_DIRECTION_ROW_REVERSE,
   eCSSKeyword_column,         NS_STYLE_FLEX_DIRECTION_COLUMN,
   eCSSKeyword_column_reverse, NS_STYLE_FLEX_DIRECTION_COLUMN_REVERSE,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const int32_t nsCSSProps::kFlexWrapKTable[] = {
+  eCSSKeyword_nowrap,       NS_STYLE_FLEX_WRAP_NOWRAP,
+  eCSSKeyword_wrap,         NS_STYLE_FLEX_WRAP_WRAP,
+  eCSSKeyword_wrap_reverse, NS_STYLE_FLEX_WRAP_WRAP_REVERSE,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -2401,6 +2419,12 @@ static const nsCSSProperty gFlexSubpropTable[] = {
   eCSSProperty_flex_grow,
   eCSSProperty_flex_shrink,
   eCSSProperty_flex_basis,
+  eCSSProperty_UNKNOWN
+};
+
+static const nsCSSProperty gFlexFlowSubpropTable[] = {
+  eCSSProperty_flex_direction,
+  eCSSProperty_flex_wrap,
   eCSSProperty_UNKNOWN
 };
 

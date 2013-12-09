@@ -10,6 +10,7 @@
 #include "FPSCounter.h"                 // for FPSState, FPSCounter
 #include "GLContextProvider.h"          // for GLContextProvider
 #include "GLContext.h"                  // for GLContext
+#include "GLUploadHelpers.h"
 #include "Layers.h"                     // for WriteSnapshotToDumpFile
 #include "LayerScope.h"                 // for LayerScope
 #include "gfx2DGlue.h"                  // for ThebesFilter
@@ -22,8 +23,8 @@
 #include "gfxPlatform.h"                // for gfxPlatform
 #include "gfxRect.h"                    // for gfxRect
 #include "gfxUtils.h"                   // for NextPowerOfTwo, gfxUtils, etc
+#include "mozilla/ArrayUtils.h"         // for ArrayLength
 #include "mozilla/Preferences.h"        // for Preferences
-#include "mozilla/Util.h"               // for ArrayLength
 #include "mozilla/gfx/BasePoint.h"      // for BasePoint
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4, Matrix
 #include "mozilla/layers/CompositingRenderTargetOGL.h"
@@ -231,10 +232,6 @@ FPSState::DrawFPS(TimeStamp aNow,
 
   DrawQuads(aContext, mVBOs, aProgram, rects);
 }
-
-#ifdef CHECK_CURRENT_PROGRAM
-int ShaderProgramOGL::sCurrentProgramKey = 0;
-#endif
 
 CompositorOGL::CompositorOGL(nsIWidget *aWidget, int aSurfaceWidth,
                              int aSurfaceHeight, bool aUseExternalSurfaceSize)
@@ -581,7 +578,7 @@ CompositorOGL::BindAndDrawQuadWithTextureRect(ShaderProgramOGL *aProg,
   GLenum wrapMode = aTexture->AsSourceOGL()->GetWrapMode();
 
   IntSize realTexSize = aTexture->GetSize();
-  if (!mGLContext->CanUploadNonPowerOfTwo()) {
+  if (!CanUploadNonPowerOfTwo(mGLContext)) {
     realTexSize = IntSize(NextPowerOfTwo(realTexSize.width),
                           NextPowerOfTwo(realTexSize.height));
   }
@@ -756,7 +753,7 @@ bool CompositorOGL::sDrawFPS = false;
 static IntSize
 CalculatePOTSize(const IntSize& aSize, GLContext* gl)
 {
-  if (gl->CanUploadNonPowerOfTwo())
+  if (CanUploadNonPowerOfTwo(gl))
     return aSize;
 
   return IntSize(NextPowerOfTwo(aSize.width), NextPowerOfTwo(aSize.height));
@@ -1501,7 +1498,7 @@ CompositorOGL::CreateDataTextureSource(TextureFlags aFlags)
 bool
 CompositorOGL::SupportsPartialTextureUpdate()
 {
-  return mGLContext->CanUploadSubTextures();
+  return CanUploadSubTextures(mGLContext);
 }
 
 int32_t

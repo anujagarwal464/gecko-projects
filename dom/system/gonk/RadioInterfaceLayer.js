@@ -1221,7 +1221,8 @@ RadioInterface.prototype = {
         break;
       case "sms-received":
         let ackOk = this.handleSmsReceived(message);
-        if (ackOk) {
+        // Note: ACK has been done by modem for NEW_SMS_ON_SIM
+        if (ackOk && message.simStatus === undefined) {
           this.workerMessenger.send("ackSMS", { result: RIL.PDU_FCS_OK });
         }
         return;
@@ -2055,17 +2056,25 @@ RadioInterface.prototype = {
       mwi.returnMessage = message.fullBody;
       gMessageManager.sendVoicemailMessage("RIL:VoicemailNotification",
                                            this.clientId, mwi);
-      return true;
+
+      // Dicarded MWI comes without text body.
+      // Hence, we discard it here after notifying the MWI status.
+      if (mwi.discard) {
+        return true;
+      }
     }
 
     let notifyReceived = function notifyReceived(rv, domMessage) {
       let success = Components.isSuccessCode(rv);
 
       // Acknowledge the reception of the SMS.
-      this.workerMessenger.send("ackSMS", {
-        result: (success ? RIL.PDU_FCS_OK
-                         : RIL.PDU_FCS_MEMORY_CAPACITY_EXCEEDED)
-      });
+      // Note: Ack has been done by modem for NEW_SMS_ON_SIM
+      if (message.simStatus === undefined) {
+        this.workerMessenger.send("ackSMS", {
+          result: (success ? RIL.PDU_FCS_OK
+                           : RIL.PDU_FCS_MEMORY_CAPACITY_EXCEEDED)
+        });
+      }
 
       if (!success) {
         // At this point we could send a message to content to notify the user

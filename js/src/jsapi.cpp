@@ -61,6 +61,7 @@
 #include "gc/Marking.h"
 #include "jit/AsmJSLink.h"
 #include "js/CharacterEncoding.h"
+#include "js/SliceBudget.h"
 #include "js/StructuredClone.h"
 #if ENABLE_INTL_API
 #include "unicode/uclean.h"
@@ -1094,7 +1095,7 @@ JS_TransplantObject(JSContext *cx, HandleObject origobj, HandleObject target)
         // There might already be a wrapper for the original object in
         // the new compartment. If there is, we use its identity and swap
         // in the contents of |target|.
-        newIdentity = &p->value.toObject();
+        newIdentity = &p->value().toObject();
 
         // When we remove origv from the wrapper map, its wrapper, newIdentity,
         // must immediately cease to be a cross-compartment wrapper. Neuter it.
@@ -4500,17 +4501,7 @@ JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &optio
 JS_PUBLIC_API(bool)
 JS::CanCompileOffThread(JSContext *cx, const ReadOnlyCompileOptions &options)
 {
-    if (!cx->runtime()->canUseParallelParsing())
-        return false;
-
-    // Off thread compilation can't occur during incremental collections on the
-    // atoms compartment, to avoid triggering barriers. Outside the atoms
-    // compartment, the compilation will use a new zone which doesn't require
-    // barriers itself.
-    if (cx->runtime()->activeGCInAtomsZone())
-        return false;
-
-    return true;
+    return cx->runtime()->canUseParallelParsing();
 }
 
 JS_PUBLIC_API(bool)

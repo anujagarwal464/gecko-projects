@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #ifdef MOZ_LOGGING
 #define FORCE_PR_LOG
@@ -61,6 +61,7 @@
 #include "GLTextureImage.h"
 #include "GLContextProvider.h"
 #include "GLContext.h"
+#include "GLUploadHelpers.h"
 #include "mozilla/layers/GLManager.h"
 #include "mozilla/layers/CompositorCocoaWidgetHelper.h"
 #include "mozilla/layers/CompositorOGL.h"
@@ -909,7 +910,7 @@ NS_IMETHODIMP nsChildView::SetCursor(imgIContainer* aCursor,
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
   nsBaseWidget::SetCursor(aCursor, aHotspotX, aHotspotY);
-  return [[nsCursorManager sharedInstance] setCursorWithImage:aCursor hotSpotX:aHotspotX hotSpotY:aHotspotY];
+  return [[nsCursorManager sharedInstance] setCursorWithImage:aCursor hotSpotX:aHotspotX hotSpotY:aHotspotY scaleFactor:BackingScaleFactor()];
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
@@ -2634,14 +2635,15 @@ RectTextureImage::EndUpdate(bool aKeepSurface)
   RefPtr<gfx::SourceSurface> snapshot = mUpdateDrawTarget->Snapshot();
   RefPtr<gfx::DataSourceSurface> dataSnapshot = snapshot->GetDataSurface();
 
-  mGLContext->UploadSurfaceToTexture(dataSnapshot,
-                                     updateRegion,
-                                     mTexture,
-                                     overwriteTexture,
-                                     updateRegion.GetBounds().TopLeft(),
-                                     false,
-                                     LOCAL_GL_TEXTURE0,
-                                     LOCAL_GL_TEXTURE_RECTANGLE_ARB);
+  UploadSurfaceToTexture(mGLContext,
+                         dataSnapshot,
+                         updateRegion,
+                         mTexture,
+                         overwriteTexture,
+                         updateRegion.GetBounds().TopLeft(),
+                         false,
+                         LOCAL_GL_TEXTURE0,
+                         LOCAL_GL_TEXTURE_RECTANGLE_ARB);
 
   if (!aKeepSurface) {
     mUpdateDrawTarget = nullptr;

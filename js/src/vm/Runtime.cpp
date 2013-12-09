@@ -6,11 +6,11 @@
 
 #include "vm/Runtime-inl.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ThreadLocal.h"
-#include "mozilla/Util.h"
 
 #include <locale.h>
 #include <string.h>
@@ -36,6 +36,7 @@
 #include "jit/JitCompartment.h"
 #include "jit/PcScriptCache.h"
 #include "js/MemoryMetrics.h"
+#include "js/SliceBudget.h"
 #include "yarr/BumpPointerAllocator.h"
 
 #include "jscntxtinlines.h"

@@ -21,6 +21,8 @@
 %prefsDTD;
 <!ENTITY % aboutPanelDTD SYSTEM "chrome://browser/locale/aboutPanel.dtd">
 %aboutPanelDTD;
+<!ENTITY % searchPanelDTD SYSTEM "chrome://browser/locale/searchPanel.dtd">
+%searchPanelDTD;
 #ifdef MOZ_SERVICES_SYNC
 <!ENTITY % syncBrandDTD SYSTEM "chrome://browser/locale/syncBrand.dtd">
 %syncBrandDTD;
@@ -245,7 +247,7 @@ Desktop browser's sync prefs.
                      completeselectedindex="true"
                      placeholder="&urlbar.emptytext;"
                      tabscrolling="true"
-                     onclick="SelectionHelperUI.urlbarClick();"/>
+                     onclick="SelectionHelperUI.urlbarTextboxClick(this);"/>
 
             <toolbarbutton id="go-button" class="urlbar-button"
                            command="cmd_go"/>
@@ -263,10 +265,10 @@ Desktop browser's sync prefs.
             <hbox id="toolbar-context-page" pack="end">
               <circularprogressindicator id="download-progress" class="appbar-primary"
                                      oncommand="MetroDownloadsView.onDownloadButton()"/>
-              <toolbarbutton id="star-button" class="appbar-primary"
+              <toolbarbutton id="star-button" class="appbar-primary hide-on-start"
                              type="checkbox"
                              oncommand="Appbar.onStarButton()"/>
-              <toolbarbutton id="pin-button" class="appbar-primary"
+              <toolbarbutton id="pin-button" class="appbar-primary hide-on-start"
                              type="checkbox"
                              oncommand="Appbar.onPinButton()"/>
               <toolbarbutton id="menu-button" class="appbar-primary"
@@ -274,7 +276,7 @@ Desktop browser's sync prefs.
             </hbox>
 
             <hbox id="toolbar-context-autocomplete" pack="end">
-              <toolbarbutton id="close-button" class="appbar-secondary"
+              <toolbarbutton id="close-button" class="appbar-primary"
                              oncommand="Appbar.onAutocompleteCloseButton()"/>
             </hbox>
           </stack>
@@ -360,19 +362,22 @@ Desktop browser's sync prefs.
     <!-- Context button bar -->
     <appbar id="contextappbar">
       <toolbar id="contextualactions-tray" labelled="true" flex="1">
-        <toolbarbutton id="pin-selected-button" class="appbar-secondary"
+        <toolbarbutton id="pin-selected-button" class="appbar-primary"
                        label-uses-set-name="true" hidden="true" fade="true"
                        oncommand="Appbar.dispatchContextualAction('pin')"/>
-        <toolbarbutton id="unpin-selected-button" class="appbar-secondary"
+        <toolbarbutton id="unpin-selected-button" class="appbar-primary"
                        label-uses-set-name="true" hidden="true" fade="true"
                        oncommand="Appbar.dispatchContextualAction('unpin')"/>
-        <toolbarbutton id="delete-selected-button" class="appbar-secondary"
+        <toolbarbutton id="hide-selected-button" class="appbar-primary"
+                       label-uses-set-name="true" hidden="true" fade="true"
+                       oncommand="Appbar.dispatchContextualAction('unpin')"/>
+        <toolbarbutton id="delete-selected-button" class="appbar-primary"
                        hidden="true" fade="true"
                        oncommand="Appbar.dispatchContextualAction('delete')"/>
-        <toolbarbutton id="restore-selected-button" class="appbar-secondary"
+        <toolbarbutton id="restore-selected-button" class="appbar-primary"
                        hidden="true" fade="true"
                        oncommand="Appbar.dispatchContextualAction('restore')"/>
-        <toolbarbutton id="clear-selected-button" class="appbar-secondary"
+        <toolbarbutton id="clear-selected-button" class="appbar-primary"
                        hidden="true" fade="true"
                        oncommand="Appbar.dispatchContextualAction('clear')"/>
       </toolbar>
@@ -667,7 +672,13 @@ Desktop browser's sync prefs.
       </settings>
       <setting pref="signon.rememberSignons" title="&optionsHeader.privacy.passwords.label;" type="bool"/>
       <settings id="prefs-reporting" label="&optionsHeader.reporting.title;">
-        <setting pref="app.crashreporter.autosubmit" type="bool" title="&optionsHeader.reporting.crashes.label;" oncommand="BrowserUI.crashReportingPrefChanged(this.value);"/>
+        <setting pref="app.crashreporter.autosubmit"
+                 type="bool"
+                 title="&optionsHeader.reporting.crashes.label;" />
+        <setting pref="app.crashreporter.submitURLs"
+                 id="prefs-reporting-submitURLs"
+                 type="bool"
+                 title="&optionsHeader.reporting.crashes.submitURLs;" />
       </settings>
       <settings id="prefs-telemetry" label="&optionsHeader.telemetry.title;">
         <setting pref="toolkit.telemetry.enabled" type="bool" title="&optionsHeader.telemetry.label;"/>
@@ -684,6 +695,10 @@ Desktop browser's sync prefs.
           </radiogroup>
         </setting>
         <label class="text-link" href="https://www.mozilla.org/dnt">&doNotTrack.learnMoreLink;</label>
+      </settings>
+    </flyoutpanel>
+    <flyoutpanel id="search-flyoutpanel" class="flyout-narrow" headertext="&searchFlyoutHeader.title;">
+      <settings id="search-options" label="&searchSetting.title;">
       </settings>
     </flyoutpanel>
 

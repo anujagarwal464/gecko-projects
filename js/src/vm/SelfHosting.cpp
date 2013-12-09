@@ -676,9 +676,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FNINFO("Memcpy",
               JSNativeThreadSafeWrapper<js::Memcpy>,
               &js::MemcpyJitInfo, 5, 0),
-    JS_FN("StandardTypeObjectDescriptors",
-          js::StandardTypeObjectDescriptors,
-          0, 0),
+    JS_FN("GetTypedObjectModule", js::GetTypedObjectModule, 0, 0),
 
 #define LOAD_AND_STORE_SCALAR_FN_DECLS(_constant, _type, _name)               \
     JS_FNINFO("Store_" #_name,                                                \
@@ -891,7 +889,7 @@ CloneObject(JSContext *cx, HandleObject srcObj, CloneMemory &clonedObjects)
 {
     DependentAddPtr<CloneMemory> p(cx, clonedObjects, srcObj.get());
     if (p)
-        return p->value;
+        return p->value();
     RootedObject clone(cx);
     if (srcObj->is<JSFunction>()) {
         if (srcObj->as<JSFunction>().isWrappable()) {

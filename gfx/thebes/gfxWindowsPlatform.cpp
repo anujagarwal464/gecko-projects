@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "gfxWindowsPlatform.h"
 
@@ -229,9 +229,7 @@ class GPUAdapterReporter : public MemoryMultiReporter
     }
 
 public:
-    GPUAdapterReporter()
-      : MemoryMultiReporter("gpu-adapter")
-    {}
+    GPUAdapterReporter() {}
 
     NS_IMETHOD
     CollectReports(nsIMemoryReporterCallback* aCb,

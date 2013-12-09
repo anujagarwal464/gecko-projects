@@ -278,13 +278,11 @@ public:
 #ifdef DEBUG
     virtual PContentPermissionRequestChild*
     SendPContentPermissionRequestConstructor(PContentPermissionRequestChild* aActor,
-                                             const nsCString& aType,
-                                             const nsCString& aAccess,
+                                             const InfallibleTArray<PermissionRequest>& aRequests,
                                              const IPC::Principal& aPrincipal);
 #endif /* DEBUG */
 
-    virtual PContentPermissionRequestChild* AllocPContentPermissionRequestChild(const nsCString& aType,
-                                                                                const nsCString& aAccess,
+    virtual PContentPermissionRequestChild* AllocPContentPermissionRequestChild(const InfallibleTArray<PermissionRequest>& aRequests,
                                                                                 const IPC::Principal& aPrincipal);
     virtual bool DeallocPContentPermissionRequestChild(PContentPermissionRequestChild* actor);
 
@@ -463,7 +461,8 @@ private:
     nsCOMPtr<nsIWebNavigation> mWebNav;
     nsCOMPtr<nsIWidget> mWidget;
     nsCOMPtr<nsIURI> mLastURI;
-    FrameMetrics mLastMetrics;
+    FrameMetrics mLastRootMetrics;
+    FrameMetrics mLastSubFrameMetrics;
     RenderFrameChild* mRemoteFrame;
     nsRefPtr<ContentChild> mManager;
     nsRefPtr<TabChildGlobal> mTabChildGlobal;

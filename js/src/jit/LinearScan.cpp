@@ -381,13 +381,13 @@ LinearScanAllocator::reifyAllocations()
                 spillFrom = from->getAllocation();
             } else {
                 if (def->policy() == LDefinition::MUST_REUSE_INPUT) {
-                    LAllocation *alloc = reg->ins()->getOperand(def->getReusedInput());
-                    LAllocation *origAlloc = LAllocation::New(*alloc);
+                    LAllocation *inputAlloc = reg->ins()->getOperand(def->getReusedInput());
+                    LAllocation *origAlloc = LAllocation::New(alloc(), *inputAlloc);
 
-                    JS_ASSERT(!alloc->isUse());
+                    JS_ASSERT(!inputAlloc->isUse());
 
-                    *alloc = *interval->getAllocation();
-                    if (!moveInputAlloc(inputOf(reg->ins()), origAlloc, alloc))
+                    *inputAlloc = *interval->getAllocation();
+                    if (!moveInputAlloc(inputOf(reg->ins()), origAlloc, inputAlloc))
                         return false;
                 }
 
@@ -1128,7 +1128,7 @@ LinearScanAllocator::canCoexist(LiveInterval *a, LiveInterval *b)
 void
 LinearScanAllocator::validateIntervals()
 {
-    if (!js_IonOptions.assertGraphConsistency)
+    if (!js_IonOptions.checkGraphConsistency)
         return;
 
     for (IntervalIterator i(active.begin()); i != active.end(); i++) {
@@ -1174,7 +1174,7 @@ LinearScanAllocator::validateIntervals()
 void
 LinearScanAllocator::validateAllocations()
 {
-    if (!js_IonOptions.assertGraphConsistency)
+    if (!js_IonOptions.checkGraphConsistency)
         return;
 
     for (IntervalIterator i(handled.begin()); i != handled.end(); i++) {

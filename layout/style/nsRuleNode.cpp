@@ -11,11 +11,11 @@
 
 #include <algorithm>
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/Util.h"
 
 #include "nsRuleNode.h"
 #include "nscore.h"
@@ -2504,7 +2504,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
   bool canStoreInRuleTree = aCanStoreInRuleTree;
 
 /**
- * Begin an nsRuleNode::Compute*Data function for an inherited struct.
+ * End an nsRuleNode::Compute*Data function for an inherited struct.
  *
  * @param type_ The nsStyle* type this function computes.
  * @param data_ Variable holding the result of this function.
@@ -2539,7 +2539,7 @@ nsRuleNode::AdjustLogicalBoxProp(nsStyleContext* aContext,
   return data_;
 
 /**
- * Begin an nsRuleNode::Compute*Data function for a reset struct.
+ * End an nsRuleNode::Compute*Data function for a reset struct.
  *
  * @param type_ The nsStyle* type this function computes.
  * @param data_ Variable holding the result of this function.
@@ -6958,6 +6958,13 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
               parentPos->mBoxSizing,
               NS_STYLE_BOX_SIZING_CONTENT, 0, 0, 0, 0);
 
+  // align-content: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForAlignContent(),
+              pos->mAlignContent, canStoreInRuleTree,
+              SETDSC_ENUMERATED | SETDSC_UNSET_INITIAL,
+              parentPos->mAlignContent,
+              NS_STYLE_ALIGN_CONTENT_STRETCH, 0, 0, 0, 0);
+
   // align-items: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForAlignItems(),
               pos->mAlignItems, canStoreInRuleTree,
@@ -7040,6 +7047,13 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
             pos->mFlexShrink, canStoreInRuleTree,
             parentPos->mFlexShrink, 1.0f,
             SETFCT_UNSET_INITIAL);
+
+  // flex-wrap: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForFlexWrap(),
+              pos->mFlexWrap, canStoreInRuleTree,
+              SETDSC_ENUMERATED | SETDSC_UNSET_INITIAL,
+              parentPos->mFlexWrap,
+              NS_STYLE_FLEX_WRAP_NOWRAP, 0, 0, 0, 0);
 
   // order: integer, inherit, initial
   SetDiscrete(*aRuleData->ValueForOrder(),

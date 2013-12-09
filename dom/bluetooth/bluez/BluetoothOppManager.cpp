@@ -399,7 +399,7 @@ BluetoothOppManager::DiscardBlobsToSend()
   while (length > mCurrentBlobIndex + 1) {
     mBlob = mBatches[0].mBlobs[++mCurrentBlobIndex];
 
-    BT_LOGR("%s: idx %d", __FUNCTION__, mCurrentBlobIndex);
+    BT_LOGR("idx %d", mCurrentBlobIndex);
     ExtractBlobHeaders();
     StartFileTransfer();
     FileTransferComplete();
@@ -416,7 +416,7 @@ BluetoothOppManager::ProcessNextBatch()
   if (mCurrentBlobIndex >= 0) {
     ClearQueue();
     mBatches.RemoveElementAt(0);
-    BT_LOGR("%s: REMOVE. %d remaining", __FUNCTION__, mBatches.Length());
+    BT_LOGR("REMOVE. %d remaining", mBatches.Length());
   }
 
   // Process the next batch
@@ -774,7 +774,7 @@ BluetoothOppManager::ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage)
   // Check length before memcpy to prevent from memory pollution
   if (dataLength < 0 ||
       mPacketReceivedLength + dataLength > mPacketLength) {
-    BT_LOGR("%s: Received packet size is unreasonable", __FUNCTION__);
+    BT_LOGR("Received packet size is unreasonable");
 
     ReplyToPut(mPutFinalFlag, false);
     DeleteReceivedFile();
@@ -819,25 +819,31 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
     // Section 3.3.1 "Connect", IrOBEX 1.2
     // [opcode:1][length:2][version:1][flags:1][MaxPktSizeWeCanReceive:2]
     // [Headers:var]
-    ParseHeaders(&aMessage->mData[7],
-                 receivedLength - 7,
-                 &pktHeaders);
+    if (!ParseHeaders(&aMessage->mData[7], receivedLength - 7, &pktHeaders)) {
+      ReplyError(ObexResponseCode::BadRequest);
+      return;
+    }
+
     ReplyToConnect();
     AfterOppConnected();
   } else if (opCode == ObexRequestCode::Abort) {
     // Section 3.3.5 "Abort", IrOBEX 1.2
     // [opcode:1][length:2][Headers:var]
-    ParseHeaders(&aMessage->mData[3],
-                receivedLength - 3,
-                &pktHeaders);
+    if (!ParseHeaders(&aMessage->mData[3], receivedLength - 3, &pktHeaders)) {
+      ReplyError(ObexResponseCode::BadRequest);
+      return;
+    }
+
     ReplyToDisconnectOrAbort();
     DeleteReceivedFile();
   } else if (opCode == ObexRequestCode::Disconnect) {
     // Section 3.3.2 "Disconnect", IrOBEX 1.2
     // [opcode:1][length:2][Headers:var]
-    ParseHeaders(&aMessage->mData[3],
-                receivedLength - 3,
-                &pktHeaders);
+    if (!ParseHeaders(&aMessage->mData[3], receivedLength - 3, &pktHeaders)) {
+      ReplyError(ObexResponseCode::BadRequest);
+      return;
+    }
+
     ReplyToDisconnectOrAbort();
     AfterOppDisconnected();
     FileTransferComplete();
@@ -1213,7 +1219,7 @@ BluetoothOppManager::ReplyToPut(bool aFinal, bool aContinue)
 void
 BluetoothOppManager::ReplyError(uint8_t aError)
 {
-  if (!mConnected) return;
+  BT_LOGR("error: %d", aError);
 
   // Section 3.2 "Response Format", IrOBEX 1.2
   // [opcode:1][length:2][Headers:var]
@@ -1392,7 +1398,7 @@ BluetoothOppManager::NotifyAboutFileChange()
 void
 BluetoothOppManager::OnSocketConnectSuccess(BluetoothSocket* aSocket)
 {
-  BT_LOGR("%s: [%s]", __FUNCTION__, (mIsServer)? "server" : "client");
+  BT_LOGR("[%s]", (mIsServer)? "server" : "client");
   MOZ_ASSERT(aSocket);
 
   /**
@@ -1428,7 +1434,7 @@ BluetoothOppManager::OnSocketConnectSuccess(BluetoothSocket* aSocket)
 void
 BluetoothOppManager::OnSocketConnectError(BluetoothSocket* aSocket)
 {
-  BT_LOGR("%s: [%s]", __FUNCTION__, (mIsServer)? "server" : "client");
+  BT_LOGR("[%s]", (mIsServer)? "server" : "client");
 
   mRfcommSocket = nullptr;
   mL2capSocket = nullptr;
@@ -1448,7 +1454,7 @@ BluetoothOppManager::OnSocketConnectError(BluetoothSocket* aSocket)
 void
 BluetoothOppManager::OnSocketDisconnect(BluetoothSocket* aSocket)
 {
-  BT_LOGR("%s: [%s]", __FUNCTION__, (mIsServer)? "server" : "client");
+  BT_LOGR("[%s]", (mIsServer)? "server" : "client");
   MOZ_ASSERT(aSocket);
 
   if (aSocket != mSocket) {

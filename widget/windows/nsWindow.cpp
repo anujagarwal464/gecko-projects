@@ -58,7 +58,6 @@
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TouchEvents.h"
-#include "mozilla/Util.h"
 
 #include "mozilla/ipc/MessageChannel.h"
 #include <algorithm>
@@ -3514,19 +3513,36 @@ mozilla::TemporaryRef<mozilla::gfx::DrawTarget>
 nsWindow::StartRemoteDrawing()
 {
   MOZ_ASSERT(!mCompositeDC);
+  NS_ASSERTION(IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D) ||
+               IsRenderMode(gfxWindowsPlatform::RENDER_GDI),
+               "Unexpected render mode for remote drawing");
 
-  HDC dc = GetDC(mWnd);
-  if (!dc) {
-    return nullptr;
+  HDC dc = (HDC)GetNativeData(NS_NATIVE_GRAPHIC);
+  nsRefPtr<gfxASurface> surf;
+
+  if (mTransparencyMode == eTransparencyTransparent) {
+    if (!mTransparentSurface) {
+      SetupTranslucentWindowMemoryBitmap(mTransparencyMode);
+    }
+    if (mTransparentSurface) {
+      surf = mTransparentSurface;
+    }
+  } 
+  
+  if (!surf) {
+    if (!dc) {
+      return nullptr;
+    }
+    uint32_t flags = (mTransparencyMode == eTransparencyOpaque) ? 0 :
+        gfxWindowsSurface::FLAG_IS_TRANSPARENT;
+    surf = new gfxWindowsSurface(dc, flags);
   }
-
-  uint32_t flags = (mTransparencyMode == eTransparencyOpaque) ? 0 :
-      gfxWindowsSurface::FLAG_IS_TRANSPARENT;
-  nsRefPtr<gfxASurface> surf = new gfxWindowsSurface(dc, flags);
 
   mozilla::gfx::IntSize size(surf->GetSize().width, surf->GetSize().height);
   if (size.width <= 0 || size.height <= 0) {
-    ReleaseDC(mWnd, dc);
+    if (dc) {
+      FreeNativeData(dc, NS_NATIVE_GRAPHIC);
+    }
     return nullptr;
   }
 
@@ -3539,7 +3555,14 @@ nsWindow::StartRemoteDrawing()
 void
 nsWindow::EndRemoteDrawing()
 {
-  ReleaseDC(mWnd, mCompositeDC);
+  if (mTransparencyMode == eTransparencyTransparent) {
+    MOZ_ASSERT(IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D)
+               || mTransparentSurface);
+    UpdateTranslucentWindow();
+  }
+  if (mCompositeDC) {
+    FreeNativeData(mCompositeDC, NS_NATIVE_GRAPHIC);
+  }
   mCompositeDC = nullptr;
 }
 
@@ -6637,7 +6660,11 @@ nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
   LayerManagerPrefs prefs;
   GetLayerManagerPrefs(&prefs);
 
-  if (!prefs.mDisableAcceleration) {
+  // We don't currently support using an accelerated layer manager with
+  // transparent windows so don't even try. I'm also not sure if we even
+  // want to support this case. See bug 593471
+  if (!(prefs.mDisableAcceleration ||
+        mTransparencyMode == eTransparencyTransparent)) {
     if (prefs.mPreferOpenGL) {
       aHints.AppendElement(LAYERS_OPENGL);
     }

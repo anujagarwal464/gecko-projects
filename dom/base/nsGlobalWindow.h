@@ -342,7 +342,7 @@ public:
 
   // nsIScriptGlobalObject
   virtual nsIScriptContext *GetContext();
-  JSObject *FastGetGlobalJSObject()
+  JSObject *FastGetGlobalJSObject() const
   {
     return mJSObject;
   }
@@ -978,6 +978,7 @@ protected:
 
   // Object Management
   virtual ~nsGlobalWindow();
+  void ClearDelayedEventsAndDropDocument();
   void CleanUp();
   void ClearControllers();
   nsresult FinalClose();
