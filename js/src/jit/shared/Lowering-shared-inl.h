@@ -77,7 +77,7 @@ LIRGeneratorShared::defineFixed(LInstructionHelper<1, X, Y> *lir, MDefinition *m
         return false;
 
     if (js_IonOptions.registerAllocator == RegisterAllocator_LSRA) {
-        if (!add(new LNop))
+        if (!add(new(alloc()) LNop))
             return false;
     }
 
@@ -164,7 +164,7 @@ LIRGeneratorShared::defineReturn(LInstruction *lir, MDefinition *mir)
         return false;
 
     if (js_IonOptions.registerAllocator == RegisterAllocator_LSRA) {
-        if (!add(new LNop))
+        if (!add(new(alloc()) LNop))
             return false;
     }
 
@@ -191,6 +191,32 @@ bool
 LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
 {
     JS_ASSERT(IsCompatibleLIRCoercion(def->type(), as->type()));
+
+    // Try to emit MIR marked as emitted-at-uses at, well, uses. For
+    // snapshotting reasons we delay the MIRTypes match, or when we are
+    // coercing between bool and int32 constants.
+    if (as->isEmittedAtUses() &&
+        (def->type() == as->type() ||
+         (as->isConstant() &&
+          (def->type() == MIRType_Int32 || def->type() == MIRType_Boolean) &&
+          (as->type() == MIRType_Int32 || as->type() == MIRType_Boolean))))
+    {
+        MDefinition *replacement;
+        if (def->type() != as->type()) {
+            Value v = as->toConstant()->value();
+            if (as->type() == MIRType_Int32)
+                replacement = MConstant::New(alloc(), BooleanValue(v.toInt32()));
+            else
+                replacement = MConstant::New(alloc(), Int32Value(v.toBoolean()));
+            if (!emitAtUses(replacement->toInstruction()))
+                return false;
+        } else {
+            replacement = as;
+        }
+        def->replaceAllUsesWith(replacement);
+        return true;
+    }
+
     if (!ensureDefined(as))
         return false;
     def->setVirtualRegister(as->virtualRegister());

@@ -145,7 +145,7 @@ LOCAL_INCLUDES += [
     '/content/xul/document/src',
     '/layout/generic',
     '/layout/style',
-    '/layout/xul/base/src',
+    '/layout/xul',
 ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
@@ -164,3 +164,6 @@ LOCAL_INCLUDES += [
     '/xpcom/ds',
 ]
 
+for var in ('MOZ_JSDEBUGGER', 'MOZ_B2G_RIL', 'MOZ_B2G_FM'):
+    if CONFIG[var]:
+        DEFINES[var] = True

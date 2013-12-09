@@ -97,6 +97,13 @@ let gSeenWidgets = new Set();
  */
 let gDirtyAreaCache = new Set();
 
+/**
+ * gPendingBuildAreas is a map from area IDs to map from build nodes to their
+ * existing children at the time of node registration, that are waiting
+ * for the area to be registered
+ */
+let gPendingBuildAreas = new Map();
+
 let gSavedState = null;
 let gRestoring = false;
 let gDirty = false;
@@ -141,8 +148,13 @@ let CustomizableUIInternal = {
       "fullscreen-button",
       "find-button",
       "preferences-button",
-      "add-ons-button",
+      "add-ons-button"
     ];
+
+    if (gPalette.has("switch-to-metro-button")) {
+      panelPlacements.push("switch-to-metro-button");
+    }
+
     let showCharacterEncoding = Services.prefs.getComplexValue(
       "browser.menu.showCharacterEncoding",
       Ci.nsIPrefLocalizedString
@@ -244,11 +256,9 @@ let CustomizableUIInternal = {
     if (typeof aName != "string" || !/^[a-z0-9-_]{1,}$/i.test(aName)) {
       throw new Error("Invalid area name");
     }
-    if (gAreas.has(aName)) {
-      throw new Error("Area already registered");
-    }
 
-    let props = new Map();
+    let areaIsKnown = gAreas.has(aName);
+    let props = areaIsKnown ? gAreas.get(aName) : new Map();
     for (let key in aProperties) {
       //XXXgijs for special items, we need to make sure they have an appropriate ID
       // so we aren't perpetually in a non-default state:
@@ -258,36 +268,80 @@ let CustomizableUIInternal = {
         props.set(key, aProperties[key]);
       }
     }
-    gAreas.set(aName, props);
+    // Default to a toolbar:
+    if (!props.has("type")) {
+      props.set("type", CustomizableUI.TYPE_TOOLBAR);
+    }
+    // Sanity check type:
+    let allTypes = [CustomizableUI.TYPE_TOOLBAR, CustomizableUI.TYPE_MENU_PANEL];
+    if (allTypes.indexOf(props.get("type")) == -1) {
+      throw new Error("Invalid area type " + props.get("type"));
+    }
 
-    if (props.get("legacy")) {
-      // Guarantee this area exists in gFuturePlacements, to avoid checking it in
-      // various places elsewhere.
-      gFuturePlacements.set(aName, new Set());
-    } else {
-      this.restoreStateForArea(aName);
+    // And to no placements:
+    if (!props.has("defaultPlacements")) {
+      props.set("defaultPlacements", []);
+    }
+    // Sanity check default placements array:
+    if (!Array.isArray(props.get("defaultPlacements"))) {
+      throw new Error("Should provide an array of default placements");
+    }
+
+    if (!areaIsKnown) {
+      gAreas.set(aName, props);
+
+      if (props.get("legacy")) {
+        // Guarantee this area exists in gFuturePlacements, to avoid checking it in
+        // various places elsewhere.
+        gFuturePlacements.set(aName, new Set());
+      } else {
+        this.restoreStateForArea(aName);
+      }
+
+      // If we have pending build area nodes, register all of them
+      if (gPendingBuildAreas.has(aName)) {
+        let pendingNodes = gPendingBuildAreas.get(aName);
+        for (let [pendingNode, existingChildren] of pendingNodes) {
+          this.registerToolbarNode(pendingNode, existingChildren);
+        }
+        gPendingBuildAreas.delete(aName);
+      }
     }
   },
 
-  unregisterArea: function(aName) {
+  unregisterArea: function(aName, aDestroyPlacements) {
     if (typeof aName != "string" || !/^[a-z0-9-_]{1,}$/i.test(aName)) {
       throw new Error("Invalid area name");
     }
-    if (!gAreas.has(aName)) {
+    if (!gAreas.has(aName) && !gPlacements.has(aName)) {
       throw new Error("Area not registered");
     }
 
     // Move all the widgets out
     this.beginBatchUpdate();
-    let placements = gPlacements.get(aName);
-    placements.forEach(this.removeWidgetFromArea, this);
+    try {
+      let placements = gPlacements.get(aName);
+      if (placements) {
+        // Need to clone this array so removeWidgetFromArea doesn't modify it
+        placements = [...placements];
+        placements.forEach(this.removeWidgetFromArea, this);
+      }
 
-    // Delete all remaining traces.
-    gAreas.delete(aName);
-    gPlacements.delete(aName);
-    gFuturePlacements.delete(aName);
-    gBuildAreas.delete(aName);
-    this.endBatchUpdate(true);
+      // Delete all remaining traces.
+      gAreas.delete(aName);
+      // Only destroy placements when necessary:
+      if (aDestroyPlacements) {
+        gPlacements.delete(aName);
+      } else {
+        // Otherwise we need to re-set them, as removeFromArea will have emptied
+        // them out:
+        gPlacements.set(aName, placements);
+      }
+      gFuturePlacements.delete(aName);
+      gBuildAreas.delete(aName);
+    } finally {
+      this.endBatchUpdate(true);
+    }
   },
 
   registerToolbarNode: function(aToolbar, aExistingChildren) {
@@ -295,52 +349,70 @@ let CustomizableUIInternal = {
     if (gBuildAreas.has(area) && gBuildAreas.get(area).has(aToolbar)) {
       return;
     }
-    this.beginBatchUpdate();
     let document = aToolbar.ownerDocument;
     let areaProperties = gAreas.get(area);
 
+    // If this area is not registered, try to do it automatically:
     if (!areaProperties) {
-      throw new Error("Unknown customization area: " + area);
+      // If there's no default set attribute at all, we assume that we should
+      // wait for registerArea to be called:
+      if (!aToolbar.hasAttribute("defaultset")) {
+        if (!gPendingBuildAreas.has(area)) {
+          gPendingBuildAreas.set(area, new Map());
+        }
+        let pendingNodes = gPendingBuildAreas.get(area);
+        pendingNodes.set(aToolbar, aExistingChildren);
+        return;
+      }
+      let props = {type: CustomizableUI.TYPE_TOOLBAR, legacy: true};
+      let defaultsetAttribute = aToolbar.getAttribute("defaultset");
+      props.defaultPlacements = defaultsetAttribute.split(',').filter(s => s);
+      this.registerArea(area, props);
+      areaProperties = gAreas.get(area);
     }
 
-    let placements = gPlacements.get(area);
-    if (!placements && areaProperties.has("legacy")) {
-      let legacyState = aToolbar.getAttribute("currentset");
-      if (legacyState) {
-        legacyState = legacyState.split(",").filter(s => s);
+    this.beginBatchUpdate();
+    try {
+      let placements = gPlacements.get(area);
+      if (!placements && areaProperties.has("legacy")) {
+        let legacyState = aToolbar.getAttribute("currentset");
+        if (legacyState) {
+          legacyState = legacyState.split(",").filter(s => s);
+        }
+
+        // Manually restore the state here, so the legacy state can be converted. 
+        this.restoreStateForArea(area, legacyState);
+        placements = gPlacements.get(area);
       }
 
-      // Manually restore the state here, so the legacy state can be converted. 
-      this.restoreStateForArea(area, legacyState);
-      placements = gPlacements.get(area);
-    }
+      // Check that the current children and the current placements match. If
+      // not, mark it as dirty:
+      if (aExistingChildren.length != placements.length ||
+          aExistingChildren.every((id, i) => id == placements[i])) {
+        gDirtyAreaCache.add(area);
+      }
 
-    // Check that the current children and the current placements match. If
-    // not, mark it as dirty:
-    if (aExistingChildren.length != placements.length ||
-        aExistingChildren.every((id, i) => id == placements[i])) {
-      gDirtyAreaCache.add(area);
-    }
+      if (areaProperties.has("overflowable")) {
+        aToolbar.overflowable = new OverflowableToolbar(aToolbar);
+      }
 
-    if (areaProperties.has("overflowable")) {
-      aToolbar.overflowable = new OverflowableToolbar(aToolbar);
-    }
+      this.registerBuildArea(area, aToolbar);
 
-    this.registerBuildArea(area, aToolbar);
-
-    // We only build the toolbar if it's been marked as "dirty". Dirty means
-    // one of the following things:
-    // 1) Items have been added, moved or removed from this toolbar before.
-    // 2) The number of children of the toolbar does not match the length of
-    //    the placements array for that area.
-    //
-    // This notion of being "dirty" is stored in a cache which is persisted
-    // in the saved state.
-    if (gDirtyAreaCache.has(area)) {
-      this.buildArea(area, placements, aToolbar);
+      // We only build the toolbar if it's been marked as "dirty". Dirty means
+      // one of the following things:
+      // 1) Items have been added, moved or removed from this toolbar before.
+      // 2) The number of children of the toolbar does not match the length of
+      //    the placements array for that area.
+      //
+      // This notion of being "dirty" is stored in a cache which is persisted
+      // in the saved state.
+      if (gDirtyAreaCache.has(area)) {
+        this.buildArea(area, placements, aToolbar);
+      }
+      aToolbar.setAttribute("currentset", placements.join(","));
+    } finally {
+      this.endBatchUpdate();
     }
-    aToolbar.setAttribute("currentset", placements.join(","));
-    this.endBatchUpdate();
   },
 
   buildArea: function(aArea, aPlacements, aAreaNode) {
@@ -354,110 +426,112 @@ let CustomizableUIInternal = {
                       + " to have a customizationTarget attribute.");
     }
 
-    this.beginBatchUpdate();
-
     // Restore nav-bar visibility since it may have been hidden
     // through a migration path (bug 938980) or an add-on.
     if (aArea == CustomizableUI.AREA_NAVBAR) {
       aAreaNode.collapsed = false;
     }
 
-    let currentNode = container.firstChild;
-    let placementsToRemove = new Set();
-    for (let id of aPlacements) {
-      while (currentNode && currentNode.getAttribute("skipintoolbarset") == "true") {
-        currentNode = currentNode.nextSibling;
-      }
+    this.beginBatchUpdate();
 
-      if (currentNode && currentNode.id == id) {
-        currentNode = currentNode.nextSibling;
-        continue;
-      }
+    try {
+      let currentNode = container.firstChild;
+      let placementsToRemove = new Set();
+      for (let id of aPlacements) {
+        while (currentNode && currentNode.getAttribute("skipintoolbarset") == "true") {
+          currentNode = currentNode.nextSibling;
+        }
 
-      let [provider, node] = this.getWidgetNode(id, window);
-      if (!node) {
-        LOG("Unknown widget: " + id);
-        continue;
-      }
-
-      // If the placements have items in them which are (now) no longer removable,
-      // we shouldn't be moving them:
-      if (node.parentNode != container && !this.isWidgetRemovable(node)) {
-        placementsToRemove.add(id);
-        continue;
-      }
-
-      if (inPrivateWindow && provider == CustomizableUI.PROVIDER_API) {
-        let widget = gPalette.get(id);
-        if (!widget.showInPrivateBrowsing && inPrivateWindow) {
+        if (currentNode && currentNode.id == id) {
+          currentNode = currentNode.nextSibling;
           continue;
         }
-      }
 
-      this.ensureButtonContextMenu(node, aAreaNode);
-      if (node.localName == "toolbarbutton" && aArea == CustomizableUI.AREA_PANEL) {
-        node.setAttribute("tabindex", "0");
-        if (!node.hasAttribute("type")) {
-          node.setAttribute("type", "wrap");
+        let [provider, node] = this.getWidgetNode(id, window);
+        if (!node) {
+          LOG("Unknown widget: " + id);
+          continue;
         }
-      }
 
-      this.insertWidgetBefore(node, currentNode, container, aArea);
-      if (gResetting) {
-        this.notifyListeners("onWidgetReset", id, aArea);
-      }
-    }
+        // If the placements have items in them which are (now) no longer removable,
+        // we shouldn't be moving them:
+        if (node.parentNode != container && !this.isWidgetRemovable(node)) {
+          placementsToRemove.add(id);
+          continue;
+        }
 
-    if (currentNode) {
-      let palette = aAreaNode.toolbox ? aAreaNode.toolbox.palette : null;
-      let limit = currentNode.previousSibling;
-      let node = container.lastChild;
-      while (node && node != limit) {
-        let previousSibling = node.previousSibling;
-        // Nodes opt-in to removability. If they're removable, and we haven't
-        // seen them in the placements array, then we toss them into the palette
-        // if one exists. If no palette exists, we just remove the node. If the
-        // node is not removable, we leave it where it is. However, we can only
-        // safely touch elements that have an ID - both because we depend on
-        // IDs, and because such elements are not intended to be widgets
-        // (eg, titlebar-placeholder elements).
-        if (node.id && node.getAttribute("skipintoolbarset") != "true") {
-          if (this.isWidgetRemovable(node)) {
-            if (palette && !this.isSpecialWidget(node.id)) {
-              palette.appendChild(node);
-              this.removeLocationAttributes(node);
-            } else {
-              container.removeChild(node);
-            }
-          } else {
-            this.setLocationAttributes(currentNode, aArea);
-            node.setAttribute("removable", false);
-            LOG("Adding non-removable widget to placements of " + aArea + ": " +
-                node.id);
-            gPlacements.get(aArea).push(node.id);
-            gDirty = true;
+        if (inPrivateWindow && provider == CustomizableUI.PROVIDER_API) {
+          let widget = gPalette.get(id);
+          if (!widget.showInPrivateBrowsing && inPrivateWindow) {
+            continue;
           }
         }
-        node = previousSibling;
+
+        this.ensureButtonContextMenu(node, aAreaNode);
+        if (node.localName == "toolbarbutton" && aArea == CustomizableUI.AREA_PANEL) {
+          node.setAttribute("tabindex", "0");
+          if (!node.hasAttribute("type")) {
+            node.setAttribute("type", "wrap");
+          }
+        }
+
+        this.insertWidgetBefore(node, currentNode, container, aArea);
+        if (gResetting) {
+          this.notifyListeners("onWidgetReset", id, aArea);
+        }
       }
-    }
 
-    // If there are placements in here which aren't removable from their original area,
-    // we remove them from this area's placement array. They will (have) be(en) added
-    // to their original area's placements array in the block above this one.
-    if (placementsToRemove.size) {
-      let placementAry = gPlacements.get(aArea);
-      for (let id of placementsToRemove) {
-        let index = placementAry.indexOf(id);
-        placementAry.splice(index, 1);
+      if (currentNode) {
+        let palette = aAreaNode.toolbox ? aAreaNode.toolbox.palette : null;
+        let limit = currentNode.previousSibling;
+        let node = container.lastChild;
+        while (node && node != limit) {
+          let previousSibling = node.previousSibling;
+          // Nodes opt-in to removability. If they're removable, and we haven't
+          // seen them in the placements array, then we toss them into the palette
+          // if one exists. If no palette exists, we just remove the node. If the
+          // node is not removable, we leave it where it is. However, we can only
+          // safely touch elements that have an ID - both because we depend on
+          // IDs, and because such elements are not intended to be widgets
+          // (eg, titlebar-placeholder elements).
+          if (node.id && node.getAttribute("skipintoolbarset") != "true") {
+            if (this.isWidgetRemovable(node)) {
+              if (palette && !this.isSpecialWidget(node.id)) {
+                palette.appendChild(node);
+                this.removeLocationAttributes(node);
+              } else {
+                container.removeChild(node);
+              }
+            } else {
+              this.setLocationAttributes(currentNode, aArea);
+              node.setAttribute("removable", false);
+              LOG("Adding non-removable widget to placements of " + aArea + ": " +
+                  node.id);
+              gPlacements.get(aArea).push(node.id);
+              gDirty = true;
+            }
+          }
+          node = previousSibling;
+        }
       }
-    }
 
-    if (gResetting) {
-      this.notifyListeners("onAreaReset", aArea);
-    }
+      // If there are placements in here which aren't removable from their original area,
+      // we remove them from this area's placement array. They will (have) be(en) added
+      // to their original area's placements array in the block above this one.
+      if (placementsToRemove.size) {
+        let placementAry = gPlacements.get(aArea);
+        for (let id of placementsToRemove) {
+          let index = placementAry.indexOf(id);
+          placementAry.splice(index, 1);
+        }
+      }
 
-    this.endBatchUpdate();
+      if (gResetting) {
+        this.notifyListeners("onAreaReset", aArea);
+      }
+    } finally {
+      this.endBatchUpdate();
+    }
   },
 
   addPanelCloseListeners: function(aPanel) {
@@ -548,7 +622,7 @@ let CustomizableUIInternal = {
     }
 
     LOG("No node for " + aWidgetId + " found.");
-    return [];
+    return [null, null];
   },
 
   registerMenuPanel: function(aPanel) {
@@ -566,11 +640,17 @@ let CustomizableUIInternal = {
 
     let placements = gPlacements.get(CustomizableUI.AREA_PANEL);
     this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanel);
-    for (let btn of aPanel.querySelectorAll("toolbarbutton")) {
-      btn.setAttribute("tabindex", "0");
-      this.ensureButtonContextMenu(btn, aPanel);
-      if (!btn.hasAttribute("type")) {
-        btn.setAttribute("type", "wrap");
+    for (let child of aPanel.children) {
+      if (child.localName != "toolbarbutton") {
+        if (child.localName == "toolbaritem") {
+          this.ensureButtonContextMenu(child, aPanel);
+        }
+        continue;
+      }
+      this.ensureButtonContextMenu(child, aPanel);
+      child.setAttribute("tabindex", "0");
+      if (!child.hasAttribute("type")) {
+        child.setAttribute("type", "wrap");
       }
     }
 
@@ -623,7 +703,7 @@ let CustomizableUIInternal = {
       this.notifyListeners("onWidgetAfterDOMChange", widgetNode, null, container, true);
 
       if (area.get("type") == CustomizableUI.TYPE_TOOLBAR) {
-        areaNode.setAttribute("currentset", areaNode.currentSet);
+        areaNode.setAttribute("currentset", gPlacements.get(aArea).join(','));
       }
 
       let windowCache = gSingleWrapperCache.get(window);
@@ -691,6 +771,18 @@ let CustomizableUIInternal = {
     for (let [,widget] of gPalette) {
       widget.instances.delete(document);
       this.notifyListeners("onWidgetInstanceRemoved", widget.id, document);
+    }
+
+    for (let [area, areaMap] of gPendingBuildAreas) {
+      let toDelete = [];
+      for (let [areaNode, ] of areaMap) {
+        if (areaNode.ownerDocument == document) {
+          toDelete.push(areaNode);
+        }
+      }
+      for (let areaNode of toDelete) {
+        areaMap.delete(toDelete);
+      }
     }
   },
 
@@ -766,7 +858,7 @@ let CustomizableUIInternal = {
     this.insertWidgetBefore(widgetNode, nextNode, insertionContainer, areaId);
 
     if (gAreas.get(areaId).get("type") == CustomizableUI.TYPE_TOOLBAR) {
-      aAreaNode.setAttribute("currentset", aAreaNode.currentSet);
+      aAreaNode.setAttribute("currentset", gPlacements.get(areaId).join(','));
     }
   },
 
@@ -957,6 +1049,12 @@ let CustomizableUIInternal = {
           ERROR("Key element with id '" + aWidget.shortcutId + "' for widget '" + aWidget.id +
                 "' not found!");
         }
+      }
+
+      if (aWidget.id == "switch-to-metro-button") {
+        let brandBundle = aDocument.getElementById("bundle_brand");
+        let brandShortName = brandBundle.getString("brandShortName");
+        additionalTooltipArguments = [brandShortName];
       }
       let tooltip = this.getLocalizedProperty(aWidget, "tooltiptext", additionalTooltipArguments);
       node.setAttribute("tooltiptext", tooltip);
@@ -1173,12 +1271,15 @@ let CustomizableUIInternal = {
     return [...widgets];
   },
 
-  getPlacementOfWidget: function(aWidgetId, aOnlyRegistered) {
+  getPlacementOfWidget: function(aWidgetId, aOnlyRegistered, aDeadAreas) {
     if (aOnlyRegistered && !this.widgetExists(aWidgetId)) {
       return null;
     }
 
     for (let [area, placements] of gPlacements) {
+      if (!gAreas.has(area) && !aDeadAreas) {
+        continue;
+      }
       let index = placements.indexOf(aWidgetId);
       if (index != -1) {
         return { area: area, position: index };
@@ -1223,7 +1324,7 @@ let CustomizableUIInternal = {
       aWidgetId = this.ensureSpecialWidgetId(aWidgetId);
     }
 
-    let oldPlacement = this.getPlacementOfWidget(aWidgetId);
+    let oldPlacement = this.getPlacementOfWidget(aWidgetId, false, true);
     if (oldPlacement && oldPlacement.area == aArea) {
       this.moveWidgetWithinArea(aWidgetId, aPosition);
       return;
@@ -1271,7 +1372,7 @@ let CustomizableUIInternal = {
   },
 
   removeWidgetFromArea: function(aWidgetId) {
-    let oldPlacement = this.getPlacementOfWidget(aWidgetId);
+    let oldPlacement = this.getPlacementOfWidget(aWidgetId, false, true);
     if (!oldPlacement) {
       return;
     }
@@ -1382,51 +1483,54 @@ let CustomizableUIInternal = {
     }
 
     this.beginBatchUpdate();
-    gRestoring = true;
+    try {
+      gRestoring = true;
 
-    let restored = false;
-    gPlacements.set(aArea, []);
+      let restored = false;
+      gPlacements.set(aArea, []);
 
-    if (gSavedState && aArea in gSavedState.placements) {
-      LOG("Restoring " + aArea + " from saved state");
-      let placements = gSavedState.placements[aArea];
-      for (let id of placements)
-        this.addWidgetToArea(id, aArea);
-      gDirty = false;
-      restored = true;
-    }
-
-    if (!restored && aLegacyState) {
-      LOG("Restoring " + aArea + " from legacy state");
-      for (let id of aLegacyState)
-        this.addWidgetToArea(id, aArea);
-      // Don't override dirty state, to ensure legacy state is saved here and
-      // therefore only used once.
-      restored = true;
-    }
-
-    if (!restored) {
-      LOG("Restoring " + aArea + " from default state");
-      let defaults = gAreas.get(aArea).get("defaultPlacements");
-      if (defaults) {
-        for (let id of defaults)
-          this.addWidgetToArea(id, aArea, null, true);
+      if (gSavedState && aArea in gSavedState.placements) {
+        LOG("Restoring " + aArea + " from saved state");
+        let placements = gSavedState.placements[aArea];
+        for (let id of placements)
+          this.addWidgetToArea(id, aArea);
+        gDirty = false;
+        restored = true;
       }
-      gDirty = false;
+
+      if (!restored && aLegacyState) {
+        LOG("Restoring " + aArea + " from legacy state");
+        for (let id of aLegacyState)
+          this.addWidgetToArea(id, aArea);
+        // Don't override dirty state, to ensure legacy state is saved here and
+        // therefore only used once.
+        restored = true;
+      }
+
+      if (!restored) {
+        LOG("Restoring " + aArea + " from default state");
+        let defaults = gAreas.get(aArea).get("defaultPlacements");
+        if (defaults) {
+          for (let id of defaults)
+            this.addWidgetToArea(id, aArea, null, true);
+        }
+        gDirty = false;
+      }
+
+      // Finally, add widgets to the area that were added before the it was able
+      // to be restored. This can occur when add-ons register widgets for a
+      // lazily-restored area before it's been restored.
+      if (gFuturePlacements.has(aArea)) {
+        for (let id of gFuturePlacements.get(aArea))
+          this.addWidgetToArea(id, aArea);
+      }
+
+      LOG("Placements for " + aArea + ":\n\t" + gPlacements.get(aArea).join("\n\t"));
+
+      gRestoring = false;
+    } finally {
+      this.endBatchUpdate();
     }
-
-    // Finally, add widgets to the area that were added before the it was able
-    // to be restored. This can occur when add-ons register widgets for a
-    // lazily-restored area before it's been restored.
-    if (gFuturePlacements.has(aArea)) {
-      for (let id of gFuturePlacements.get(aArea))
-        this.addWidgetToArea(id, aArea);
-    }
-
-    LOG("Placements for " + aArea + ":\n\t" + gPlacements.get(aArea).join("\n\t"));
-
-    gRestoring = false;
-    this.endBatchUpdate();
   },
 
   saveState: function() {
@@ -1581,17 +1685,19 @@ let CustomizableUIInternal = {
       // seen before, then add it to its default area so it can be used.
       if (autoAdd && !widget.currentArea && !gSeenWidgets.has(widget.id)) {
         this.beginBatchUpdate();
-        gSeenWidgets.add(widget.id);
+        try {
+          gSeenWidgets.add(widget.id);
 
-        if (widget.defaultArea) {
-          if (this.isAreaLazy(widget.defaultArea)) {
-            gFuturePlacements.get(widget.defaultArea).add(widget.id);
-          } else {
-            this.addWidgetToArea(widget.id, widget.defaultArea);
+          if (widget.defaultArea) {
+            if (this.isAreaLazy(widget.defaultArea)) {
+              gFuturePlacements.get(widget.defaultArea).add(widget.id);
+            } else {
+              this.addWidgetToArea(widget.id, widget.defaultArea);
+            }
           }
+        } finally {
+          this.endBatchUpdate(true);
         }
-
-        this.endBatchUpdate(true);
       }
     }
 
@@ -1640,6 +1746,10 @@ let CustomizableUIInternal = {
     if (typeof aData.id != "string" || !/^[a-z0-9-_]{1,}$/i.test(aData.id)) {
       ERROR("Given an illegal id in normalizeWidget: " + aData.id);
       return null;
+    }
+
+    if (aData.id == "switch-to-metro-button") {
+      widget.showInPrivateBrowsing = false;
     }
 
     delete widget.implementation.currentArea;
@@ -1753,27 +1863,23 @@ let CustomizableUIInternal = {
     // This will not remove the widget from gPlacements - we want to keep the
     // setting so the widget gets put back in it's old position if/when it
     // returns.
-
-    let area = widget.currentArea;
-    let buildAreaNodes = area && gBuildAreas.get(area);
-    if (buildAreaNodes) {
-      for (let buildNode of buildAreaNodes) {
-        let widgetNode = buildNode.ownerDocument.getElementById(aWidgetId);
-        let windowCache = gSingleWrapperCache.get(buildNode.ownerDocument.defaultView);
-        if (windowCache) {
-          windowCache.delete(aWidgetId);
-        }
-        if (widgetNode) {
-          widgetNode.parentNode.removeChild(widgetNode);
-        }
-        if (widget.type == "view") {
-          let viewNode = buildNode.ownerDocument.getElementById(widget.viewId);
-          if (viewNode) {
-            for (let eventName of kSubviewEvents) {
-              let handler = "on" + eventName;
-              if (typeof widget[handler] == "function") {
-                viewNode.removeEventListener(eventName, widget[handler], false);
-              }
+    for (let [window, ] of gBuildWindows) {
+      let windowCache = gSingleWrapperCache.get(window);
+      if (windowCache) {
+        windowCache.delete(aWidgetId);
+      }
+      let widgetNode = window.document.getElementById(aWidgetId) ||
+                       window.gNavToolbox.palette.querySelector(idToSelector(aWidgetId));
+      if (widgetNode) {
+        widgetNode.remove();
+      }
+      if (widget.type == "view") {
+        let viewNode = window.document.getElementById(widget.viewId);
+        if (viewNode) {
+          for (let eventName of kSubviewEvents) {
+            let handler = "on" + eventName;
+            if (typeof widget[handler] == "function") {
+              viewNode.removeEventListener(eventName, widget[handler], false);
             }
           }
         }
@@ -2003,8 +2109,8 @@ this.CustomizableUI = {
   registerMenuPanel: function(aPanel) {
     CustomizableUIInternal.registerMenuPanel(aPanel);
   },
-  unregisterArea: function(aName) {
-    CustomizableUIInternal.unregisterArea(aName);
+  unregisterArea: function(aName, aDestroyPlacements) {
+    CustomizableUIInternal.unregisterArea(aName, aDestroyPlacements);
   },
   addWidgetToArea: function(aWidgetId, aArea, aPosition) {
     CustomizableUIInternal.addWidgetToArea(aWidgetId, aArea, aPosition);
@@ -2194,7 +2300,11 @@ function WidgetGroupWrapper(aWidget) {
       return [];
     }
     let area = placement.area;
-    return [this.forWindow(node.ownerDocument.defaultView) for (node of gBuildAreas.get(area))];
+    let buildAreas = gBuildAreas.get(area);
+    if (!buildAreas) {
+      return [];
+    }
+    return [this.forWindow(node.ownerDocument.defaultView) for (node of buildAreas)];
   });
 
   this.__defineGetter__("areaType", function() {
@@ -2489,7 +2599,7 @@ OverflowableToolbar.prototype = {
       this._lazyResizeHandler = new DeferredTask(this._onLazyResize.bind(this),
                                                  LAZY_RESIZE_INTERVAL_MS);
     }
-    this._lazyResizeHandler.start();
+    this._lazyResizeHandler.arm();
   },
 
   _moveItemsBackToTheirOrigin: function(shouldMoveAllItems) {
@@ -2548,7 +2658,7 @@ OverflowableToolbar.prototype = {
     this._enabled = false;
     this._moveItemsBackToTheirOrigin(true);
     if (this._lazyResizeHandler) {
-      this._lazyResizeHandler.cancel();
+      this._lazyResizeHandler.disarm();
     }
   },
 

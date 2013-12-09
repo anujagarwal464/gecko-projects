@@ -20,8 +20,11 @@ from __future__ import unicode_literals
 import os
 
 from collections import OrderedDict
-from mozbuild.util import StrictOrderingOnAppendList
-from .sandbox_symbols import compute_final_target
+from mozbuild.util import (
+    shell_quote,
+    StrictOrderingOnAppendList,
+)
+from .sandbox_symbols import FinalTargetValue
 
 
 class TreeMetadata(object):
@@ -182,10 +185,8 @@ class Defines(SandboxDerived):
         for define, value in self.defines.iteritems():
             if value is True:
                 defstr = define
-            elif type(value) == int:
-                defstr = '%s=%s' % (define, value)
             else:
-                defstr = '%s=\'%s\'' % (define, value)
+                defstr = '%s=%s' % (define, shell_quote(value))
             yield('-D%s' % defstr)
 
 class Exports(SandboxDerived):
@@ -498,6 +499,6 @@ class InstallationTarget(SandboxDerived):
         """Returns whether or not the target is not derived from the default
         given xpiname and subdir."""
 
-        return compute_final_target(dict(
+        return FinalTargetValue(dict(
             XPI_NAME=self.xpiname,
             DIST_SUBDIR=self.subdir)) == self.target

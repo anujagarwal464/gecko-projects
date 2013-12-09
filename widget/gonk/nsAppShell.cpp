@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include "base/basictypes.h"
+#include "GonkPermission.h"
 #include "nscore.h"
 #ifdef MOZ_OMX_DECODER
 #include "MediaResourceManagerService.h"
@@ -324,21 +325,13 @@ GeckoPointerController::getBounds(float* outMinX,
                                   float* outMaxX,
                                   float* outMaxY) const
 {
-    int32_t width, height, orientation;
-
     DisplayViewport viewport;
 
     mConfig->getDisplayInfo(false, &viewport);
 
     *outMinX = *outMinY = 0;
-    if (orientation == DISPLAY_ORIENTATION_90 ||
-        orientation == DISPLAY_ORIENTATION_270) {
-        *outMaxX = viewport.deviceHeight;
-        *outMaxY = viewport.deviceWidth;
-    } else {
-        *outMaxX = viewport.deviceWidth;
-        *outMaxY = viewport.deviceHeight;
-    }
+    *outMaxX = viewport.logicalRight;
+    *outMaxY = viewport.logicalBottom;
     return true;
 }
 
@@ -758,6 +751,7 @@ nsAppShell::Init()
 #if ANDROID_VERSION >= 18
         android::FakeSurfaceComposer::instantiate();
 #endif
+        GonkPermissionService::instantiate();
     }
 
     nsCOMPtr<nsIObserverService> obsServ = GetObserverService();

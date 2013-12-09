@@ -61,6 +61,7 @@
 #include "gc/Marking.h"
 #include "jit/AsmJSLink.h"
 #include "js/CharacterEncoding.h"
+#include "js/SliceBudget.h"
 #include "js/StructuredClone.h"
 #if ENABLE_INTL_API
 #include "unicode/uclean.h"
@@ -1094,7 +1095,7 @@ JS_TransplantObject(JSContext *cx, HandleObject origobj, HandleObject target)
         // There might already be a wrapper for the original object in
         // the new compartment. If there is, we use its identity and swap
         // in the contents of |target|.
-        newIdentity = &p->value.toObject();
+        newIdentity = &p->value().toObject();
 
         // When we remove origv from the wrapper map, its wrapper, newIdentity,
         // must immediately cease to be a cross-compartment wrapper. Neuter it.
@@ -1667,11 +1668,6 @@ JS_PUBLIC_API(void)
 JS_RemoveScriptRootRT(JSRuntime *rt, JSScript **rp)
 {
     RemoveRoot(rt, (void *)rp);
-}
-
-JS_NEVER_INLINE JS_PUBLIC_API(void)
-JS_AnchorPtr(void *p)
-{
 }
 
 JS_PUBLIC_API(bool)
@@ -3242,6 +3238,15 @@ JS_DefineProperties(JSContext *cx, JSObject *objArg, const JSPropertySpec *ps)
             // If you have self-hosted getter/setter, you can't have a
             // native one.
             JS_ASSERT(!ps->getter.op && !ps->setter.op);
+            /*
+             * During creation of the self-hosting global, we ignore all
+             * self-hosted properties, as that means we're currently setting up
+             * the global object that the self-hosted code is then compiled
+             * in. That means that Self-hosted properties can't be used in the
+             * self-hosting global itself, right now.
+             */
+            if (cx->runtime()->isSelfHostingGlobal(cx->global()))
+                continue;
 
             ok = DefineSelfHostedProperty(cx, obj, ps->name,
                                           ps->selfHostedGetter,
@@ -3855,13 +3860,13 @@ JS_CheckAccess(JSContext *cx, JSObject *objArg, jsid idArg, JSAccessMode mode,
 JS_PUBLIC_API(void)
 JS_HoldPrincipals(JSPrincipals *principals)
 {
-    JS_ATOMIC_INCREMENT(&principals->refcount);
+    ++principals->refcount;
 }
 
 JS_PUBLIC_API(void)
 JS_DropPrincipals(JSRuntime *rt, JSPrincipals *principals)
 {
-    int rc = JS_ATOMIC_DECREMENT(&principals->refcount);
+    int rc = --principals->refcount;
     if (rc == 0)
         rt->destroyPrincipals(principals);
 }
@@ -4146,6 +4151,8 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, const JSFunctionSpec *fs)
          * call paths then call InitializeLazyFunctionScript if !hasScript.
          */
         if (fs->selfHostedName) {
+            JS_ASSERT(!fs->call.op);
+            JS_ASSERT(!fs->call.info);
             /*
              * During creation of the self-hosting global, we ignore all
              * self-hosted functions, as that means we're currently setting up
@@ -4153,8 +4160,6 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, const JSFunctionSpec *fs)
              * in. Self-hosted functions can access each other via their names,
              * but not via the builtin classes they get installed into.
              */
-            JS_ASSERT(!fs->call.op);
-            JS_ASSERT(!fs->call.info);
             if (cx->runtime()->isSelfHostingGlobal(cx->global()))
                 continue;
 
@@ -4496,24 +4501,7 @@ JS::Compile(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &optio
 JS_PUBLIC_API(bool)
 JS::CanCompileOffThread(JSContext *cx, const ReadOnlyCompileOptions &options)
 {
-#ifdef JS_WORKER_THREADS
-    if (!cx->runtime()->useHelperThreads() || !cx->runtime()->helperThreadCount())
-        return false;
-
-    if (!cx->runtime()->useHelperThreadsForParsing())
-        return false;
-
-    // Off thread compilation can't occur during incremental collections on the
-    // atoms compartment, to avoid triggering barriers. Outside the atoms
-    // compartment, the compilation will use a new zone which doesn't require
-    // barriers itself.
-    if (cx->runtime()->activeGCInAtomsZone())
-        return false;
-
-    return true;
-#else
-    return false;
-#endif
+    return cx->runtime()->canUseParallelParsing();
 }
 
 JS_PUBLIC_API(bool)
@@ -4521,12 +4509,8 @@ JS::CompileOffThread(JSContext *cx, Handle<JSObject*> obj, const ReadOnlyCompile
                      const jschar *chars, size_t length,
                      OffThreadCompileCallback callback, void *callbackData)
 {
-#ifdef JS_WORKER_THREADS
     JS_ASSERT(CanCompileOffThread(cx, options));
     return StartOffThreadParseScript(cx, options, chars, length, obj, callback, callbackData);
-#else
-    MOZ_ASSUME_UNREACHABLE("Off thread compilation is not available.");
-#endif
 }
 
 JS_PUBLIC_API(JSScript *)
@@ -4804,7 +4788,7 @@ JS::Evaluate(JSContext *cx, HandleObject obj, const ReadOnlyCompileOptions &opti
     // which for large scripts means significant memory. Perform a GC eagerly
     // to clear out this analysis data before anything happens to inhibit the
     // flushing of this memory (such as setting requestAnimationFrame).
-    if (script->length > LARGE_SCRIPT_LENGTH) {
+    if (script->length() > LARGE_SCRIPT_LENGTH) {
         script = nullptr;
         PrepareZoneForGC(cx->zone());
         GC(cx->runtime(), GC_NORMAL, gcreason::FINISH_LARGE_EVALUTE);
@@ -5999,7 +5983,7 @@ JS_PUBLIC_API(void)
 JS_SetParallelParsingEnabled(JSContext *cx, bool enabled)
 {
 #ifdef JS_ION
-    cx->runtime()->setCanUseHelperThreadsForParsing(enabled);
+    cx->runtime()->setParallelParsingEnabled(enabled);
 #endif
 }
 
@@ -6007,7 +5991,7 @@ JS_PUBLIC_API(void)
 JS_SetParallelIonCompilationEnabled(JSContext *cx, bool enabled)
 {
 #ifdef JS_ION
-    cx->runtime()->setCanUseHelperThreadsForIonCompilation(enabled);
+    cx->runtime()->setParallelIonCompilationEnabled(enabled);
 #endif
 }
 

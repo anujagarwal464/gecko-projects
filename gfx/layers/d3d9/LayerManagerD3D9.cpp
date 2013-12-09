@@ -59,9 +59,7 @@ LayerManagerD3D9::Initialize(bool force)
 
   if (!mDefaultDeviceManager) {
     mDeviceManager = gfxWindowsPlatform::GetPlatform()->GetD3D9DeviceManager();
-
-    if (!mDeviceManager->Init()) {
-      mDeviceManager = nullptr;
+    if (!mDeviceManager) {
       return false;
     }
 
@@ -279,7 +277,8 @@ LayerManagerD3D9::Render()
          (r = iter.Next()) != nullptr;) {
       mSwapChain->Present(*r);
     }
-    LayerManager::PostPresent();
+    RecordFrame();
+    PostPresent();
   } else {
     PaintToTarget();
   }

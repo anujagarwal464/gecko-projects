@@ -17,6 +17,8 @@
 #include "TabChild.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/asmjscache/AsmJSCache.h"
+#include "mozilla/dom/asmjscache/PAsmJSCacheEntryChild.h"
 #include "mozilla/dom/ExternalHelperAppChild.h"
 #include "mozilla/dom/PCrashReporterChild.h"
 #include "mozilla/dom/DOMStorageIPC.h"
@@ -81,6 +83,7 @@
 #if defined(MOZ_WIDGET_GONK)
 #include "nsVolume.h"
 #include "nsVolumeService.h"
+#include "SpeakerManagerService.h"
 #endif
 
 #ifdef XP_WIN
@@ -586,6 +589,20 @@ ContentChild::RecvSetProcessPrivileges(const ChildPrivileges& aPrivs)
   return true;
 }
 
+bool
+ContentChild::RecvSpeakerManagerNotify()
+{
+#ifdef MOZ_WIDGET_GONK
+  nsRefPtr<SpeakerManagerService> service =
+    SpeakerManagerService::GetSpeakerManagerService();
+  if (service) {
+    service->Notify();
+  }
+  return true;
+#endif
+  return false;
+}
+
 static CancelableTask* sFirstIdleTask;
 
 static void FirstIdle(void)
@@ -849,6 +866,22 @@ bool
 ContentChild::DeallocPIndexedDBChild(PIndexedDBChild* aActor)
 {
   delete aActor;
+  return true;
+}
+
+asmjscache::PAsmJSCacheEntryChild*
+ContentChild::AllocPAsmJSCacheEntryChild(const asmjscache::OpenMode& aOpenMode,
+                                         const int64_t& aSizeToWrite,
+                                         const IPC::Principal& aPrincipal)
+{
+  NS_NOTREACHED("Should never get here!");
+  return nullptr;
+}
+
+bool
+ContentChild::DeallocPAsmJSCacheEntryChild(PAsmJSCacheEntryChild* aActor)
+{
+  asmjscache::DeallocEntryChild(aActor);
   return true;
 }
 
@@ -1278,6 +1311,11 @@ ContentChild::RecvActivateA11y()
 bool
 ContentChild::RecvGarbageCollect()
 {
+    // Rebroadcast the "child-gc-request" so that workers will GC.
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+        obs->NotifyObservers(nullptr, "child-gc-request", nullptr);
+    }
     nsJSContext::GarbageCollectNow(JS::gcreason::DOM_IPC);
     return true;
 }
@@ -1285,7 +1323,11 @@ ContentChild::RecvGarbageCollect()
 bool
 ContentChild::RecvCycleCollect()
 {
-    nsJSContext::GarbageCollectNow(JS::gcreason::DOM_IPC);
+    // Rebroadcast the "child-cc-request" so that workers will CC.
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+        obs->NotifyObservers(nullptr, "child-cc-request", nullptr);
+    }
     nsJSContext::CycleCollectNow();
     return true;
 }
@@ -1368,12 +1410,13 @@ ContentChild::RecvFileSystemUpdate(const nsString& aFsName,
                                    const int32_t& aState,
                                    const int32_t& aMountGeneration,
                                    const bool& aIsMediaPresent,
-                                   const bool& aIsSharing)
+                                   const bool& aIsSharing,
+                                   const bool& aIsFormatting)
 {
 #ifdef MOZ_WIDGET_GONK
     nsRefPtr<nsVolume> volume = new nsVolume(aFsName, aVolumeName, aState,
                                              aMountGeneration, aIsMediaPresent,
-                                             aIsSharing);
+                                             aIsSharing, aIsFormatting);
 
     nsRefPtr<nsVolumeService> vs = nsVolumeService::GetSingleton();
     if (vs) {
@@ -1387,6 +1430,7 @@ ContentChild::RecvFileSystemUpdate(const nsString& aFsName,
     unused << aMountGeneration;
     unused << aIsMediaPresent;
     unused << aIsSharing;
+    unused << aIsFormatting;
 #endif
     return true;
 }

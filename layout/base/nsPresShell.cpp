@@ -23,13 +23,13 @@
 #endif
 #include "prlog.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
-#include "mozilla/Util.h"
 #include <algorithm>
 
 #ifdef XP_WIN
@@ -40,6 +40,7 @@
 #include "nsPresContext.h"
 #include "nsIContent.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/ShadowRoot.h"
 #include "nsIDocument.h"
 #include "nsCSSStyleSheet.h"
 #include "nsAnimationManager.h"
@@ -159,6 +160,7 @@
 #include "nsIScreenManager.h"
 #include "nsPlaceholderFrame.h"
 #include "nsTransitionManager.h"
+#include "ChildIterator.h"
 #include "RestyleManager.h"
 #include "nsIDOMHTMLElement.h"
 #include "nsIDragSession.h"
@@ -1915,31 +1917,24 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight)
   // reflow... If that's the case, and aWidth or aHeight is unconstrained,
   // ignore them altogether.
   nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-
   if (!rootFrame && aHeight == NS_UNCONSTRAINEDSIZE) {
     // We can't do the work needed for SizeToContent without a root
     // frame, and we want to return before setting the visible area.
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  nsRefPtr<nsViewManager> viewManagerDeathGrip = mViewManager;
-  // Take this ref after viewManager so it'll make sure to go away first
-  nsCOMPtr<nsIPresShell> kungFuDeathGrip(this);
-
-  if (!mIsDestroying && !mResizeEvent.IsPending() &&
-      !mAsyncResizeTimerIsActive) {
-    FireBeforeResizeEvent();
-  }
-
   mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
 
-  // There isn't anything useful we can do if the initial reflow hasn't happened
-  rootFrame = mFrameConstructor->GetRootFrame();
-  if (!rootFrame)
+  // There isn't anything useful we can do if the initial reflow hasn't happened.
+  if (!rootFrame) {
     return NS_OK;
+  }
 
-  if (!GetPresContext()->SupressingResizeReflow())
-  {
+  nsRefPtr<nsViewManager> viewManagerDeathGrip = mViewManager;
+  // Take this ref after viewManager so it'll make sure to go away first.
+  nsCOMPtr<nsIPresShell> kungFuDeathGrip(this);
+
+  if (!GetPresContext()->SupressingResizeReflow()) {
     // Have to make sure that the content notifications are flushed before we
     // start messing with the frame model; otherwise we can get content doubling.
     mDocument->FlushPendingNotifications(Flush_ContentAndNotify);
@@ -2001,22 +1996,6 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight)
   }
 
   return NS_OK; //XXX this needs to be real. MMP
-}
-
-void
-PresShell::FireBeforeResizeEvent()
-{
-  if (mIsDocumentGone)
-    return;
-
-  // Send beforeresize event from here.
-  WidgetEvent event(true, NS_BEFORERESIZE_EVENT);
-
-  nsPIDOMWindow *window = mDocument->GetWindow();
-  if (window) {
-    nsCOMPtr<nsIPresShell> kungFuDeathGrip(this);
-    nsEventDispatcher::Dispatch(window, mPresContext, &event);
-  }
 }
 
 void
@@ -4209,8 +4188,13 @@ PresShell::ContentAppended(nsIDocument *aDocument,
   // Call this here so it only happens for real content mutations and
   // not cases when the frame constructor calls its own methods to force
   // frame reconstruction.
-  mPresContext->RestyleManager()->
-    RestyleForAppend(aContainer->AsElement(), aFirstNewContent);
+  if (aContainer->IsElement()) {
+    // Ensure the container is an element before trying to restyle
+    // because it can be the case that the container is a ShadowRoot
+    // which is a document fragment.
+    mPresContext->RestyleManager()->
+      RestyleForAppend(aContainer->AsElement(), aFirstNewContent);
+  }
 
   mFrameConstructor->ContentAppended(aContainer, aFirstNewContent, true);
 
@@ -4240,7 +4224,10 @@ PresShell::ContentInserted(nsIDocument* aDocument,
   // Call this here so it only happens for real content mutations and
   // not cases when the frame constructor calls its own methods to force
   // frame reconstruction.
-  if (aContainer) {
+  if (aContainer && aContainer->IsElement()) {
+    // Ensure the container is an element before trying to restyle
+    // because it can be the case that the container is a ShadowRoot
+    // which is a document fragment.
     mPresContext->RestyleManager()->
       RestyleForInsertOrChange(aContainer->AsElement(), aChild);
   }
@@ -5726,6 +5713,22 @@ private:
 };
 
 void
+PresShell::RestyleShadowRoot(ShadowRoot* aShadowRoot)
+{
+  // Mark the children of the ShadowRoot as style changed but not
+  // the ShadowRoot itself because it is a document fragment and does not
+  // have a frame.
+  ExplicitChildIterator iterator(aShadowRoot);
+  for (nsIContent* child = iterator.GetNextChild();
+       child;
+       child = iterator.GetNextChild()) {
+    if (child->IsElement()) {
+      mChangedScopeStyleRoots.AppendElement(child->AsElement());
+    }
+  }
+}
+
+void
 PresShell::Paint(nsView*        aViewToPaint,
                  const nsRegion& aDirtyRegion,
                  uint32_t        aFlags)
@@ -6810,36 +6813,6 @@ PresShell::HandleEventWithTarget(WidgetEvent* aEvent, nsIFrame* aFrame,
   return rv;
 }
 
-static bool CanHandleContextMenuEvent(WidgetMouseEvent* aMouseEvent,
-                                      nsIFrame* aFrame)
-{
-#if defined(XP_MACOSX) && defined(MOZ_XUL)
-  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
-  if (pm) {
-    nsIFrame* popupFrame = pm->GetTopPopup(ePopupTypeMenu);
-    if (popupFrame) {
-      // context menus should not be opened while another menu is open on Mac,
-      // so return false so that the event is not fired.
-      if (aMouseEvent->context == WidgetMouseEvent::eContextMenuKey) {
-        return false;
-      } else if (aMouseEvent->widget) {
-         nsWindowType windowType;
-         aMouseEvent->widget->GetWindowType(windowType);
-         if (windowType == eWindowType_popup) {
-           for (nsIFrame* current = aFrame; current;
-                current = nsLayoutUtils::GetCrossDocParentFrame(current)) {
-             if (current->GetType() == nsGkAtoms::menuPopupFrame) {
-               return false;
-             }
-           }
-         }
-      }
-    }
-  }
-#endif
-  return true;
-}
-
 nsresult
 PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
 {
@@ -7015,9 +6988,6 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent, nsEventStatus* aStatus)
 
     if (aEvent->message == NS_CONTEXTMENU) {
       WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
-      if (!CanHandleContextMenuEvent(mouseEvent, GetCurrentEventFrame())) {
-        return NS_OK;
-      }
       if (mouseEvent->context == WidgetMouseEvent::eContextMenuKey &&
           !AdjustContextMenuKeyEvent(mouseEvent)) {
         return NS_OK;
@@ -8203,6 +8173,9 @@ PresShell::DoVerifyReflow()
 }
 #endif
 
+// used with Telemetry metrics
+#define NS_LONG_REFLOW_TIME_MS    5000
+
 bool
 PresShell::ProcessReflowCommands(bool aInterruptible)
 {
@@ -8295,6 +8268,9 @@ PresShell::ProcessReflowCommands(bool aInterruptible)
   }
 
   if (mDocument->GetRootElement()) {
+    TimeDuration elapsed = TimeStamp::Now() - timerStart;
+    int32_t intElapsed = int32_t(elapsed.ToMilliseconds());
+
     Telemetry::ID id;
     if (mDocument->GetRootElement()->IsXUL()) {
       id = mIsActive
@@ -8302,10 +8278,14 @@ PresShell::ProcessReflowCommands(bool aInterruptible)
         : Telemetry::XUL_BACKGROUND_REFLOW_MS;
     } else {
       id = mIsActive
-        ? Telemetry::HTML_FOREGROUND_REFLOW_MS
-        : Telemetry::HTML_BACKGROUND_REFLOW_MS;
+        ? Telemetry::HTML_FOREGROUND_REFLOW_MS_2
+        : Telemetry::HTML_BACKGROUND_REFLOW_MS_2;
     }
-    Telemetry::AccumulateTimeDelta(id, timerStart);
+    Telemetry::Accumulate(id, intElapsed);
+    if (intElapsed > NS_LONG_REFLOW_TIME_MS) {
+      Telemetry::Accumulate(Telemetry::LONG_REFLOW_INTERRUPTIBLE,
+                            aInterruptible ? 1 : 0);
+    }
   }
 
   return !interrupted;

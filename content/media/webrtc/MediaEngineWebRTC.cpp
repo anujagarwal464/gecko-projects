@@ -43,7 +43,7 @@ GetUserMediaLog()
 
 namespace mozilla {
 #ifndef MOZ_B2G_CAMERA
-MediaEngineWebRTC::MediaEngineWebRTC()
+MediaEngineWebRTC::MediaEngineWebRTC(MediaEnginePrefs &aPrefs)
   : mMutex("mozilla::MediaEngineWebRTC")
   , mVideoEngine(nullptr)
   , mVoiceEngine(nullptr)
@@ -56,8 +56,10 @@ MediaEngineWebRTC::MediaEngineWebRTC()
   if (compMgr) {
     compMgr->IsContractIDRegistered(NS_TABSOURCESERVICE_CONTRACTID, &mHasTabVideoSource);
   }
-  mLoadMonitor = new LoadMonitor();
-  mLoadMonitor->Init(mLoadMonitor);
+  if (aPrefs.mLoadAdapt) {
+      mLoadMonitor = new LoadMonitor();
+      mLoadMonitor->Init(mLoadMonitor);
+  }
 }
 #endif
 
@@ -99,7 +101,7 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
       // We've already seen this device, just append.
       aVSources->AppendElement(vSource.get());
     } else {
-      vSource = new MediaEngineWebRTCVideoSource(mCameraManager, i, mWindowId);
+      vSource = new MediaEngineWebRTCVideoSource(mCameraManager, i);
       mVideoSources.Put(uuid, vSource); // Hashtable takes ownership.
       aVSources->AppendElement(vSource);
     }
@@ -359,7 +361,8 @@ MediaEngineWebRTC::Shutdown()
   mVideoEngine = nullptr;
   mVoiceEngine = nullptr;
 
-  mLoadMonitor->Shutdown();
+  if (mLoadMonitor)
+    mLoadMonitor->Shutdown();
 }
 
 }

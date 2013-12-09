@@ -20,6 +20,7 @@ Cu.import("resource://gre/modules/PermissionPromptHelper.jsm");
 Cu.import("resource://gre/modules/ContactService.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource://gre/modules/SpatialNavigation.jsm");
+Cu.import("resource://gre/modules/UITelemetry.jsm");
 
 #ifdef ACCESSIBILITY
 Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
@@ -273,6 +274,7 @@ var BrowserApp = {
 
     Services.androidBridge.browserApp = this;
 
+    Services.obs.addObserver(this, "Locale:Changed", false);
     Services.obs.addObserver(this, "Tab:Load", false);
     Services.obs.addObserver(this, "Tab:Selected", false);
     Services.obs.addObserver(this, "Tab:Closed", false);
@@ -336,6 +338,7 @@ var BrowserApp = {
     DesktopUserAgent.init();
     Distribution.init();
     Tabs.init();
+    UITelemetry.init();
 #ifdef ACCESSIBILITY
     AccessFu.attach(window);
 #endif
@@ -406,6 +409,14 @@ var BrowserApp = {
       return savedmstone ? "upgrade" : "new";
     }
     return "";
+  },
+
+  /**
+   * Pass this a locale string, such as "fr" or "es_ES".
+   */
+  setLocale: function (locale) {
+    console.log("browser.js: requesting locale set: " + locale);
+    sendMessageToJava({ type: "Locale:Set", locale: locale });
   },
 
   initContextMenu: function ba_initContextMenu() {
@@ -781,7 +792,6 @@ var BrowserApp = {
     let tab = this.getTabForBrowser(aBrowser);
     if (tab) {
       if (!tab.aboutHomePage) tab.aboutHomePage = ("aboutHomePage" in aParams) ? aParams.aboutHomePage : "";
-      if ("showProgress" in aParams) tab.showProgress = aParams.showProgress;
       if ("userSearch" in aParams) tab.userSearch = aParams.userSearch;
     }
 
@@ -1392,10 +1402,6 @@ var BrowserApp = {
           }
         }
 
-        // Don't show progress throbber for about:home or about:reader
-        if (!shouldShowProgress(url))
-          params.showProgress = false;
-
         if (data.newTab) {
           this.addTab(url, params);
         } else {
@@ -1497,6 +1503,13 @@ var BrowserApp = {
 
       case "nsPref:changed":
         this.notifyPrefObservers(aData);
+        break;
+
+      case "Locale:Changed":
+        // TODO: do we need to be more nuanced here -- e.g., checking for the
+        // OS locale -- or should it always be false on Fennec?
+        Services.prefs.setBoolPref("intl.locale.matchOS", false);
+        Services.prefs.setCharPref("general.useragent.locale", aData);
         break;
 
       default:
@@ -2582,7 +2595,6 @@ function Tab(aURL, aParams) {
   this.browser = null;
   this.id = 0;
   this.lastTouchedAt = Date.now();
-  this.showProgress = true;
   this._zoom = 1.0;
   this._drawZoom = 1.0;
   this._fixedMarginLeft = 0;
@@ -2737,9 +2749,6 @@ Tab.prototype = {
       let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
       let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
       let charset = "charset" in aParams ? aParams.charset : null;
-
-      // This determines whether or not we show the progress throbber in the urlbar
-      this.showProgress = "showProgress" in aParams ? aParams.showProgress : true;
 
       // The search term the user entered to load the current URL
       this.userSearch = "userSearch" in aParams ? aParams.userSearch : "";
@@ -3720,11 +3729,6 @@ Tab.prototype = {
           this.browser.feeds = null;
       }
 
-      // Check to see if we restoring the content from a previous presentation (session)
-      // since there should be no real network activity
-      let restoring = aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING;
-      let showProgress = restoring ? false : this.showProgress;
-
       // true if the page loaded successfully (i.e., no 404s or other errors)
       let success = false; 
       let uri = "";
@@ -3739,6 +3743,11 @@ Tab.prototype = {
         success = aRequest.QueryInterface(Components.interfaces.nsIHttpChannel).requestSucceeded;
       } catch (e) { }
 
+      // Check to see if we restoring the content from a previous presentation (session)
+      // since there should be no real network activity
+      let restoring = aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING;
+      let showProgress = restoring ? false : shouldShowProgress(uri);
+
       let message = {
         type: "Content:StateChange",
         tabID: this.id,
@@ -3748,9 +3757,6 @@ Tab.prototype = {
         success: success
       };
       sendMessageToJava(message);
-
-      // Reset showProgress after state change
-      this.showProgress = true;
     }
   },
 
@@ -4277,7 +4283,9 @@ var BrowserEventHandler = {
     if (closest) {
       let uri = this._getLinkURI(closest);
       if (uri) {
-        Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+        try {
+          Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+        } catch (e) {}
       }
       this._doTapHighlight(closest);
     }
@@ -4386,11 +4394,16 @@ var BrowserEventHandler = {
               element = ElementTouchHelper.anyElementFromPoint(x, y);
             }
 
+            // Was the element already focused before it was clicked?
+            let isFocused = (element == BrowserApp.getFocusedInput(BrowserApp.selectedBrowser));
+
             this._sendMouseEvent("mousemove", element, x, y);
             this._sendMouseEvent("mousedown", element, x, y);
             this._sendMouseEvent("mouseup",   element, x, y);
 
-            SelectionHandler.attachCaret(element);
+            // If the element was previously focused, show the caret attached to it.
+            if (isFocused)
+              SelectionHandler.attachCaret(element);
 
             // scrollToFocusedInput does its own checks to find out if an element should be zoomed into
             BrowserApp.scrollToFocusedInput(BrowserApp.selectedBrowser);
@@ -6618,7 +6631,27 @@ var SearchEngines = {
 
     let filter = {
       matches: function (aElement) {
-        return (aElement.form && NativeWindow.contextmenus.textContext.matches(aElement));
+        // Copied from body of isTargetAKeywordField function in nsContextMenu.js
+        if(!(aElement instanceof HTMLInputElement))
+          return false;
+        let form = aElement.form;
+        if (!form || aElement.type == "password")
+          return false;
+
+        let method = form.method.toUpperCase();
+
+        // These are the following types of forms we can create keywords for:
+        //
+        // method    encoding type        can create keyword
+        // GET       *                                   YES
+        //           *                                   YES
+        // POST      *                                   YES
+        // POST      application/x-www-form-urlencoded   YES
+        // POST      text/plain                          NO ( a little tricky to do)
+        // POST      multipart/form-data                 NO
+        // POST      everything else                     YES
+        return (method == "GET" || method == "") ||
+               (form.enctype != "text/plain") && (form.enctype != "multipart/form-data");
       }
     };
     SelectionHandler.actions.SEARCH_ADD = {
@@ -6696,7 +6729,9 @@ var SearchEngines = {
     let searchURI = Services.search.defaultEngine.getSubmission("dummy").uri;
     let callbacks = window.QueryInterface(Ci.nsIInterfaceRequestor)
                           .getInterface(Ci.nsIWebNavigation).QueryInterface(Ci.nsILoadContext);
-    connector.speculativeConnect(searchURI, callbacks);
+    try {
+      connector.speculativeConnect(searchURI, callbacks);
+    } catch (e) {}
   },
 
   _handleSearchEnginesGetAll: function _handleSearchEnginesGetAll(rv) {
@@ -7728,6 +7763,7 @@ let Reader = {
     let browser = document.createElement("browser");
     browser.setAttribute("type", "content");
     browser.setAttribute("collapsed", "true");
+    browser.setAttribute("disablehistory", "true");
 
     document.documentElement.appendChild(browser);
     browser.stop();
@@ -8097,34 +8133,63 @@ var Distribution = {
 };
 
 var Tabs = {
-  // This object provides functions to manage a most-recently-used list
-  // of tabs. Each tab has a timestamp associated with it that indicates when
-  // it was last touched.
-
   _enableTabExpiration: false,
+  _domains: new Set(),
 
   init: function() {
-    // on low-memory platforms, always allow tab expiration. on high-mem
-    // platforms, allow it to be turned on once we hit a low-mem situation
+    // On low-memory platforms, always allow tab expiration. On high-mem
+    // platforms, allow it to be turned on once we hit a low-mem situation.
     if (BrowserApp.isOnLowMemoryPlatform) {
       this._enableTabExpiration = true;
     } else {
       Services.obs.addObserver(this, "memory-pressure", false);
     }
+
+    Services.obs.addObserver(this, "Session:Prefetch", false);
+
+    BrowserApp.deck.addEventListener("pageshow", this, false);
   },
 
   uninit: function() {
     if (!this._enableTabExpiration) {
-      // if _enableTabExpiration is true then we won't have this
+      // If _enableTabExpiration is true then we won't have this
       // observer registered any more.
       Services.obs.removeObserver(this, "memory-pressure");
     }
+
+    Services.obs.removeObserver(this, "Session:Prefetch");
+
+    BrowserApp.deck.removeEventListener("pageshow", this);
   },
 
   observe: function(aSubject, aTopic, aData) {
-    if (aTopic == "memory-pressure" && aData != "heap-minimize") {
-      this._enableTabExpiration = true;
-      Services.obs.removeObserver(this, "memory-pressure");
+    switch (aTopic) {
+      case "memory-pressure":
+        if (aData != "heap-minimize") {
+          this._enableTabExpiration = true;
+          Services.obs.removeObserver(this, "memory-pressure");
+        }
+        break;
+      case "Session:Prefetch":
+        if (aData) {
+          let uri = Services.io.newURI(aData, null, null);
+          if (uri && !this._domains.has(uri.host)) {
+            try {
+              Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+              this._domains.add(uri.host);
+            } catch (e) {}
+          }
+        }
+        break;
+    }
+  },
+
+  handleEvent: function(aEvent) {
+    switch (aEvent.type) {
+      case "pageshow":
+        // Clear the domain cache whenever a page get loaded into any browser.
+        this._domains.clear();
+        break;
     }
   },
 
@@ -8132,30 +8197,32 @@ var Tabs = {
     aTab.lastTouchedAt = Date.now();
   },
 
+  // Manage the most-recently-used list of tabs. Each tab has a timestamp
+  // associated with it that indicates when it was last touched.
   expireLruTab: function() {
     if (!this._enableTabExpiration) {
       return false;
     }
     let expireTimeMs = Services.prefs.getIntPref("browser.tabs.expireTime") * 1000;
     if (expireTimeMs < 0) {
-      // this behaviour is disabled
+      // This behaviour is disabled.
       return false;
     }
     let tabs = BrowserApp.tabs;
     let selected = BrowserApp.selectedTab;
     let lruTab = null;
-    // find the least recently used non-zombie tab
+    // Find the least recently used non-zombie tab.
     for (let i = 0; i < tabs.length; i++) {
       if (tabs[i] == selected || tabs[i].browser.__SS_restore) {
-        // this tab is selected or already a zombie, skip it
+        // This tab is selected or already a zombie, skip it.
         continue;
       }
       if (lruTab == null || tabs[i].lastTouchedAt < lruTab.lastTouchedAt) {
         lruTab = tabs[i];
       }
     }
-    // if the tab was last touched more than browser.tabs.expireTime seconds ago,
-    // zombify it
+    // If the tab was last touched more than browser.tabs.expireTime seconds ago,
+    // zombify it.
     if (lruTab) {
       let tabAgeMs = Date.now() - lruTab.lastTouchedAt;
       if (tabAgeMs > expireTimeMs) {
@@ -8167,7 +8234,7 @@ var Tabs = {
     return false;
   },
 
-  // for debugging
+  // For debugging
   dump: function(aPrefix) {
     let tabs = BrowserApp.tabs;
     for (let i = 0; i < tabs.length; i++) {

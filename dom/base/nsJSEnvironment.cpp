@@ -79,6 +79,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/asmjscache/AsmJSCache.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
 #include "mozilla/ContentEvents.h"
@@ -1329,9 +1330,7 @@ nsJSContext::AddSupportsPrimitiveTojsvals(nsISupports *aArg, JS::Value *aArgv)
       // cast is probably safe since wchar_t and jschar are expected
       // to be equivalent; both unsigned 16-bit entities
       JSString *str =
-        ::JS_NewUCStringCopyN(cx,
-                              reinterpret_cast<const jschar *>(data.get()),
-                              data.Length());
+        ::JS_NewUCStringCopyN(cx, data.get(), data.Length());
       NS_ENSURE_TRUE(str, NS_ERROR_OUT_OF_MEMORY);
 
       *aArgv = STRING_TO_JSVAL(str);
@@ -2877,6 +2876,16 @@ nsJSContext::EnsureStatics()
     InstanceClassHasProtoAtDepth
   };
   SetDOMCallbacks(sRuntime, &DOMcallbacks);
+
+  // Set up the asm.js cache callbacks
+  static JS::AsmJSCacheOps asmJSCacheOps = {
+    asmjscache::OpenEntryForRead,
+    asmjscache::CloseEntryForRead,
+    asmjscache::OpenEntryForWrite,
+    asmjscache::CloseEntryForWrite,
+    asmjscache::GetBuildId
+  };
+  JS::SetAsmJSCacheOps(sRuntime, &asmJSCacheOps);
 
   // Set these global xpconnect options...
   Preferences::RegisterCallbackAndCall(ReportAllJSExceptionsPrefChangedCallback,

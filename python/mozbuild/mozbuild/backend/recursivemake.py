@@ -652,6 +652,18 @@ class RecursiveMakeBackend(CommonBackend):
                         '#ifdef _WINDOWS_\n'
                         '#error "%(cppfile)s included windows.h"\n'
                         "#endif")
+                includeTemplate += (
+                    '\n'
+                    '#ifdef PL_ARENA_CONST_ALIGN_MASK\n'
+                    '#error "%(cppfile)s uses PL_ARENA_CONST_ALIGN_MASK, '
+                    'so it cannot be built in unified mode."\n'
+                    '#undef PL_ARENA_CONST_ALIGN_MASK\n'
+                    '#endif\n'
+                    '#ifdef FORCE_PR_LOG\n'
+                    '#error "%(cppfile)s forces NSPR logging, '
+                    'so it cannot be built in unified mode."\n'
+                    '#undef FORCE_PR_LOG\n'
+                    '#endif')
                 f.write('\n'.join(includeTemplate % { "cppfile": s } for
                                   s in source_filenames))
 

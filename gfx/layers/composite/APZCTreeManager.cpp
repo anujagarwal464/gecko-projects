@@ -189,13 +189,22 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
         // Let this apzc be the parent of other controllers when we recurse downwards
         aParent = apzc;
 
-        if (newApzc && apzc->IsRootForLayersId()) {
-          // If we just created a new apzc that is the root for its layers ID, then
-          // we need to update its zoom constraints which might have arrived before this
-          // was created
+        if (newApzc) {
           bool allowZoom;
           CSSToScreenScale minZoom, maxZoom;
-          if (state->mController->GetRootZoomConstraints(&allowZoom, &minZoom, &maxZoom)) {
+          if (apzc->IsRootForLayersId()) {
+            // If we just created a new apzc that is the root for its layers ID, then
+            // we need to update its zoom constraints which might have arrived before this
+            // was created
+            if (state->mController->GetRootZoomConstraints(&allowZoom, &minZoom, &maxZoom)) {
+              apzc->UpdateZoomConstraints(allowZoom, minZoom, maxZoom);
+            }
+          } else {
+            // For an apzc that is not the root for its layers ID, we give it the
+            // same zoom constraints as its parent. This ensures that if e.g.
+            // user-scalable=no was specified, none of the APZCs allow double-tap
+            // to zoom.
+            apzc->GetParent()->GetZoomConstraints(&allowZoom, &minZoom, &maxZoom);
             apzc->UpdateZoomConstraints(allowZoom, minZoom, maxZoom);
           }
         }
@@ -273,8 +282,11 @@ APZCTreeManager::ReceiveInputEvent(const InputData& aEvent,
       if (multiTouchInput.mType == MultiTouchInput::MULTITOUCH_START) {
         mTouchCount++;
         mApzcForInputBlock = GetTargetAPZC(ScreenPoint(multiTouchInput.mTouches[0].mScreenPoint));
-        if (multiTouchInput.mTouches.Length() == 1)  // pan, not pinch
-          mApzcForInputBlock = AdjustForScrollGrab(mApzcForInputBlock);
+        if (multiTouchInput.mTouches.Length() == 1) {
+          // If we have one touch point, this might be the start of a pan.
+          // Prepare for possible overscroll handoff.
+          BuildOverscrollHandoffChain(mApzcForInputBlock);
+        }
         for (size_t i = 1; i < multiTouchInput.mTouches.Length(); i++) {
           nsRefPtr<AsyncPanZoomController> apzc2 = GetTargetAPZC(ScreenPoint(multiTouchInput.mTouches[i].mScreenPoint));
           mApzcForInputBlock = CommonAncestor(mApzcForInputBlock.get(), apzc2.get());
@@ -353,8 +365,11 @@ APZCTreeManager::GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent,
                                         ScreenPoint aPoint)
 {
   nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aPoint);
-  if (aEvent.touches.Length() == 1)  // pan, not pinch
-    apzc = AdjustForScrollGrab(apzc);
+  if (aEvent.touches.Length() == 1) {
+    // If we have one touch point, this might be the start of a pan.
+    // Prepare for possible overscroll handoff.
+    BuildOverscrollHandoffChain(apzc);
+  }
   gfx3DMatrix transformToApzc, transformToGecko;
   // Reset the cached apz transform
   mCachedTransformToApzcForInputBlock = transformToApzc;
@@ -579,8 +594,28 @@ APZCTreeManager::UpdateZoomConstraints(const ScrollableLayerGuid& aGuid,
                                        const CSSToScreenScale& aMaxScale)
 {
   nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
-  if (apzc) {
-    apzc->UpdateZoomConstraints(aAllowZoom, aMinScale, aMaxScale);
+  // For a given layers id, non-root APZCs inherit the zoom constraints
+  // of their root.
+  if (apzc && apzc->IsRootForLayersId()) {
+    MonitorAutoLock lock(mTreeLock);
+    UpdateZoomConstraintsRecursively(apzc.get(), aAllowZoom, aMinScale, aMaxScale);
+  }
+}
+
+void
+APZCTreeManager::UpdateZoomConstraintsRecursively(AsyncPanZoomController* aApzc,
+                                                  bool aAllowZoom,
+                                                  const CSSToScreenScale& aMinScale,
+                                                  const CSSToScreenScale& aMaxScale)
+{
+  mTreeLock.AssertCurrentThreadOwns();
+
+  aApzc->UpdateZoomConstraints(aAllowZoom, aMinScale, aMaxScale);
+  for (AsyncPanZoomController* child = aApzc->GetLastChild(); child; child = child->GetPrevSibling()) {
+    // We can have subtrees with their own layers id - leave those alone.
+    if (!child->IsRootForLayersId()) {
+      UpdateZoomConstraintsRecursively(child, aAllowZoom, aMinScale, aMaxScale);
+    }
   }
 }
 
@@ -620,14 +655,11 @@ APZCTreeManager::ClearTree()
 }
 
 void
-APZCTreeManager::HandleOverscroll(AsyncPanZoomController* aPrev, ScreenPoint aStartPoint, ScreenPoint aEndPoint,
-                                  int aOverscrollHandoffChainIndex)
+APZCTreeManager::DispatchScroll(AsyncPanZoomController* aPrev, ScreenPoint aStartPoint, ScreenPoint aEndPoint,
+                                uint32_t aOverscrollHandoffChainIndex)
 {
-  // Increment the current index into the chain of APZCs that handle overscroll
-  // for the current pan gesture. Since we are in overscroll, we have scrolled
-  // the previous APZC as far as possible, and will now hand off the remaining
-  // scroll to the next one.
-  ++aOverscrollHandoffChainIndex;
+  // If we have reached the end of the overscroll handoff chain, there is
+  // nothing more to scroll, so we ignore the rest of the pan gesture.
   if (aOverscrollHandoffChainIndex >= mOverscrollHandoffChain.length()) {
     // Nothing more to scroll - ignore the rest of the pan gesture.
     return;
@@ -637,19 +669,28 @@ APZCTreeManager::HandleOverscroll(AsyncPanZoomController* aPrev, ScreenPoint aSt
   if (next == nullptr)
     return;
 
-  gfx3DMatrix transformToApzc;
-  gfx3DMatrix transformToGecko;  // ignored
+  // Convert the start and end points from |aPrev|'s coordinate space to
+  // |next|'s coordinate space. Since |aPrev| may be the same as |next|
+  // (if |aPrev| is the APZC that is initiating the scroll and there is no
+  // scroll grabbing to grab the scroll from it), don't bother doing the
+  // transformations in that case.
+  if (next != aPrev) {
+    gfx3DMatrix transformToApzc;
+    gfx3DMatrix transformToGecko;  // ignored
 
-  // Convert start and end points to untransformed screen coordinates.
-  GetInputTransforms(aPrev, transformToApzc, transformToGecko);
-  ApplyTransform(&aStartPoint, transformToApzc.Inverse());
-  ApplyTransform(&aEndPoint, transformToApzc.Inverse());
+    // Convert start and end points to untransformed screen coordinates.
+    GetInputTransforms(aPrev, transformToApzc, transformToGecko);
+    ApplyTransform(&aStartPoint, transformToApzc.Inverse());
+    ApplyTransform(&aEndPoint, transformToApzc.Inverse());
 
-  // Convert start and end points to next's transformed screen coordinates.
-  GetInputTransforms(next, transformToApzc, transformToGecko);
-  ApplyTransform(&aStartPoint, transformToApzc);
-  ApplyTransform(&aEndPoint, transformToApzc);
+    // Convert start and end points to next's transformed screen coordinates.
+    GetInputTransforms(next, transformToApzc, transformToGecko);
+    ApplyTransform(&aStartPoint, transformToApzc);
+    ApplyTransform(&aEndPoint, transformToApzc);
+  }
 
+  // Scroll |next|. If this causes overscroll, it will call DispatchScroll()
+  // again with an incremented index.
   next->AttemptScroll(aStartPoint, aEndPoint, aOverscrollHandoffChainIndex);
 }
 
@@ -707,8 +748,8 @@ APZCTreeManager::GetTargetAPZC(const ScreenPoint& aPoint)
   return target.forget();
 }
 
-already_AddRefed<AsyncPanZoomController>
-APZCTreeManager::AdjustForScrollGrab(const nsRefPtr<AsyncPanZoomController>& aInitialTarget)
+void
+APZCTreeManager::BuildOverscrollHandoffChain(const nsRefPtr<AsyncPanZoomController>& aInitialTarget)
 {
   // Scroll grabbing is a mechanism that allows content to specify that
   // the initial target of a pan should be not the innermost scrollable
@@ -727,7 +768,7 @@ APZCTreeManager::AdjustForScrollGrab(const nsRefPtr<AsyncPanZoomController>& aIn
     if (!mOverscrollHandoffChain.append(apzc)) {
       NS_WARNING("Vector::append failed");
       mOverscrollHandoffChain.clear();
-      return nullptr;
+      return;
     }
   }
 
@@ -741,10 +782,6 @@ APZCTreeManager::AdjustForScrollGrab(const nsRefPtr<AsyncPanZoomController>& aIn
   // and users of 'scrollgrab' should not rely on this.)
   std::stable_sort(mOverscrollHandoffChain.begin(), mOverscrollHandoffChain.end(),
                    CompareByScrollPriority());
-
-  // The initial target is the first APZC in the handoff chain.
-  nsRefPtr<AsyncPanZoomController> result = mOverscrollHandoffChain.length() > 0 ? mOverscrollHandoffChain[0] : nullptr;
-  return result.forget();
 }
 
 void

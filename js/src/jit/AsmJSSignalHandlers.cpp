@@ -187,71 +187,6 @@ class AutoSetHandlingSignal
     }
 };
 
-// For platforms that install a single, process-wide signal handler (Unix and
-// Windows), the InstallSignalHandlersMutex prevents races between JSRuntimes
-// installing signal handlers.
-#if !defined(XP_MACOSX)
-# if defined(JS_THREADSAFE)
-#  include "jslock.h"
-
-namespace {
-
-class InstallSignalHandlersMutex
-{
-    PRLock *mutex_;
-
-  public:
-    InstallSignalHandlersMutex() {
-        mutex_ = PR_NewLock();
-        if (!mutex_)
-            MOZ_CRASH();
-    }
-    ~InstallSignalHandlersMutex() {
-        PR_DestroyLock(mutex_);
-    }
-    class Lock {
-        static bool sHandlersInstalled;
-      public:
-        Lock();
-        ~Lock();
-        bool handlersInstalled() const { return sHandlersInstalled; }
-        void setHandlersInstalled() { sHandlersInstalled = true; }
-    };
-} signalMutex;
-
-} /* anonymous namespace */
-
-bool InstallSignalHandlersMutex::Lock::sHandlersInstalled = false;
-
-InstallSignalHandlersMutex::Lock::Lock()
-{
-    PR_Lock(signalMutex.mutex_);
-}
-
-InstallSignalHandlersMutex::Lock::~Lock()
-{
-    PR_Unlock(signalMutex.mutex_);
-}
-# else  // JS_THREADSAFE
-namespace {
-
-struct InstallSignalHandlersMutex
-{
-    class Lock {
-        static bool sHandlersInstalled;
-      public:
-        Lock() { (void)this; }
-        bool handlersInstalled() const { return sHandlersInstalled; }
-        void setHandlersInstalled() { sHandlersInstalled = true; }
-    };
-};
-
-} /* anonymous namespace */
-
-bool InstallSignalHandlersMutex::Lock::sHandlersInstalled = false;
-# endif  // JS_THREADSAFE
-#endif   // !XP_MACOSX
-
 #if defined(JS_CPU_X64)
 template <class T>
 static void
@@ -747,7 +682,7 @@ static const mach_msg_id_t sExceptionId = 2405;
 // The choice of id here is arbitrary, the only constraint is that sQuitId != sExceptionId.
 static const mach_msg_id_t sQuitId = 42;
 
-void *
+void
 AsmJSMachExceptionHandlerThread(void *threadArg)
 {
     JSRuntime *rt = reinterpret_cast<JSRuntime*>(threadArg);
@@ -798,8 +733,6 @@ AsmJSMachExceptionHandlerThread(void *threadArg)
         mach_msg(&reply.Head, MACH_SEND_MSG, sizeof(reply), 0, MACH_PORT_NULL,
                  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
     }
-
-    return nullptr;
 }
 
 AsmJSMachExceptionHandler::AsmJSMachExceptionHandler()
@@ -840,7 +773,7 @@ AsmJSMachExceptionHandler::uninstall()
         }
 
         // Wait for the handler thread to complete before deallocating the port.
-        pthread_join(thread_, nullptr);
+        PR_JoinThread(thread_);
         thread_ = nullptr;
     }
     if (port_ != MACH_PORT_NULL) {
@@ -866,7 +799,9 @@ AsmJSMachExceptionHandler::install(JSRuntime *rt)
         goto error;
 
     // Create a thread to block on reading port_.
-    if (pthread_create(&thread_, nullptr, AsmJSMachExceptionHandlerThread, rt))
+    thread_ = PR_CreateThread(PR_USER_THREAD, AsmJSMachExceptionHandlerThread, rt,
+                              PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_JOINABLE_THREAD, 0);
+    if (!thread_)
         goto error;
 
     // Direct exceptions on this thread to port_ (and thus our handler thread).
@@ -993,6 +928,10 @@ AsmJSFaultHandler(int signum, siginfo_t *info, void *context)
 }
 #endif
 
+#if !defined(XP_MACOSX)
+static bool sHandlersInstalled = false;
+#endif
+
 bool
 js::EnsureAsmJSSignalHandlersInstalled(JSRuntime *rt)
 {
@@ -1005,8 +944,7 @@ js::EnsureAsmJSSignalHandlersInstalled(JSRuntime *rt)
 #else
     // Assume Windows or Unix. For these platforms, there is a single,
     // process-wide signal handler installed. Take care to only install it once.
-    InstallSignalHandlersMutex::Lock lock;
-    if (lock.handlersInstalled())
+    if (sHandlersInstalled)
         return true;
 
 # if defined(XP_WIN)
@@ -1024,7 +962,7 @@ js::EnsureAsmJSSignalHandlersInstalled(JSRuntime *rt)
         return false;
 # endif
 
-    lock.setHandlersInstalled();
+    sHandlersInstalled = true;
 #endif
     return true;
 }

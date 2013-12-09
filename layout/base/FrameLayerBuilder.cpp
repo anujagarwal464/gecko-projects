@@ -1420,8 +1420,17 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aAnimatedGeometryRoot
     // assume the caller of InvalidateThebesLayerContents has ensured
     // the area is invalidated in the widget.
   } else {
+    // Check whether the layer will be scrollable. This is used as a hint to
+    // influence whether tiled layers are used or not.
+    bool canScroll = false;
+    nsIFrame* animatedGeometryRootParent = aAnimatedGeometryRoot->GetParent();
+    if (animatedGeometryRootParent &&
+        animatedGeometryRootParent->GetType() == nsGkAtoms::scrollFrame) {
+      canScroll = true;
+    }
     // Create a new thebes layer
-    layer = mManager->CreateThebesLayer();
+    layer = mManager->CreateThebesLayerWithHint(canScroll ? LayerManager::SCROLLABLE :
+                                                            LayerManager::NONE);
     if (!layer)
       return nullptr;
     // Mark this layer as being used for Thebes-painting display items
@@ -1617,22 +1626,18 @@ ContainerState::FindFixedPosFrameForLayerData(const nsIFrame* aAnimatedGeometryR
                                               nsIntRegion* aVisibleRegion,
                                               bool* aIsSolidColorInVisibleRegion)
 {
-  if (mContainerFrame->GetParent()) {
-    // Viewports with displayports always get a layer created for the viewport
-    // frame. (See nsSubdocumentFrame::BuildDisplayList's calculation of
-    // needsOwnLayer.) The children of that layer are the ones that might
-    // have fixed-pos frame data. So if we're creating layers for children
-    // of a frame other than a viewport, there's nothing to do here.
-    return nullptr;
-  }
+  nsIFrame *viewport = mContainerFrame->PresContext()->PresShell()->GetRootFrame();
+
   // Viewports with no fixed-pos frames are not relevant.
-  if (!mContainerFrame->GetFirstChild(nsIFrame::kFixedList)) {
+  if (!viewport->GetFirstChild(nsIFrame::kFixedList)) {
     return nullptr;
   }
   nsRect displayPort;
   for (const nsIFrame* f = aAnimatedGeometryRoot; f; f = f->GetParent()) {
     if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(f, &displayPort)) {
-      displayPort += mContainerFrame->GetOffsetToCrossDoc(mContainerReferenceFrame);
+      // Display ports are relative to the viewport, convert it to be relative
+      // to our reference frame.
+      displayPort += viewport->GetOffsetToCrossDoc(mContainerReferenceFrame);
       nsIntRegion newVisibleRegion;
       newVisibleRegion.And(ScaleToOutsidePixels(displayPort, false),
                            aDrawRegion);

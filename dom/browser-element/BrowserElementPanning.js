@@ -115,9 +115,7 @@ const ContentPanning = {
   },
 
   observe: function cp_observe(subject, topic, data) {
-    if (topic === 'BEC:ShownModalPrompt') {
-      this._resetHover();
-    }
+    this._resetHover();
   },
 
   position: new Point(0 , 0),
@@ -601,8 +599,6 @@ const ContentPanning = {
     }
   }
 };
-
-ContentPanning.init();
 
 // Min/max velocity of kinetic panning. This is in pixels/millisecond.
 const kMinVelocity = 0.2;

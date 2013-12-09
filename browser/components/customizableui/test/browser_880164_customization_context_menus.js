@@ -72,6 +72,32 @@ let gTests = [
     teardown: null
   },
   {
+    desc: "Right-click on the searchbar and moving it to the menu and back should move the search-container instead.",
+    run: function() {
+      let searchbar = document.getElementById("searchbar");
+      gCustomizeMode.addToPanel(searchbar);
+      let placement = CustomizableUI.getPlacementOfWidget("search-container");
+      is(placement.area, CustomizableUI.AREA_PANEL, "Should be in panel");
+
+      let shownPanelPromise = promisePanelShown(window);
+      PanelUI.toggle({type: "command"});
+      yield shownPanelPromise;
+      let hiddenPanelPromise = promisePanelHidden(window);
+      PanelUI.toggle({type: "command"});
+      yield hiddenPanelPromise;
+
+      gCustomizeMode.addToToolbar(searchbar);
+      placement = CustomizableUI.getPlacementOfWidget("search-container");
+      is(placement.area, CustomizableUI.AREA_NAVBAR, "Should be in navbar");
+      gCustomizeMode.removeFromArea(searchbar);
+      placement = CustomizableUI.getPlacementOfWidget("search-container");
+      is(placement, null, "Should be in palette");
+      CustomizableUI.reset();
+      placement = CustomizableUI.getPlacementOfWidget("search-container");
+      is(placement.area, CustomizableUI.AREA_NAVBAR, "Should be in navbar");
+    }
+  },
+  {
     desc: "Right-click on an item within the menu panel should show a context menu with options to move it.",
     setup: null,
     run: function() {
@@ -215,6 +241,51 @@ let gTests = [
       this.otherWin = null;
     }
   },
+  {
+    desc: "Bug 945191 - Combined buttons show wrong context menu options when they are in the toolbar.",
+    setup: startCustomizing,
+    run: function () {
+      let contextMenu = document.getElementById("customizationPanelItemContextMenu");
+      let shownPromise = contextMenuShown(contextMenu);
+      let zoomControls = document.getElementById("wrapper-zoom-controls");
+      EventUtils.synthesizeMouse(zoomControls, 2, 2, {type: "contextmenu", button: 2});
+      yield shownPromise;
+      // Execute the command to move the item from the panel to the toolbar.
+      contextMenu.childNodes[0].doCommand();
+      let hiddenPromise = contextMenuHidden(contextMenu);
+      contextMenu.hidePopup();
+      yield hiddenPromise;
+      yield endCustomizing();
+
+      zoomControls = document.getElementById("zoom-controls");
+      is(zoomControls.parentNode.id, "nav-bar-customization-target", "Zoom-controls should be on the nav-bar");
+
+      contextMenu = document.getElementById("toolbar-context-menu");
+      shownPromise = contextMenuShown(contextMenu);
+      EventUtils.synthesizeMouse(zoomControls, 2, 2, {type: "contextmenu", button: 2});
+      yield shownPromise;
+
+      let expectedEntries = [
+        [".customize-context-addToPanel", true],
+        [".customize-context-removeFromToolbar", true],
+        ["---"]
+      ];
+      if (!isOSX) {
+        expectedEntries.push(["#toggle_toolbar-menubar", true]);
+      }
+      expectedEntries.push(
+        ["#toggle_PersonalToolbar", true],
+        ["---"],
+        [".viewCustomizeToolbar", true]
+      );
+      checkContextMenu(contextMenu, expectedEntries);
+
+      hiddenPromise = contextMenuHidden(contextMenu);
+      contextMenu.hidePopup();
+      yield hiddenPromise;
+    },
+    teardown: resetCustomization,
+  }
 ];
 
 function test() {

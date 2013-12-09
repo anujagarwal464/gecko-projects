@@ -64,6 +64,10 @@ class JS_FRIEND_API(Wrapper);
  * default implementation for the fundamental traps. It does, however, implement
  * the derived traps in terms of the fundamental ones. This allows consumers of
  * this class to define any custom behavior they want.
+ *
+ * Important: If you add a trap here, you should probably also add a Proxy::foo
+ * entry point with an AutoEnterPolicy. If you don't, you need an explicit
+ * override for the trap in SecurityWrapper. See bug 945826 comment 0.
  */
 class JS_FRIEND_API(BaseProxyHandler)
 {
@@ -174,6 +178,7 @@ class JS_FRIEND_API(BaseProxyHandler)
 
     /* See comment for weakmapKeyDelegateOp in js/Class.h. */
     virtual JSObject *weakmapKeyDelegate(JSObject *proxy);
+    virtual bool isScripted() { return false; }
 };
 
 /*
@@ -181,6 +186,10 @@ class JS_FRIEND_API(BaseProxyHandler)
  * reimplemented such that they forward their behavior to the target. This
  * allows consumers of this class to forward to another object as transparently
  * and efficiently as possible.
+ *
+ * Important: If you add a trap implementation here, you probably also need to
+ * add an override in CrossCompartmentWrapper. If you don't, you risk
+ * compartment mismatches. See bug 945826 comment 0.
  */
 class JS_PUBLIC_API(DirectProxyHandler) : public BaseProxyHandler
 {
@@ -235,7 +244,13 @@ class JS_PUBLIC_API(DirectProxyHandler) : public BaseProxyHandler
     virtual JSObject *weakmapKeyDelegate(JSObject *proxy);
 };
 
-/* Dispatch point for handlers that executes the appropriate C++ or scripted traps. */
+/*
+ * Dispatch point for handlers that executes the appropriate C++ or scripted traps.
+ *
+ * Important: All proxy traps need either (a) an AutoEnterPolicy in their
+ * Proxy::foo entry point below or (b) an override in SecurityWrapper. See bug
+ * 945826 comment 0.
+ */
 class Proxy
 {
   public:
@@ -307,6 +322,17 @@ inline bool IsProxyClass(const Class *clasp)
 inline bool IsProxy(JSObject *obj)
 {
     return IsProxyClass(GetObjectClass(obj));
+}
+
+BaseProxyHandler *
+GetProxyHandler(JSObject *obj);
+
+inline bool IsScriptedProxy(JSObject *obj)
+{
+    if (!IsProxy(obj))
+        return false;
+
+    return GetProxyHandler(obj)->isScripted();
 }
 
 /*

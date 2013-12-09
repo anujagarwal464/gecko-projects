@@ -24,6 +24,7 @@
 #include "nsDOMJSUtils.h"
 #include "nsIScriptSecurityManager.h"
 #include "mozilla/dom/PermissionMessageUtils.h"
+#include "nsContentPermissionHelper.h"
 #ifdef MOZ_B2G
 #include "nsIDOMDesktopNotification.h"
 #endif
@@ -267,9 +268,11 @@ NotificationPermissionRequest::Run()
     // Corresponding release occurs in DeallocPContentPermissionRequest.
     AddRef();
 
-    NS_NAMED_LITERAL_CSTRING(type, "desktop-notification");
-    NS_NAMED_LITERAL_CSTRING(access, "unused");
-    child->SendPContentPermissionRequestConstructor(this, type, access,
+    nsTArray<PermissionRequest> permArray;
+    permArray.AppendElement(PermissionRequest(
+                            NS_LITERAL_CSTRING("desktop-notification"),
+                            NS_LITERAL_CSTRING("unused")));
+    child->SendPContentPermissionRequestConstructor(this, permArray,
                                                     IPC::Principal(mPrincipal));
 
     Sendprompt();
@@ -342,17 +345,11 @@ NotificationPermissionRequest::CallCallback()
 }
 
 NS_IMETHODIMP
-NotificationPermissionRequest::GetAccess(nsACString& aAccess)
+NotificationPermissionRequest::GetTypes(nsIArray** aTypes)
 {
-  aAccess.AssignLiteral("unused");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-NotificationPermissionRequest::GetType(nsACString& aType)
-{
-  aType.AssignLiteral("desktop-notification");
-  return NS_OK;
+  return CreatePermissionArray(NS_LITERAL_CSTRING("desktop-notification"),
+                               NS_LITERAL_CSTRING("unused"),
+                               aTypes);
 }
 
 bool
@@ -734,9 +731,9 @@ void
 Notification::Close()
 {
   // Queue a task to close the notification.
-  nsCOMPtr<nsIRunnable> showNotificationTask =
+  nsCOMPtr<nsIRunnable> closeNotificationTask =
     new NotificationTask(this, NotificationTask::eClose);
-  NS_DispatchToMainThread(showNotificationTask);
+  NS_DispatchToMainThread(closeNotificationTask);
 }
 
 void
@@ -771,7 +768,9 @@ Notification::CloseInternal()
 nsresult
 Notification::GetOrigin(nsPIDOMWindow* aWindow, nsString& aOrigin)
 {
-  MOZ_ASSERT(aWindow);
+  if (!aWindow) {
+    return NS_ERROR_FAILURE;
+  }
   nsresult rv;
   nsIDocument* doc = aWindow->GetExtantDoc();
   NS_ENSURE_TRUE(doc, NS_ERROR_UNEXPECTED);

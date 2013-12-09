@@ -302,11 +302,12 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       let msg = { topic : topic,
                   message : message,
                   options : options };
-      // Remove previous queued message of same message type, only one message
-      // per message type is allowed in queue.
+      // Remove previous queued message with the same message type and client Id
+      // , only one message per (message type + client Id) is allowed in queue.
       let messageQueue = this.targetMessageQueue;
       for(let i = 0; i < messageQueue.length; i++) {
-        if (messageQueue[i].message === message) {
+        if (messageQueue[i].message === message &&
+            messageQueue[i].options.clientId === options.clientId) {
           messageQueue.splice(i, 1);
           break;
         }
@@ -727,6 +728,13 @@ RadioInterfaceLayer.prototype = {
     }
 
     throw Cr.NS_ERROR_NOT_AVAILABLE;
+  },
+
+  setMicrophoneMuted: function setMicrophoneMuted(muted) {
+    for (let clientId = 0; clientId < this.numRadioInterfaces; clientId++) {
+      let radioInterface = this.radioInterfaces[clientId];
+      radioInterface.workerMessenger.send("setMute", { muted: muted });
+    }
   }
 };
 
@@ -1213,7 +1221,8 @@ RadioInterface.prototype = {
         break;
       case "sms-received":
         let ackOk = this.handleSmsReceived(message);
-        if (ackOk) {
+        // Note: ACK has been done by modem for NEW_SMS_ON_SIM
+        if (ackOk && message.simStatus === undefined) {
           this.workerMessenger.send("ackSMS", { result: RIL.PDU_FCS_OK });
         }
         return;
@@ -1613,12 +1622,6 @@ RadioInterface.prototype = {
                                                 this.clientId, status);
   },
 
-  _isRadioChanging: function _isRadioChanging() {
-    let state = this.rilContext.detailedRadioState;
-    return state == RIL.GECKO_DETAILED_RADIOSTATE_ENABLING ||
-      state == RIL.GECKO_DETAILED_RADIOSTATE_DISABLING;
-  },
-
   _convertRadioState: function _converRadioState(state) {
     switch (state) {
       case RIL.GECKO_RADIOSTATE_OFF:
@@ -1858,7 +1861,11 @@ RadioInterface.prototype = {
       if (DEBUG) this.debug("Don't connect data call when Wifi is connected.");
       return;
     }
-    if (this._isRadioChanging()) {
+
+    let detailedRadioState = this.rilContext.detailedRadioState;
+    if (gRadioEnabledController.isDeactivatingDataCalls() ||
+        detailedRadioState == RIL.GECKO_DETAILED_RADIOSTATE_ENABLING ||
+        detailedRadioState == RIL.GECKO_DETAILED_RADIOSTATE_DISABLING) {
       // We're changing the radio power currently, ignore any changes.
       return;
     }
@@ -2049,23 +2056,31 @@ RadioInterface.prototype = {
       mwi.returnMessage = message.fullBody;
       gMessageManager.sendVoicemailMessage("RIL:VoicemailNotification",
                                            this.clientId, mwi);
-      return true;
+
+      // Dicarded MWI comes without text body.
+      // Hence, we discard it here after notifying the MWI status.
+      if (mwi.discard) {
+        return true;
+      }
     }
 
     let notifyReceived = function notifyReceived(rv, domMessage) {
       let success = Components.isSuccessCode(rv);
 
       // Acknowledge the reception of the SMS.
-      this.workerMessenger.send("ackSMS", {
-        result: (success ? RIL.PDU_FCS_OK
-                         : RIL.PDU_FCS_MEMORY_CAPACITY_EXCEEDED)
-      });
+      // Note: Ack has been done by modem for NEW_SMS_ON_SIM
+      if (message.simStatus === undefined) {
+        this.workerMessenger.send("ackSMS", {
+          result: (success ? RIL.PDU_FCS_OK
+                           : RIL.PDU_FCS_MEMORY_CAPACITY_EXCEEDED)
+        });
+      }
 
       if (!success) {
         // At this point we could send a message to content to notify the user
         // that storing an incoming SMS failed, most likely due to a full disk.
         if (DEBUG) {
-          this.debug("Could not store SMS " + message.id + ", error code " + rv);
+          this.debug("Could not store SMS, error code " + rv);
         }
         return;
       }
@@ -2075,8 +2090,8 @@ RadioInterface.prototype = {
     }.bind(this);
 
     if (message.messageClass != RIL.GECKO_SMS_MESSAGE_CLASSES[RIL.PDU_DCS_MSG_CLASS_0]) {
-      message.id = gMobileMessageDatabaseService.saveReceivedMessage(message,
-                                                                     notifyReceived);
+      gMobileMessageDatabaseService.saveReceivedMessage(message,
+                                                        notifyReceived);
     } else {
       message.id = -1;
       message.threadId = 0;
@@ -2328,7 +2343,12 @@ RadioInterface.prototype = {
 
   handleStkProactiveCommand: function handleStkProactiveCommand(message) {
     if (DEBUG) this.debug("handleStkProactiveCommand " + JSON.stringify(message));
-    gSystemMessenger.broadcastMessage("icc-stkcommand", message);
+    let iccId = this.rilContext.iccInfo && this.rilContext.iccInfo.iccid;
+    if (iccId) {
+      gSystemMessenger.broadcastMessage("icc-stkcommand",
+                                        {iccId: iccId,
+                                         command: message});
+    }
     gMessageManager.sendIccMessage("RIL:StkCommand", this.clientId, message);
   },
 
@@ -2638,18 +2658,15 @@ RadioInterface.prototype = {
   },
 
   isValidStateForSetRadioEnabled: function() {
-    let state = this.rilContext.radioState;
-
-    return !this._isRadioChanging() &&
-        (state == RIL.GECKO_RADIOSTATE_READY ||
-         state == RIL.GECKO_RADIOSTATE_OFF);
+    let state = this.rilContext.detailedRadioState;
+    return state == RIL.GECKO_DETAILED_RADIOSTATE_ENABLED ||
+      state == RIL.GECKO_DETAILED_RADIOSTATE_DISABLED;
   },
 
   isDummyForSetRadioEnabled: function(message) {
-    let state = this.rilContext.radioState;
-
-    return (state == RIL.GECKO_RADIOSTATE_READY && message.enabled) ||
-        (state == RIL.GECKO_RADIOSTATE_OFF && !message.enabled);
+    let state = this.rilContext.detailedRadioState;
+    return (state == RIL.GECKO_DETAILED_RADIOSTATE_ENABLED && message.enabled) ||
+      (state == RIL.GECKO_DETAILED_RADIOSTATE_DISABLED && !message.enabled);
   },
 
   setRadioEnabledResponse: function(target, message, errorMsg) {

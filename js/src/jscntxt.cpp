@@ -10,9 +10,9 @@
 
 #include "jscntxtinlines.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -101,8 +101,8 @@ JSCompartment::sweepCallsiteClones()
 {
     if (callsiteClones.initialized()) {
         for (CallsiteCloneTable::Enum e(callsiteClones); !e.empty(); e.popFront()) {
-            CallsiteCloneKey key = e.front().key;
-            JSFunction *fun = e.front().value;
+            CallsiteCloneKey key = e.front().key();
+            JSFunction *fun = e.front().value();
             if (!IsScriptMarked(&key.script) || !IsObjectMarked(&fun))
                 e.removeFront();
         }
@@ -126,9 +126,9 @@ js::ExistingCloneFunctionAtCallsite(const CallsiteCloneTable &table, JSFunction 
     if (!table.initialized())
         return nullptr;
 
-    CallsiteCloneTable::Ptr p = table.lookup(CallsiteCloneKey(fun, script, pc - script->code));
+    CallsiteCloneTable::Ptr p = table.lookup(CallsiteCloneKey(fun, script, script->pcToOffset(pc)));
     if (p)
-        return p->value;
+        return p->value();
 
     return nullptr;
 }
@@ -159,7 +159,7 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
     if (!table.initialized() && !table.init())
         return nullptr;
 
-    if (!table.putNew(Key(fun, script, pc - script->code), clone))
+    if (!table.putNew(Key(fun, script, script->pcToOffset(pc)), clone))
         return nullptr;
 
     return clone;
@@ -429,7 +429,10 @@ js_ReportOverRecursed(JSContext *maybecx)
 void
 js_ReportOverRecursed(ThreadSafeContext *cx)
 {
-    js_ReportOverRecursed(cx->maybeJSContext());
+    if (cx->isJSContext())
+        js_ReportOverRecursed(cx->asJSContext());
+    else if (cx->isExclusiveContext())
+        cx->asExclusiveContext()->addPendingOverRecursed();
 }
 
 void
@@ -1050,7 +1053,11 @@ js::ThreadSafeContext::ThreadSafeContext(JSRuntime *rt, PerThreadData *pt, Conte
     contextKind_(kind),
     perThreadData(pt),
     allocator_(nullptr)
-{ }
+{
+#ifdef JS_WORKER_THREADS
+    JS_ASSERT_IF(kind == Context_Exclusive, rt->workerThreadState != nullptr);
+#endif
+}
 
 bool
 ThreadSafeContext::isForkJoinSlice() const

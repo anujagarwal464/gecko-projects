@@ -50,8 +50,11 @@ ThreadStackHelper::Shutdown()
 }
 
 ThreadStackHelper::ThreadStackHelper()
-  : mPseudoStack(mozilla_get_pseudo_stack())
-  , mStackBuffer()
+  :
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    mPseudoStack(mozilla_get_pseudo_stack()),
+#endif
+    mStackBuffer()
   , mMaxStackSize(mStackBuffer.capacity())
 {
 #if defined(XP_LINUX)
@@ -81,7 +84,7 @@ ThreadStackHelper::GetStack(Stack& aStack)
 {
   // Always run PrepareStackBuffer first to clear aStack
   if (!PrepareStackBuffer(aStack)) {
-    MOZ_ASSERT(false);
+    // Skip and return empty aStack
     return;
   }
 
@@ -146,16 +149,31 @@ ThreadStackHelper::SigAction(int aSignal, siginfo_t* aInfo, void* aContext)
 
 bool
 ThreadStackHelper::PrepareStackBuffer(Stack& aStack) {
+  // Return false to skip getting the stack and return an empty stack
   aStack.clear();
+#ifdef MOZ_ENABLE_PROFILER_SPS
+  /* Normally, provided the profiler is enabled, it would be an error if we
+     don't have a pseudostack here (the thread probably forgot to call
+     profiler_register_thread). However, on B2G, profiling secondary threads
+     may be disabled despite profiler being enabled. This is by-design and
+     is not an error. */
+#ifdef MOZ_WIDGET_GONK
   if (!mPseudoStack) {
     return false;
   }
+#endif
+  MOZ_ASSERT(mPseudoStack);
   mStackBuffer.clear();
-  return mStackBuffer.reserve(mMaxStackSize);
+  MOZ_ALWAYS_TRUE(mStackBuffer.reserve(mMaxStackSize));
+  return true;
+#else
+  return false;
+#endif
 }
 
 void
 ThreadStackHelper::FillStackBuffer() {
+#ifdef MOZ_ENABLE_PROFILER_SPS
   size_t reservedSize = mMaxStackSize;
 
   // Go from front to back
@@ -170,6 +188,7 @@ ThreadStackHelper::FillStackBuffer() {
   }
   // If we exited early due to buffer size, expand the buffer for next time
   mMaxStackSize += (end - entry);
+#endif
 }
 
 } // namespace mozilla

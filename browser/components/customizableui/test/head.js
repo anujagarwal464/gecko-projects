@@ -39,12 +39,13 @@ function createToolbarWithPlacements(id, placements) {
     defaultPlacements: placements
   });
   gNavToolbox.appendChild(tb);
+  return tb;
 }
 
 function removeCustomToolbars() {
   CustomizableUI.reset();
   for (let toolbarId of gAddedToolbars) {
-    CustomizableUI.unregisterArea(toolbarId);
+    CustomizableUI.unregisterArea(toolbarId, true);
     document.getElementById(toolbarId).remove();
   }
   gAddedToolbars.clear();
@@ -54,8 +55,27 @@ function resetCustomization() {
   return CustomizableUI.reset();
 }
 
+function isInWin8() {
+  let sysInfo = Services.sysinfo;
+  let osName = sysInfo.getProperty("name");
+  let version = sysInfo.getProperty("version");
+
+  // Windows 8 is version >= 6.2
+  return osName == "Windows_NT" && version >= 6.2;
+}
+
+function addSwitchToMetroButtonInWindows8(areaPanelPlacements) {
+  if (isInWin8()) {
+    areaPanelPlacements.push("switch-to-metro-button");
+  }
+}
+
 function assertAreaPlacements(areaId, expectedPlacements) {
   let actualPlacements = getAreaWidgetIds(areaId);
+  placementArraysEqual(areaId, actualPlacements, expectedPlacements);
+}
+
+function placementArraysEqual(areaId, actualPlacements, expectedPlacements) {
   is(actualPlacements.length, expectedPlacements.length,
      "Area " + areaId + " should have " + expectedPlacements.length + " items.");
   let minItems = Math.min(expectedPlacements.length, actualPlacements.length);

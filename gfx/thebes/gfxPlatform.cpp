@@ -58,6 +58,7 @@
 #include "nsTArray.h"
 #include "nsILocaleService.h"
 #include "nsIObserverService.h"
+#include "MainThreadUtils.h"
 
 #include "nsWeakReference.h"
 
@@ -232,7 +233,7 @@ MemoryPressureObserver::Observe(nsISupports *aSubject,
                                 const PRUnichar *someData)
 {
     NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
-    Factory::PurgeTextureCaches();
+    Factory::PurgeAllCaches();
     return NS_OK;
 }
 
@@ -501,7 +502,7 @@ gfxPlatform::Init()
         obs->AddObserver(gPlatform->mMemoryPressureObserver, "memory-pressure", false);
     }
 
-    NS_RegisterMemoryReporter(new GfxMemoryImageReporter());
+    RegisterStrongMemoryReporter(new GfxMemoryImageReporter());
 }
 
 void
@@ -2036,6 +2037,7 @@ static bool sPrefLayersAccelerationDisabled = false;
 static bool sPrefLayersPreferOpenGL = false;
 static bool sPrefLayersPreferD3D9 = false;
 static bool sPrefLayersDump = false;
+static bool sPrefLayersScrollGraph = false;
 static bool sLayersSupportsD3D9 = false;
 static int  sPrefLayoutFrameRate = -1;
 static bool sBufferRotationEnabled = false;
@@ -2049,6 +2051,12 @@ InitLayersAccelerationPrefs()
 {
   if (!sLayersAccelerationPrefsInitialized)
   {
+    // If this is called for the first time on a non-main thread, we're screwed.
+    // At the moment there's no explicit guarantee that the main thread calls
+    // this before the compositor thread, but let's at least make the assumption
+    // explicit.
+    MOZ_ASSERT(NS_IsMainThread(), "can only initialize prefs on the main thread");
+
     sPrefLayersOffMainThreadCompositionEnabled = Preferences::GetBool("layers.offmainthreadcomposition.enabled", false);
     sPrefLayersOffMainThreadCompositionTestingEnabled = Preferences::GetBool("layers.offmainthreadcomposition.testing.enabled", false);
     sPrefLayersOffMainThreadCompositionForceEnabled = Preferences::GetBool("layers.offmainthreadcomposition.force-enabled", false);
@@ -2057,6 +2065,7 @@ InitLayersAccelerationPrefs()
     sPrefLayersPreferOpenGL = Preferences::GetBool("layers.prefer-opengl", false);
     sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
     sPrefLayersDump = Preferences::GetBool("layers.dump", false);
+    sPrefLayersScrollGraph = Preferences::GetBool("layers.scroll-graph", false);
     sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
     sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
     sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
@@ -2108,7 +2117,13 @@ gfxPlatform::GetPrefLayersAccelerationForceEnabled()
 bool gfxPlatform::OffMainThreadCompositionRequired()
 {
   InitLayersAccelerationPrefs();
+#if defined(MOZ_WIDGET_GTK) && defined(NIGHTLY_BUILD)
+  // Linux users who chose OpenGL are being grandfathered in to OMTC
+  return sPrefBrowserTabsRemote ||
+         sPrefLayersAccelerationForceEnabled;
+#else
   return sPrefBrowserTabsRemote;
+#endif
 }
 
 bool
@@ -2153,6 +2168,15 @@ gfxPlatform::GetPrefLayersDump()
 {
   InitLayersAccelerationPrefs();
   return sPrefLayersDump;
+}
+
+bool
+gfxPlatform::GetPrefLayersScrollGraph()
+{
+  // this function is called from the compositor thread, so it is not
+  // safe to init the prefs etc. from here.
+  MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
+  return sPrefLayersScrollGraph;
 }
 
 bool

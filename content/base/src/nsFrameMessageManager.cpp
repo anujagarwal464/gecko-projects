@@ -805,8 +805,8 @@ nsFrameMessageManager::AssertAppHasPermission(const nsAString& aPermission,
 }
 
 NS_IMETHODIMP
-nsFrameMessageManager::CheckAppHasStatus(unsigned short aStatus,
-                                         bool* aHasStatus)
+nsFrameMessageManager::AssertAppHasStatus(unsigned short aStatus,
+                                          bool* aHasStatus)
 {
   *aHasStatus = false;
 
@@ -1133,9 +1133,7 @@ namespace dom {
 class MessageManagerReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-  MessageManagerReporter()
-    : MemoryMultiReporter("message-manager")
-  {}
+  MessageManagerReporter() {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCallback,
                             nsISupports* aData);
@@ -1300,7 +1298,7 @@ NS_NewGlobalMessageManager(nsIMessageBroadcaster** aResult)
   nsFrameMessageManager* mm = new nsFrameMessageManager(nullptr,
                                                         nullptr,
                                                         MM_CHROME | MM_GLOBAL | MM_BROADCASTER);
-  NS_RegisterMemoryReporter(new MessageManagerReporter());
+  RegisterStrongMemoryReporter(new MessageManagerReporter());
   return CallQueryInterface(mm, aResult);
 }
 
@@ -1594,6 +1592,12 @@ public:
     // In a single-process scenario, the child always has all capabilities.
     return true;
   }
+
+  virtual bool CheckAppHasStatus(unsigned short aStatus)
+  {
+    // In a single-process scenario, the child always has all capabilities.
+    return true;
+  }
 };
 
 
@@ -1835,7 +1839,7 @@ NS_NewChildProcessMessageManager(nsISyncMessageSender** aResult)
     cb = new SameChildProcessMessageManagerCallback();
   } else {
     cb = new ChildProcessMessageManagerCallback();
-    NS_RegisterMemoryReporter(new MessageManagerReporter());
+    RegisterStrongMemoryReporter(new MessageManagerReporter());
   }
   nsFrameMessageManager* mm = new nsFrameMessageManager(cb,
                                                         nullptr,

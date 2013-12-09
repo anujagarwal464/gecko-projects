@@ -832,9 +832,23 @@ struct TypeNewScript : public TypeObjectAddendum
 
 struct TypeTypedObject : public TypeObjectAddendum
 {
-    TypeTypedObject(TypeRepresentation *repr);
+    enum Kind {
+        TypeDescriptor,
+        Datum,
+    };
 
+    TypeTypedObject(Kind kind, TypeRepresentation *repr);
+
+    const Kind kind;
     TypeRepresentation *const typeRepr;
+
+    bool isTypeDescriptor() const {
+        return kind == TypeDescriptor;
+    }
+
+    bool isDatum() const {
+        return kind == Datum;
+    }
 };
 
 /*
@@ -924,7 +938,9 @@ struct TypeObject : gc::BarrieredCell<TypeObject>
      * this addendum must already be associated with the same TypeRepresentation,
      * and the method has no effect.
      */
-    bool addTypedObjectAddendum(JSContext *cx, TypeRepresentation *repr);
+    bool addTypedObjectAddendum(JSContext *cx,
+                                TypeTypedObject::Kind kind ,
+                                TypeRepresentation *repr);
 
     /*
      * Properties of this object. This may contain JSID_VOID, representing the
@@ -951,6 +967,9 @@ struct TypeObject : gc::BarrieredCell<TypeObject>
      *    deletion. After these properties have been assigned a defined value,
      *    the only way they can become undefined again is after such an assign
      *    or deletion.
+     *
+     *    There is another exception for array lengths, which are special cased
+     *    by the compiler and VM and are not reflected in property types.
      *
      * We establish these by using write barriers on calls to setProperty and
      * defineProperty which are on native properties, and on any jitcode which

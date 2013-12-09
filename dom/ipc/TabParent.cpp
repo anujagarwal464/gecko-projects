@@ -15,6 +15,7 @@
 #include "mozilla/BrowserElementParent.h"
 #include "mozilla/docshell/OfflineCacheUpdateParent.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/PContentPermissionRequestParent.h"
 #include "mozilla/Hal.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/layers/CompositorParent.h"
@@ -31,7 +32,6 @@
 #include "nsEventStateManager.h"
 #include "nsFocusManager.h"
 #include "nsFrameLoader.h"
-#include "nsHashPropertyBag.h"
 #include "nsIContent.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeOwner.h"
@@ -131,6 +131,8 @@ private:
         nsRefPtr<TabParent> tabParent;
         mTabParent.swap(tabParent);
 
+        using mozilla::ipc::FileDescriptor;
+
         FileDescriptor::PlatformHandleType handle =
             FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
 
@@ -178,7 +180,11 @@ private:
 
         MOZ_ASSERT(mFD);
 
-        PR_Close(mFD);
+        PRStatus prrc;
+        prrc = PR_Close(mFD);
+        if (prrc != PR_SUCCESS) {
+          NS_ERROR("PR_Close() failed.");
+        }
         mFD = nullptr;
     }
 };
@@ -494,21 +500,22 @@ TabParent::UpdateFrame(const FrameMetrics& aFrameMetrics)
   }
 }
 
-void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint)
+void TabParent::HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
   if (!mIsDestroyed) {
     unused << SendHandleDoubleTap(aPoint);
   }
 }
 
-void TabParent::HandleSingleTap(const CSSIntPoint& aPoint)
+void TabParent::HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
+  // TODO Send the modifier data to TabChild for use in mouse events.
   if (!mIsDestroyed) {
     unused << SendHandleSingleTap(aPoint);
   }
 }
 
-void TabParent::HandleLongTap(const CSSIntPoint& aPoint)
+void TabParent::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
   if (!mIsDestroyed) {
     unused << SendHandleLongTap(aPoint);
@@ -573,9 +580,10 @@ TabParent::DeallocPDocumentRendererParent(PDocumentRendererParent* actor)
 }
 
 PContentPermissionRequestParent*
-TabParent::AllocPContentPermissionRequestParent(const nsCString& type, const nsCString& access, const IPC::Principal& principal)
+TabParent::AllocPContentPermissionRequestParent(const InfallibleTArray<PermissionRequest>& aRequests,
+                                                const IPC::Principal& aPrincipal)
 {
-  return new ContentPermissionRequestParent(type, access, mFrameElement, principal);
+  return CreateContentPermissionRequestParent(aRequests, mFrameElement, aPrincipal);
 }
 
 bool
@@ -654,6 +662,52 @@ bool TabParent::SendRealMouseEvent(WidgetMouseEvent& event)
     return false;
   }
   return PBrowserParent::SendRealMouseEvent(e);
+}
+
+CSSIntPoint TabParent::AdjustTapToChildWidget(const CSSIntPoint& aPoint)
+{
+  nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);
+
+  if (!content || !content->OwnerDoc()) {
+    return aPoint;
+  }
+
+  nsIDocument* doc = content->OwnerDoc();
+  if (!doc || !doc->GetShell()) {
+    return aPoint;
+  }
+  nsPresContext* presContext = doc->GetShell()->GetPresContext();
+
+  return CSSIntPoint(
+    aPoint.x + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.x),
+    aPoint.y + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.y));
+}
+
+bool TabParent::SendHandleSingleTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleSingleTap(AdjustTapToChildWidget(aPoint));
+}
+
+bool TabParent::SendHandleLongTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleLongTap(AdjustTapToChildWidget(aPoint));
+}
+
+bool TabParent::SendHandleDoubleTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleDoubleTap(AdjustTapToChildWidget(aPoint));
 }
 
 bool TabParent::SendMouseWheelEvent(WidgetWheelEvent& event)
@@ -774,7 +828,8 @@ TabParent::RecvSyncMessage(const nsString& aMessage,
 {
   nsIPrincipal* principal = aPrincipal;
   ContentParent* parent = static_cast<ContentParent*>(Manager());
-  if (principal && !AssertAppPrincipal(parent, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
     return false;
   }
 
@@ -792,7 +847,8 @@ TabParent::AnswerRpcMessage(const nsString& aMessage,
 {
   nsIPrincipal* principal = aPrincipal;
   ContentParent* parent = static_cast<ContentParent*>(Manager());
-  if (principal && !AssertAppPrincipal(parent, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
     return false;
   }
 
@@ -809,7 +865,8 @@ TabParent::RecvAsyncMessage(const nsString& aMessage,
 {
   nsIPrincipal* principal = aPrincipal;
   ContentParent* parent = static_cast<ContentParent*>(Manager());
-  if (principal && !AssertAppPrincipal(parent, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(parent, principal)) {
     return false;
   }
 
@@ -1655,40 +1712,6 @@ TabParent::RecvContentReceivedTouch(const ScrollableLayerGuid& aGuid,
     rfp->ContentReceivedTouch(aGuid, aPreventDefault);
   }
   return true;
-}
-
-bool
-TabParent::RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
-                                     const bool& aIsAudio,
-                                     const bool& aIsVideo)
-{
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    if (obs) {
-        // recording-device-ipc-events needs to gather more information from content process
-        nsRefPtr<nsHashPropertyBag> props = new nsHashPropertyBag();
-        props->SetPropertyAsUint64(NS_LITERAL_STRING("childID"), Manager()->ChildID());
-        props->SetPropertyAsBool(NS_LITERAL_STRING("isApp"), Manager()->IsForApp());
-        props->SetPropertyAsBool(NS_LITERAL_STRING("isAudio"), aIsAudio);
-        props->SetPropertyAsBool(NS_LITERAL_STRING("isVideo"), aIsVideo);
-
-        nsString requestURL;
-        if (Manager()->IsForApp()) {
-          requestURL = Manager()->AppManifestURL();
-        } else {
-          nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
-          NS_ENSURE_TRUE(frameLoader, true);
-
-          frameLoader->GetURL(requestURL);
-        }
-        props->SetPropertyAsAString(NS_LITERAL_STRING("requestURL"), requestURL);
-
-        obs->NotifyObservers((nsIPropertyBag2*) props,
-                             "recording-device-ipc-events",
-                             aRecordingStatus.get());
-    } else {
-        NS_WARNING("Could not get the Observer service for ContentParent::RecvRecordingDeviceEvents.");
-    }
-    return true;
 }
 
 } // namespace tabs

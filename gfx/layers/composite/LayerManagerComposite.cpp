@@ -103,6 +103,7 @@ LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
 : mCompositor(aCompositor)
 , mInTransaction(false)
 , mIsCompositorReady(false)
+, mDebugOverlayWantsNextFrame(false)
 {
   MOZ_ASSERT(aCompositor);
 }
@@ -418,6 +419,8 @@ LayerManagerComposite::Render()
   }
 
   mCompositor->GetWidget()->PostRender(this);
+
+  RecordFrame();
 }
 
 void
@@ -822,14 +825,6 @@ LayerManagerComposite::GetMaxTextureSize() const
 }
 
 #ifndef MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS
-
-/*static*/ already_AddRefed<TextureImage>
-LayerManagerComposite::OpenDescriptorForDirectTexturing(GLContext*,
-                                                        const SurfaceDescriptor&,
-                                                        GLenum)
-{
-  return nullptr;
-}
 
 /*static*/ bool
 LayerManagerComposite::SupportsDirectTexturing()

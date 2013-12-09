@@ -281,6 +281,12 @@ MDefinition::dump(FILE *fp) const
     fprintf(fp, "\n");
 }
 
+void
+MDefinition::dump() const
+{
+    dump(stderr);
+}
+
 size_t
 MDefinition::useCount() const
 {
@@ -327,6 +333,17 @@ MDefinition::hasOneDefUse() const
     }
 
     return hasOneDefUse;
+}
+
+bool
+MDefinition::hasDefUses() const
+{
+    for (MUseIterator i(uses_.begin()); i != uses_.end(); i++) {
+        if ((*i)->consumer()->isDefinition())
+            return true;
+    }
+
+    return false;
 }
 
 MUseIterator
@@ -644,7 +661,7 @@ MCall::New(TempAllocator &alloc, JSFunction *target, size_t maxArgc, size_t numA
 {
     JS_ASSERT(maxArgc >= numActualArgs);
     MCall *ins = new(alloc) MCall(target, numActualArgs, construct);
-    if (!ins->init(maxArgc + NumNonArgumentOperands))
+    if (!ins->init(alloc, maxArgc + NumNonArgumentOperands))
         return nullptr;
     return ins;
 }
@@ -1361,7 +1378,7 @@ MDiv::analyzeEdgeCasesBackward()
 }
 
 bool
-MDiv::fallible()
+MDiv::fallible() const
 {
     return !isTruncated();
 }
@@ -1401,9 +1418,10 @@ MMod::foldsTo(TempAllocator &alloc, bool useValueNumbers)
 }
 
 bool
-MMod::fallible()
+MMod::fallible() const
 {
-    return !isTruncated();
+    return !isTruncated() &&
+           (isUnsigned() || canBeDivideByZero() || canBeNegativeDividend());
 }
 
 void
@@ -1420,7 +1438,7 @@ MMathFunction::trySpecializeFloat32(TempAllocator &alloc)
 }
 
 bool
-MAdd::fallible()
+MAdd::fallible() const
 {
     // the add is fallible if range analysis does not say that it is finite, AND
     // either the truncation analysis shows that there are non-truncated uses.
@@ -1432,7 +1450,7 @@ MAdd::fallible()
 }
 
 bool
-MSub::fallible()
+MSub::fallible() const
 {
     // see comment in MAdd::fallible()
     if (isTruncated())
@@ -1501,7 +1519,7 @@ MMul::updateForReplacement(MDefinition *ins_)
 }
 
 bool
-MMul::canOverflow()
+MMul::canOverflow() const
 {
     if (isTruncated())
         return false;
@@ -1509,7 +1527,7 @@ MMul::canOverflow()
 }
 
 bool
-MUrsh::fallible()
+MUrsh::fallible() const
 {
     if (bailoutsDisabled())
         return false;
@@ -1705,6 +1723,9 @@ MCompare::inputType()
         return MIRType_Boolean;
       case Compare_UInt32:
       case Compare_Int32:
+      case Compare_Int32MaybeCoerceBoth:
+      case Compare_Int32MaybeCoerceLHS:
+      case Compare_Int32MaybeCoerceRHS:
         return MIRType_Int32;
       case Compare_Double:
       case Compare_DoubleMaybeCoerceLHS:
@@ -1731,7 +1752,8 @@ MustBeUInt32(MDefinition *def, MDefinition **pwrapped)
     if (def->isUrsh()) {
         *pwrapped = def->toUrsh()->getOperand(0);
         MDefinition *rhs = def->toUrsh()->getOperand(1);
-        return rhs->isConstant()
+        return !def->toUrsh()->bailoutsDisabled()
+            && rhs->isConstant()
             && rhs->toConstant()->value().isInt32()
             && rhs->toConstant()->value().toInt32() == 0;
     }
@@ -1790,7 +1812,7 @@ MCompare::infer(BaselineInspector *inspector, jsbytecode *pc)
     if ((lhs == MIRType_Int32 && rhs == MIRType_Int32) ||
         (lhs == MIRType_Boolean && rhs == MIRType_Boolean))
     {
-        compareType_ = Compare_Int32;
+        compareType_ = Compare_Int32MaybeCoerceBoth;
         return;
     }
 
@@ -1799,7 +1821,7 @@ MCompare::infer(BaselineInspector *inspector, jsbytecode *pc)
         (lhs == MIRType_Int32 || lhs == MIRType_Boolean) &&
         (rhs == MIRType_Int32 || rhs == MIRType_Boolean))
     {
-        compareType_ = Compare_Int32;
+        compareType_ = Compare_Int32MaybeCoerceBoth;
         return;
     }
 
@@ -2073,7 +2095,7 @@ MResumePoint::New(TempAllocator &alloc, MBasicBlock *block, jsbytecode *pc, MRes
                   Mode mode)
 {
     MResumePoint *resume = new(alloc) MResumePoint(block, pc, parent, mode);
-    if (!resume->init())
+    if (!resume->init(alloc))
         return nullptr;
     resume->inherit(block);
     return resume;
@@ -3145,8 +3167,7 @@ TryAddTypeBarrierForWrite(TempAllocator &alloc, types::CompilerConstraintList *c
     if ((*pvalue)->type() != MIRType_Value)
         return false;
 
-    types::TemporaryTypeSet *types =
-        aggregateProperty.ref().maybeTypes()->clone(GetIonContext()->temp->lifoAlloc());
+    types::TemporaryTypeSet *types = aggregateProperty.ref().maybeTypes()->clone(alloc.lifoAlloc());
     if (!types)
         return false;
 

@@ -21,11 +21,11 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Poison.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/Util.h"
 
 #include "nsAppRunner.h"
 #include "mozilla/AppData.h"
@@ -127,6 +127,10 @@
 #include "nsXREDirProvider.h"
 #include "nsToolkitCompsCID.h"
 
+#if defined(XP_WIN) && defined(MOZ_METRO)
+#include "updatehelper.h"
+#endif
+
 #include "nsINIParser.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/StartupTimeline.h"
@@ -149,8 +153,8 @@
 #include <process.h>
 #include <shlobj.h>
 #include "nsThreadUtils.h"
-#include <comutil.h>
-#include <Wbemidl.h>
+#include <comdef.h>
+#include <wbemidl.h>
 #endif
 
 #ifdef XP_MACOSX
@@ -2480,7 +2484,7 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
     PR_Write(fd, appDir.get(), appDir.Length());
   }
 
-  static const char kInvalidationHeader[] = "InvalidateCaches=1" NS_LINEBREAK;
+  static const char kInvalidationHeader[] = NS_LINEBREAK "InvalidateCaches=1";
   if (invalidateCache)
     PR_Write(fd, kInvalidationHeader, sizeof(kInvalidationHeader) - 1);
 
@@ -4047,12 +4051,18 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   // Check for an application initiated restart.  This is one that
   // corresponds to nsIAppStartup.quit(eRestart)
-  if (rv == NS_SUCCESS_RESTART_APP) {
+  if (rv == NS_SUCCESS_RESTART_APP || rv == NS_SUCCESS_RESTART_METRO_APP) {
     appInitiatedRestart = true;
 
     // We have an application restart don't do any shutdown checks here
     // In particular we don't want to poison IO for checking late-writes.
     gShutdownChecks = SCM_NOTHING;
+
+    #if defined(MOZ_METRO) && defined(XP_WIN)
+    if (rv == NS_SUCCESS_RESTART_METRO_APP) {
+      LaunchDefaultMetroBrowser();
+    }
+    #endif
   }
 
   if (!mShuttingDown) {

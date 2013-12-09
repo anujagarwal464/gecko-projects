@@ -25,7 +25,7 @@
 #include "WinUtils.h"
 #endif
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/AutoRestore.h"
 #include "nsRefreshDriver.h"
 #include "nsITimer.h"
@@ -1200,13 +1200,6 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
       printf_stderr("Starting ProcessPendingUpdates\n");
-    }
-#endif
-#ifndef MOZ_WIDGET_GONK
-    // Waiting for bug 830475 to work on B2G.
-    nsRefPtr<layers::LayerManager> mgr = mPresContext->GetPresShell()->GetLayerManager();
-    if (mgr) {
-      mgr->SetPaintStartTime(mMostRecentRefresh);
     }
 #endif
 

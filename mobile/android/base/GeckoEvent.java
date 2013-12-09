@@ -7,8 +7,10 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.DisplayPortMetrics;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
+import org.mozilla.gecko.mozglue.JNITarget;
 import org.mozilla.gecko.mozglue.generatorannotations.GeneratorOptions;
 import org.mozilla.gecko.mozglue.generatorannotations.WrapEntireClassForJNI;
+import org.mozilla.gecko.mozglue.RobocopTarget;
 
 import android.content.res.Resources;
 import android.graphics.Point;
@@ -36,11 +38,13 @@ import java.nio.ByteBuffer;
 /* This class is referenced by Robocop via reflection; use care when
  * modifying the signature.
  */
+@JNITarget
 public class GeckoEvent {
     private static final String LOGTAG = "GeckoEvent";
 
     // Make sure to keep these values in sync with the enum in
     // AndroidGeckoEvent in widget/android/AndroidJavaWrapper.h
+    @JNITarget
     private enum NativeGeckoEvent {
         NATIVE_POKE(0),
         KEY_EVENT(1),
@@ -103,6 +107,7 @@ public class GeckoEvent {
     }
 
     // Encapsulation of common IME actions.
+    @JNITarget
     public enum ImeAction {
         IME_SYNCHRONIZE(0),
         IME_REPLACE_TEXT(1),
@@ -608,6 +613,7 @@ public class GeckoEvent {
         return event;
     }
 
+    @RobocopTarget
     public static GeckoEvent createBroadcastEvent(String subject, String data) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.BROADCAST);
         event.mCharacters = subject;
@@ -698,6 +704,7 @@ public class GeckoEvent {
         return event;
     }
 
+    @RobocopTarget
     public static GeckoEvent createPreferencesObserveEvent(int requestId, String[] prefNames) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_OBSERVE);
         event.mCount = requestId;
@@ -705,6 +712,7 @@ public class GeckoEvent {
         return event;
     }
 
+    @RobocopTarget
     public static GeckoEvent createPreferencesGetEvent(int requestId, String[] prefNames) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_GET);
         event.mCount = requestId;
@@ -712,6 +720,7 @@ public class GeckoEvent {
         return event;
     }
 
+    @RobocopTarget
     public static GeckoEvent createPreferencesRemoveObserversEvent(int requestId) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_REMOVE_OBSERVERS);
         event.mCount = requestId;

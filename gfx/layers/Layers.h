@@ -330,10 +330,29 @@ public:
 #endif
 
   /**
+   * Hints that can be used during Thebes layer creation to influence the type
+   * or properties of the layer created.
+   *
+   * NONE: No hint.
+   * SCROLLABLE: This layer may represent scrollable content.
+   */
+  enum ThebesLayerCreationHint {
+    NONE, SCROLLABLE
+  };
+
+  /**
    * CONSTRUCTION PHASE ONLY
    * Create a ThebesLayer for this manager's layer tree.
    */
   virtual already_AddRefed<ThebesLayer> CreateThebesLayer() = 0;
+  /**
+   * CONSTRUCTION PHASE ONLY
+   * Create a ThebesLayer for this manager's layer tree, with a creation hint
+   * parameter to help optimise the type of layer created.
+   */
+  virtual already_AddRefed<ThebesLayer> CreateThebesLayerWithHint(ThebesLayerCreationHint) {
+    return CreateThebesLayer();
+  }
   /**
    * CONSTRUCTION PHASE ONLY
    * Create a ContainerLayer for this manager's layer tree.
@@ -544,18 +563,17 @@ public:
   /**
    * Returns a handle which represents current recording start position.
    */
-  uint32_t StartFrameTimeRecording();
+  virtual uint32_t StartFrameTimeRecording(int32_t aBufferSize);
 
   /**
-   *  Clears, then populates 2 arraye with the recorded frames timing data.
-   *  The arrays will be empty if data was overwritten since aStartIndex was obtained.
+   *  Clears, then populates aFrameIntervals with the recorded frame timing
+   *  data. The array will be empty if data was overwritten since
+   *  aStartIndex was obtained.
    */
-  void StopFrameTimeRecording(uint32_t         aStartIndex,
-                              nsTArray<float>& aFrameIntervals,
-                              nsTArray<float>& aPaintTimes);
+  virtual void StopFrameTimeRecording(uint32_t         aStartIndex,
+                                      nsTArray<float>& aFrameIntervals);
 
-  void SetPaintStartTime(TimeStamp& aTime);
-
+  void RecordFrame();
   void PostPresent();
 
   void BeginTabSwitch();
@@ -600,9 +618,7 @@ private:
     bool mIsPaused;
     uint32_t mNextIndex;
     TimeStamp mLastFrameTime;
-    TimeStamp mPaintStartTime;
     nsTArray<float> mIntervals;
-    nsTArray<float> mPaints;
     uint32_t mLatestStartIndex;
     uint32_t mCurrentRunStartIndex;
   };
@@ -1735,6 +1751,11 @@ public:
    * This must only be called once.
    */
   virtual void Initialize(const Data& aData) = 0;
+
+  /**
+   * Check the data is owned by this layer is still valid for rendering
+   */
+  virtual bool IsDataValid(const Data& aData) { return true; }
 
   /**
    * Notify this CanvasLayer that the canvas surface contents have

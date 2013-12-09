@@ -26,6 +26,7 @@
 #include "IndexedDatabaseManager.h"
 #include "mozIApplication.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/dom/asmjscache/AsmJSCache.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ExternalHelperAppParent.h"
 #include "mozilla/dom/PMemoryReportRequestParent.h"
@@ -113,6 +114,7 @@
 #ifdef MOZ_WIDGET_GONK
 #include "nsIVolume.h"
 #include "nsIVolumeService.h"
+#include "SpeakerManagerService.h"
 using namespace mozilla::system;
 #endif
 
@@ -194,9 +196,7 @@ MemoryReportRequestParent::~MemoryReportRequestParent()
 class ContentParentsMemoryReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-    ContentParentsMemoryReporter()
-      : MemoryMultiReporter("content-parents")
-    {}
+    ContentParentsMemoryReporter() {}
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback* cb,
                               nsISupports* aClosure);
@@ -335,7 +335,8 @@ ContentParent::StartUp()
         return;
     }
 
-    NS_RegisterMemoryReporter(new ContentParentsMemoryReporter());
+    // Note: This reporter measures all ContentParents.
+    RegisterStrongMemoryReporter(new ContentParentsMemoryReporter());
 
     sCanLaunchSubprocesses = true;
 
@@ -624,6 +625,7 @@ ContentParent::Init()
         obs->AddObserver(this, "memory-pressure", false);
         obs->AddObserver(this, "child-gc-request", false);
         obs->AddObserver(this, "child-cc-request", false);
+        obs->AddObserver(this, "child-mmu-request", false);
         obs->AddObserver(this, "last-pb-context-exited", false);
         obs->AddObserver(this, "file-watcher-update", false);
 #ifdef MOZ_WIDGET_GONK
@@ -1005,6 +1007,7 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
         obs->RemoveObserver(static_cast<nsIObserver*>(this), NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC);
         obs->RemoveObserver(static_cast<nsIObserver*>(this), "child-gc-request");
         obs->RemoveObserver(static_cast<nsIObserver*>(this), "child-cc-request");
+        obs->RemoveObserver(static_cast<nsIObserver*>(this), "child-mmu-request");
         obs->RemoveObserver(static_cast<nsIObserver*>(this), "last-pb-context-exited");
         obs->RemoveObserver(static_cast<nsIObserver*>(this), "file-watcher-update");
 #ifdef MOZ_WIDGET_GONK
@@ -1834,6 +1837,9 @@ ContentParent::Observe(nsISupports* aSubject,
     else if (!strcmp(aTopic, "child-cc-request")){
         unused << SendCycleCollect();
     }
+    else if (!strcmp(aTopic, "child-mmu-request")){
+        unused << SendMinimizeMemoryUsage();
+    }
     else if (!strcmp(aTopic, "last-pb-context-exited")) {
         unused << SendLastPrivateDocShellDestroyed();
     }
@@ -1857,6 +1863,7 @@ ContentParent::Observe(nsISupports* aSubject,
         int32_t  mountGeneration;
         bool     isMediaPresent;
         bool     isSharing;
+        bool     isFormatting;
 
         vol->GetName(volName);
         vol->GetMountPoint(mountPoint);
@@ -1864,10 +1871,11 @@ ContentParent::Observe(nsISupports* aSubject,
         vol->GetMountGeneration(&mountGeneration);
         vol->GetIsMediaPresent(&isMediaPresent);
         vol->GetIsSharing(&isSharing);
+        vol->GetIsFormatting(&isFormatting);
 
         unused << SendFileSystemUpdate(volName, mountPoint, state,
                                        mountGeneration, isMediaPresent,
-                                       isSharing);
+                                       isSharing, isFormatting);
     } else if (!strcmp(aTopic, "phone-state-changed")) {
         nsString state(aData);
         unused << SendNotifyPhoneStateChange(state);
@@ -2447,6 +2455,22 @@ ContentParent::DeallocPFMRadioParent(PFMRadioParent* aActor)
 #endif
 }
 
+asmjscache::PAsmJSCacheEntryParent*
+ContentParent::AllocPAsmJSCacheEntryParent(
+                                          const asmjscache::OpenMode& aOpenMode,
+                                          const int64_t& aSizeToWrite,
+                                          const IPC::Principal& aPrincipal)
+{
+  return asmjscache::AllocEntryParent(aOpenMode, aSizeToWrite, aPrincipal);
+}
+
+bool
+ContentParent::DeallocPAsmJSCacheEntryParent(PAsmJSCacheEntryParent* aActor)
+{
+  asmjscache::DeallocEntryParent(aActor);
+  return true;
+}
+
 PSpeechSynthesisParent*
 ContentParent::AllocPSpeechSynthesisParent()
 {
@@ -2476,6 +2500,35 @@ ContentParent::RecvPSpeechSynthesisConstructor(PSpeechSynthesisParent* aActor)
 #else
     return false;
 #endif
+}
+
+bool
+ContentParent::RecvSpeakerManagerGetSpeakerStatus(bool* aValue)
+{
+#ifdef MOZ_WIDGET_GONK
+  *aValue = false;
+  nsRefPtr<SpeakerManagerService> service =
+    SpeakerManagerService::GetSpeakerManagerService();
+  if (service) {
+    *aValue = service->GetSpeakerStatus();
+  }
+  return true;
+#endif
+  return false;
+}
+
+bool
+ContentParent::RecvSpeakerManagerForceSpeaker(const bool& aEnable)
+{
+#ifdef MOZ_WIDGET_GONK
+  nsRefPtr<SpeakerManagerService> service =
+    SpeakerManagerService::GetSpeakerManagerService();
+  if (service) {
+    service->ForceSpeaker(aEnable, mChildID);
+  }
+  return true;
+#endif
+  return false;
 }
 
 bool
@@ -2711,7 +2764,8 @@ ContentParent::RecvSyncMessage(const nsString& aMsg,
                                InfallibleTArray<nsString>* aRetvals)
 {
   nsIPrincipal* principal = aPrincipal;
-  if (principal && !AssertAppPrincipal(this, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(this, principal)) {
     return false;
   }
 
@@ -2734,7 +2788,8 @@ ContentParent::AnswerRpcMessage(const nsString& aMsg,
                                 InfallibleTArray<nsString>* aRetvals)
 {
   nsIPrincipal* principal = aPrincipal;
-  if (principal && !AssertAppPrincipal(this, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(this, principal)) {
     return false;
   }
 
@@ -2755,7 +2810,8 @@ ContentParent::RecvAsyncMessage(const nsString& aMsg,
                                 const IPC::Principal& aPrincipal)
 {
   nsIPrincipal* principal = aPrincipal;
-  if (principal && !AssertAppPrincipal(this, principal)) {
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false) &&
+      principal && !AssertAppPrincipal(this, principal)) {
     return false;
   }
 
@@ -2797,6 +2853,8 @@ AddGeolocationListener(nsIDOMGeoPositionCallback* watcher, bool highAccuracy)
   }
 
   PositionOptions* options = new PositionOptions();
+  options->mTimeout = 0;
+  options->mMaximumAge = 0;
   options->mEnableHighAccuracy = highAccuracy;
   int32_t retval = 1;
   geo->WatchPosition(watcher, nullptr, options, &retval);
@@ -2808,51 +2866,14 @@ ContentParent::RecvAddGeolocationListener(const IPC::Principal& aPrincipal,
                                           const bool& aHighAccuracy)
 {
 #ifdef MOZ_CHILD_PERMISSIONS
-  if (Preferences::GetBool("geo.testing.ignore_ipc_principal", false) == false) {
-    nsIPrincipal* principal = aPrincipal;
-    if (principal == nullptr) {
-      KillHard();
-      return true;
-    }
-
-    uint32_t principalAppId;
-    nsresult rv = principal->GetAppId(&principalAppId);
-    if (NS_FAILED(rv)) {
-      return true;
-    }
-
-    bool found = false;
-    const InfallibleTArray<PBrowserParent*>& browsers = ManagedPBrowserParent();
-    for (uint32_t i = 0; i < browsers.Length(); ++i) {
-      TabParent* tab = static_cast<TabParent*>(browsers[i]);
-      nsCOMPtr<mozIApplication> app = tab->GetOwnOrContainingApp();
-      uint32_t appId;
-      app->GetLocalId(&appId);
-      if (appId == principalAppId) {
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) {
-      return true;
-    }
-
-    // We need to ensure that this permission has been set.
-    // If it hasn't, just noop
-    nsCOMPtr<nsIPermissionManager> pm = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
-    if (!pm) {
-      return false;
-    }
-
-    uint32_t permission = nsIPermissionManager::UNKNOWN_ACTION;
-    rv = pm->TestPermissionFromPrincipal(principal, "geolocation", &permission);
-    if (NS_FAILED(rv) || permission != nsIPermissionManager::ALLOW_ACTION) {
-      KillHard();
+  if (!Preferences::GetBool("dom.testing.ignore_ipc_principal", false)) {
+    uint32_t permission = mozilla::CheckPermission(this, aPrincipal,
+                                                   "geolocation");
+    if (permission != nsIPermissionManager::ALLOW_ACTION) {
       return true;
     }
   }
-#endif
+#endif /* MOZ_CHILD_PERMISSIONS */
 
   // To ensure no geolocation updates are skipped, we always force the
   // creation of a new listener.
@@ -3086,6 +3107,33 @@ ContentParent::ShouldSandboxContentProcesses()
 #else
   return true;
 #endif
+}
+
+bool
+ContentParent::RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
+                                         const nsString& aPageURL,
+                                         const bool& aIsAudio,
+                                         const bool& aIsVideo)
+{
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+        // recording-device-ipc-events needs to gather more information from content process
+        nsRefPtr<nsHashPropertyBag> props = new nsHashPropertyBag();
+        props->SetPropertyAsUint64(NS_LITERAL_STRING("childID"), ChildID());
+        props->SetPropertyAsBool(NS_LITERAL_STRING("isApp"), IsForApp());
+        props->SetPropertyAsBool(NS_LITERAL_STRING("isAudio"), aIsAudio);
+        props->SetPropertyAsBool(NS_LITERAL_STRING("isVideo"), aIsVideo);
+
+        nsString requestURL = IsForApp() ? AppManifestURL() : aPageURL;
+        props->SetPropertyAsAString(NS_LITERAL_STRING("requestURL"), requestURL);
+
+        obs->NotifyObservers((nsIPropertyBag2*) props,
+                             "recording-device-ipc-events",
+                             aRecordingStatus.get());
+    } else {
+        NS_WARNING("Could not get the Observer service for ContentParent::RecvRecordingDeviceEvents.");
+    }
+    return true;
 }
 
 } // namespace dom

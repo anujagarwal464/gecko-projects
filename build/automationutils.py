@@ -67,7 +67,8 @@ DEBUGGER_INFO = {
 
   "lldb": {
     "interactive": True,
-    "args": "--"
+    "args": "--",
+    "requiresEscapedArgs": True
   },
 
   # valgrind doesn't explain much about leaks unless you set the
@@ -211,7 +212,8 @@ def getDebuggerInfo(directory, debugger, debuggerArgs, debuggerInteractive = Fal
     debuggerInfo = {
       "path": debuggerPath,
       "interactive" : getDebuggerInfo("interactive", False),
-      "args": getDebuggerInfo("args", "").split()
+      "args": getDebuggerInfo("args", "").split(),
+      "requiresEscapedArgs": getDebuggerInfo("requiresEscapedArgs", False)
     }
 
     if debuggerArgs:
@@ -570,14 +572,7 @@ class ShutdownLeaks(object):
       self.seenShutdown = True
 
   def process(self):
-    leakingTests = self._parseLeakingTests()
-
-    if leakingTests:
-      totalWindows = sum(len(test["leakedWindows"]) for test in leakingTests)
-      totalDocShells = sum(len(test["leakedDocShells"]) for test in leakingTests)
-      self.logger("TEST-UNEXPECTED-FAIL | ShutdownLeaks | leaked %d DOMWindow(s) and %d DocShell(s) until shutdown", totalWindows, totalDocShells)
-
-    for test in leakingTests:
+    for test in self._parseLeakingTests():
       for url, count in self._zipLeakedWindows(test["leakedWindows"]):
         self.logger("TEST-UNEXPECTED-FAIL | %s | leaked %d window(s) until shutdown [url = %s]", test["fileName"], count, url)
 

@@ -94,7 +94,7 @@ nsWindowMemoryReporter::Init()
   MOZ_ASSERT(!sWindowReporter);
   sWindowReporter = new nsWindowMemoryReporter();
   ClearOnShutdown(&sWindowReporter);
-  NS_RegisterMemoryReporter(sWindowReporter);
+  RegisterStrongMemoryReporter(sWindowReporter);
   RegisterNonJSSizeOfTab(NonJSSizeOfTab);
 
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
@@ -107,7 +107,7 @@ nsWindowMemoryReporter::Init()
                     /* weakRef = */ true);
   }
 
-  NS_RegisterMemoryReporter(new GhostWindowsReporter());
+  RegisterStrongMemoryReporter(new GhostWindowsReporter());
   RegisterGhostWindowsDistinguishedAmount(GhostWindowsReporter::DistinguishedAmount);
 }
 
@@ -310,6 +310,11 @@ CollectWindowReports(nsGlobalWindow *aWindow,
               "other 'dom/' numbers.");
   aWindowTotalSizes->mDOMOtherSize += windowSizes.mDOMOtherSize;
 
+  REPORT_SIZE("/proto-iface-cache", windowSizes.mProtoIfaceCacheSize,
+              "Memory used for prototype and interface binding caches "
+              "with a window.");
+  aWindowTotalSizes->mProtoIfaceCacheSize += windowSizes.mProtoIfaceCacheSize;
+
   REPORT_SIZE("/property-tables",
               windowSizes.mPropertyTablesSize,
               "Memory used for the property tables within a window.");
@@ -449,13 +454,6 @@ ReportGhostWindowsEnumerator(nsUint64HashKey* aIDHashKey, void* aClosure)
 }
 
 NS_IMETHODIMP
-nsWindowMemoryReporter::GetName(nsACString &aName)
-{
-  aName.AssignLiteral("window-objects");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
                                        nsISupports* aClosure)
 {
@@ -530,6 +528,9 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
 
   REPORT("window-objects/dom/other", windowTotalSizes.mDOMOtherSize,
          "This is the sum of all windows' 'dom/other' numbers.");
+
+  REPORT("window-objects/proto-iface-cache", windowTotalSizes.mProtoIfaceCacheSize,
+         "This is the sum of all windows' 'proto-iface-cache' numbers.");
 
   REPORT("window-objects/property-tables",
          windowTotalSizes.mPropertyTablesSize,

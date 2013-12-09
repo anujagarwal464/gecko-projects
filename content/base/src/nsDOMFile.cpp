@@ -12,7 +12,6 @@
 #include "nsDOMClassInfoID.h"
 #include "nsError.h"
 #include "nsICharsetDetector.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIClassInfo.h"
 #include "nsIConverterInputStream.h"
 #include "nsIDocument.h"
@@ -649,9 +648,7 @@ class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
   : public MemoryMultiReporter
 {
 public:
-  nsDOMMemoryFileDataOwnerMemoryReporter()
-    : MemoryMultiReporter("dom-memory-file-data-owner")
-  {}
+  nsDOMMemoryFileDataOwnerMemoryReporter() {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback *aCallback,
                             nsISupports *aClosure)
@@ -734,9 +731,7 @@ nsDOMMemoryFile::DataOwner::EnsureMemoryReporterRegistered()
     return;
   }
 
-  nsRefPtr<nsDOMMemoryFileDataOwnerMemoryReporter> reporter = new
-    nsDOMMemoryFileDataOwnerMemoryReporter();
-  NS_RegisterMemoryReporter(reporter);
+  RegisterStrongMemoryReporter(new nsDOMMemoryFileDataOwnerMemoryReporter());
 
   sMemoryReporterRegistered = true;
 }

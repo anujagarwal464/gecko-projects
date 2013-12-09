@@ -17,6 +17,7 @@
 #include "nsXPCOM.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Likely.h"
+#include <stdarg.h>
 
 #ifdef DEBUG
 #include "prprf.h"
@@ -384,6 +385,15 @@ inline bool NS_warn_if_impl(bool condition, const char* expr, const char* file,
     if (MOZ_UNLIKELY(owningThread != PR_GetCurrentThread())) {  \
       MOZ_CRASH(msg);                                           \
     }
+#endif
+
+#ifdef MOZILLA_INTERNAL_API
+void NS_ABORT_OOM(size_t size);
+#else
+inline void NS_ABORT_OOM(size_t)
+{
+  MOZ_CRASH();
+}
 #endif
 
 /* When compiling the XPCOM Glue on Windows, we pretend that it's going to

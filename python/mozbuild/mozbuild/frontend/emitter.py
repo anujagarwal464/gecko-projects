@@ -174,7 +174,7 @@ class TreeMetadataEmitter(LoggingMixin):
             yield XPIDLFile(sandbox, mozpath.join(sandbox['SRCDIR'], idl),
                 xpidl_module)
 
-        for symbol in ('SOURCES', 'GTEST_SOURCES', 'HOST_SOURCES', 'UNIFIED_SOURCES'):
+        for symbol in ('SOURCES', 'HOST_SOURCES', 'UNIFIED_SOURCES'):
             for src in (sandbox[symbol] or []):
                 if not os.path.exists(os.path.join(sandbox['SRCDIR'], src)):
                     raise SandboxValidationError('Reference to a file that '
@@ -238,12 +238,6 @@ class TreeMetadataEmitter(LoggingMixin):
                 '.cc': 'HOST_CPPSRCS',
                 '.cpp': 'HOST_CPPSRCS',
             },
-            GTEST_SOURCES={
-                '.c': 'GTEST_CSRCS',
-                '.mm': 'GTEST_CMMSRCS',
-                '.cc': 'GTEST_CPPSRCS',
-                '.cpp': 'GTEST_CPPSRCS',
-            },
             UNIFIED_SOURCES={
                 '.c': 'UNIFIED_CSRCS',
                 '.mm': 'UNIFIED_CMMSRCS',
@@ -263,6 +257,16 @@ class TreeMetadataEmitter(LoggingMixin):
                 if variable.startswith('GENERATED_'):
                     l = passthru.variables.setdefault('GARBAGE', [])
                     l.append(f)
+
+        no_pgo = sandbox.get('NO_PGO')
+        sources = sandbox.get('SOURCES', [])
+        no_pgo_sources = [f for f in sources if sources[f].no_pgo]
+        if no_pgo:
+            if no_pgo_sources:
+                raise SandboxValidationError('NO_PGO and SOURCES[...].no_pgo cannot be set at the same time')
+            passthru.variables['NO_PROFILE_GUIDED_OPTIMIZE'] = no_pgo
+        if no_pgo_sources:
+            passthru.variables['NO_PROFILE_GUIDED_OPTIMIZE'] = no_pgo_sources
 
         exports = sandbox.get('EXPORTS')
         if exports:

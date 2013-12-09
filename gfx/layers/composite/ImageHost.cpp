@@ -14,7 +14,6 @@
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "nsString.h"                   // for nsAutoCString
 
-class gfxImageSurface;
 class nsIntRegion;
 
 namespace mozilla {
@@ -43,16 +42,16 @@ ImageHost::UseTextureHost(TextureHost* aTexture)
 }
 
 void
-ImageHost::RemoveTextureHost(uint64_t aTextureID)
+ImageHost::RemoveTextureHost(TextureHost* aTexture)
 {
-  CompositableHost::RemoveTextureHost(aTextureID);
-  if (mFrontBuffer && mFrontBuffer->GetID() == aTextureID) {
+  CompositableHost::RemoveTextureHost(aTexture);
+  if (mFrontBuffer && mFrontBuffer->GetID() == aTexture->GetID()) {
     mFrontBuffer = nullptr;
   }
 }
 
 TextureHost*
-ImageHost::GetTextureHost()
+ImageHost::GetAsTextureHost()
 {
   return mFrontBuffer;
 }
@@ -200,7 +199,7 @@ ImageHost::GetRenderState()
 }
 
 #ifdef MOZ_DUMP_PAINTING
-already_AddRefed<gfxImageSurface>
+TemporaryRef<gfx::DataSourceSurface>
 ImageHost::GetAsSurface()
 {
   return mFrontBuffer->GetAsSurface();
@@ -399,7 +398,7 @@ DeprecatedImageHostSingle::Dump(FILE* aFile,
   }
 }
 
-already_AddRefed<gfxImageSurface>
+TemporaryRef<gfx::DataSourceSurface>
 DeprecatedImageHostSingle::GetAsSurface()
 {
   return mDeprecatedTextureHost->GetAsSurface();

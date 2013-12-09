@@ -28,15 +28,14 @@ var APZCObserver = {
     }
 
     let os = Services.obs;
-    os.addObserver(this, "apzc-handle-pan-begin", false);
-    os.addObserver(this, "apzc-handle-pan-end", false);
+    os.addObserver(this, "apzc-transform-begin", false);
 
     // Fired by ContentAreaObserver
     window.addEventListener("SizeChanged", this, true);
-
     Elements.tabList.addEventListener("TabSelect", this, true);
-    Elements.tabList.addEventListener("TabOpen", this, true);
-    Elements.tabList.addEventListener("TabClose", this, true);
+    Elements.browsers.addEventListener("pageshow", this, true);
+    messageManager.addMessageListener("Browser:ContentScroll", this);
+    messageManager.addMessageListener("Content:ZoomToRect", this);
   },
 
   shutdown: function shutdown() {
@@ -45,14 +44,13 @@ var APZCObserver = {
     }
 
     let os = Services.obs;
-    os.removeObserver(this, "apzc-handle-pan-begin");
-    os.removeObserver(this, "apzc-handle-pan-end");
+    os.removeObserver(this, "apzc-transform-begin");
 
     window.removeEventListener("SizeChanged", this, true);
-
     Elements.tabList.removeEventListener("TabSelect", this, true);
-    Elements.tabList.removeEventListener("TabOpen", this, true);
-    Elements.tabList.removeEventListener("TabClose", this, true);
+    Elements.browsers.removeEventListener("pageshow", this, true);
+    messageManager.removeMessageListener("Browser:ContentScroll", this);
+    messageManager.removeMessageListener("Content:ZoomToRect", this);
   },
 
   handleEvent: function APZC_handleEvent(aEvent) {
@@ -68,25 +66,11 @@ var APZCObserver = {
         }
         this._resetDisplayPort();
         break;
-
-      case 'TabOpen': {
-        let browser = aEvent.originalTarget.linkedBrowser;
-        browser.addEventListener("pageshow", this, true);
-        // Register for notifications from content about scroll actions.
-        browser.messageManager.addMessageListener("Browser:ContentScroll", this);
-        break;
-      }
-      case 'TabClose': {
-        let browser = aEvent.originalTarget.linkedBrowser;
-        browser.removeEventListener("pageshow", this, true);
-        browser.messageManager.removeMessageListener("Browser:ContentScroll", this);
-        break;
-      }
     }
   },
 
   observe: function ao_observe(aSubject, aTopic, aData) {
-    if (aTopic == "apzc-handle-pan-begin") {
+    if (aTopic == "apzc-transform-begin") {
       // When we're panning, hide the main scrollbars by setting imprecise
       // input (which sets a property on the browser which hides the scrollbar
       // via CSS).  This reduces jittering from left to right. We may be able
@@ -99,6 +83,7 @@ var APZCObserver = {
 
   receiveMessage: function(aMessage) {
     let json = aMessage.json;
+    let browser = aMessage.target;
     switch (aMessage.name) {
        // Content notifies us here (syncronously) if it has scrolled
        // independent of the apz. This can happen in a lot of
@@ -110,7 +95,33 @@ var APZCObserver = {
         Services.obs.notifyObservers(null, "apzc-scroll-offset-changed", data);
         break;
       }
+      case "Content:ZoomToRect": {
+        let { presShellId, viewId } = json;
+        let rect = Rect.fromRect(json.rect);
+        if (this.isRectZoomedIn(rect, browser.contentViewportBounds)) {
+          // If we're already zoomed in, zoom out instead.
+          rect = new Rect(0,0,0,0);
+        }
+        let data = [rect.x, rect.y, rect.width, rect.height, presShellId, viewId].join(",");
+        Services.obs.notifyObservers(null, "apzc-zoom-to-rect", data);
+      }
     }
+  },
+
+  /**
+   * Check to see if the area of the rect visible in the viewport is
+   * approximately the max area of the rect we can show.
+   * Based on code from BrowserElementPanning.js
+   */
+  isRectZoomedIn: function (aRect, aViewport) {
+    let overlap = aViewport.intersect(aRect);
+    let overlapArea = overlap.width * overlap.height;
+    let availHeight = Math.min(aRect.width * aViewport.height / aViewport.width, aRect.height);
+    let showing = overlapArea / (aRect.width * availHeight);
+    let ratioW = (aRect.width / aViewport.width);
+    let ratioH = (aRect.height / aViewport.height);
+
+    return (showing > 0.9 && (ratioW > 0.9 || ratioH > 0.9));
   },
 
   _resetDisplayPort: function () {

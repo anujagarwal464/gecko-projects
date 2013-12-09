@@ -634,9 +634,7 @@ static int64_t gSurfaceMemoryUsed[gfxSurfaceTypeMax] = { 0 };
 class SurfaceMemoryReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-    SurfaceMemoryReporter()
-        : MemoryMultiReporter("gfx-surface")
-    { }
+    SurfaceMemoryReporter() { }
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback *aCb,
                               nsISupports *aClosure)
@@ -676,7 +674,7 @@ gfxASurface::RecordMemoryUsedForSurfaceType(gfxSurfaceType aType,
 
     static bool registered = false;
     if (!registered) {
-        NS_RegisterMemoryReporter(new SurfaceMemoryReporter());
+        RegisterStrongMemoryReporter(new SurfaceMemoryReporter());
         registered = true;
     }
 

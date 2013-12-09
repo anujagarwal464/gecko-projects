@@ -35,6 +35,10 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/VisualEventTracer.h"
+#if defined(XP_WIN)
+// See bug 942317 in case you're all "WTF, mate?!"
+#include "mozilla/Preferences.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -265,6 +269,42 @@ nsHostRecord::HasUsableResult(uint16_t queryFlags) const
     return addr_info || addr || negative;
 }
 
+static size_t
+SizeOfResolveHostCallbackListExcludingHead(const PRCList *head,
+                                           MallocSizeOf mallocSizeOf)
+{
+    size_t n = 0;
+    PRCList *curr = head->next;
+    while (curr != head) {
+        nsResolveHostCallback *callback =
+            static_cast<nsResolveHostCallback*>(curr);
+        n += callback->SizeOfIncludingThis(mallocSizeOf);
+        curr = curr->next;
+    }
+    return n;
+}
+
+size_t
+nsHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const
+{
+    size_t n = mallocSizeOf(this);
+
+    // The |host| field (inherited from nsHostKey) actually points to extra
+    // memory that is allocated beyond the end of the nsHostRecord (see
+    // nsHostRecord::Create()).  So it will be included in the
+    // |mallocSizeOf(this)| call above.
+
+    n += SizeOfResolveHostCallbackListExcludingHead(&callbacks, mallocSizeOf);
+    n += addr_info ? addr_info->SizeOfIncludingThis(mallocSizeOf) : 0;
+    n += mallocSizeOf(addr);
+
+    n += mBlacklistedItems.SizeOfExcludingThis(mallocSizeOf);
+    for (size_t i = 0; i < mBlacklistedItems.Length(); i++) {
+        n += mBlacklistedItems[i].SizeOfIncludingThisMustBeUnshared(mallocSizeOf);
+    }
+    return n;
+}
+
 //----------------------------------------------------------------------------
 
 struct nsHostDBEnt : PLDHashEntryHdr
@@ -389,6 +429,13 @@ nsHostResolver::nsHostResolver(uint32_t maxCacheEntries,
     , mEvictionQSize(0)
     , mPendingCount(0)
     , mShutdown(true)
+#if defined(XP_WIN)
+    // See bug 942317 in case you're all "WTF, mate?!"
+    , mExperimentLock("nsHostResolver.mExperimentLock")
+    , mHasRunExperiment(false)
+    , mNetworkExperimentsOK(true)
+    , mDnsExperimentOK(true)
+#endif
 {
     mCreationTime = PR_Now();
     PR_INIT_CLIST(&mHighQ);
@@ -423,6 +470,21 @@ nsHostResolver::Init()
         LOG(("Calling 'res_ninit'.\n"));
         res_ninit(&_res);
     }
+#endif
+
+#if defined(XP_WIN)
+    // See bug 942317 in case you're all "WTF, mate?!"
+    Preferences::AddBoolVarCache(&mNetworkExperimentsOK,
+                                 "network.allow-experiments",
+                                 true);
+    Preferences::AddBoolVarCache(&mDnsExperimentOK,
+                                 "network.dns.allow-srv-experiment",
+#if defined(EARLY_BETA_OR_EARLIER)
+                                 true
+#else
+                                 false
+#endif
+                                );
 #endif
     return NS_OK;
 }
@@ -644,7 +706,7 @@ nsHostResolver::ResolveHost(const char            *host,
                         he->rec->addr_info = nullptr;
                         if (unspecHe->rec->negative) {
                             he->rec->negative = unspecHe->rec->negative;
-                        } else if (he->rec->addr_info) {
+                        } else if (unspecHe->rec->addr_info) {
                             // Search for any valid address in the AF_UNSPEC entry
                             // in the cache (not blacklisted and from the right
                             // family).
@@ -807,10 +869,326 @@ nsHostResolver::ConditionallyCreateThread(nsHostRecord *rec)
     return NS_OK;
 }
 
+#if defined(XP_WIN)
+// See bug 942317 in case you're all "WTF, mate?!"
+#include "nsID.h"
+#include "nsIUUIDGenerator.h"
+#include "nsServiceManagerUtils.h"
+#include "prlink.h"
+#include "Windns.h"
+#include "Windows.h"
+
+typedef DNS_STATUS (__stdcall * DnsQueryFunc) (PCTSTR lpstrName, WORD wType,
+                                               DWORD Options, PVOID pExtra,
+                                               PDNS_RECORD *ppQueryResultsSet,
+                                               PVOID *pReserved);
+
+class ExperimentFinishedRunner : public nsRunnable
+{
+public:
+    ExperimentFinishedRunner(nsIThread *thread)
+        :mThread(thread)
+    { }
+
+    ~ExperimentFinishedRunner()
+    { }
+
+    NS_IMETHOD Run() MOZ_OVERRIDE
+    {
+        mThread->Shutdown();
+        return NS_OK;
+    }
+
+private:
+    nsCOMPtr<nsIThread> mThread;
+};
+
+class ExperimentResolver : public nsRunnable
+{
+public:
+    ExperimentResolver(WORD queryType, nsACString &uuid, HANDLE *event,
+                       TimeStamp *start, TimeStamp *end, DNS_STATUS *status,
+                       DNS_RECORDA **results, DnsQueryFunc dnsQuery)
+        :mQueryType(queryType)
+        ,mUUID(uuid)
+        ,mEvent(event)
+        ,mStart(start)
+        ,mEnd(end)
+        ,mStatus(status)
+        ,mResults(results)
+        ,mDnsQuery(dnsQuery)
+    { }
+
+    ~ExperimentResolver()
+    { }
+
+    NS_IMETHOD Run() MOZ_OVERRIDE
+    {
+        nsAutoCString name;
+        if (mQueryType == DNS_TYPE_SRV) {
+            name.Assign(NS_LITERAL_CSTRING("_http2tls.srv-"));
+        } else {
+            name.Assign(NS_LITERAL_CSTRING("a-"));
+        }
+        name.Append(mUUID);
+        name.Append(NS_LITERAL_CSTRING(".http2test.mozilla.org"));
+
+        *mStart = mozilla::TimeStamp::Now();
+        *mStatus = mDnsQuery(name.get(), mQueryType, DNS_QUERY_STANDARD,
+                             nullptr, mResults, nullptr);
+        *mEnd = mozilla::TimeStamp::Now();
+
+        SetEvent(*mEvent);
+
+        return NS_OK;
+    }
+
+private:
+    WORD mQueryType;
+    nsAutoCString mUUID;
+    HANDLE *mEvent;
+    TimeStamp *mStart;
+    TimeStamp *mEnd;
+    DNS_STATUS *mStatus;
+    DNS_RECORDA **mResults;
+    DnsQueryFunc mDnsQuery;
+};
+
+class ExperimentRunner : public nsRunnable
+{
+public:
+    ExperimentRunner(nsIThread *experimentThread, nsIThread *resolveAThread,
+                     nsIThread *resolveSRVThread)
+        :mExperimentThread(experimentThread)
+        ,mResolveAThread(resolveAThread)
+        ,mResolveSRVThread(resolveSRVThread)
+    { }
+
+    ~ExperimentRunner()
+    { }
+
+    NS_IMETHOD Run() MOZ_OVERRIDE
+    {
+        // These are all declared here because compiler warnings about goto.
+        DnsQueryFunc dnsQuery;
+        TimeStamp startALookup, endALookup, startSRVLookup, endSRVLookup;
+        DNS_RECORDA *aResults, *srvResults;
+        DNS_STATUS aStatus, srvStatus;
+        int32_t experimentStatus;
+        Telemetry::ID deltaKey;
+        TimeDuration duration;
+        double delta;
+        uint32_t timeDelta;
+        nsresult rv;
+        nsID id;
+        char uuid[NSID_LENGTH];
+        nsAutoCString dnsUUID;
+        nsCOMPtr<nsIUUIDGenerator> uuidgen;
+        HANDLE events[2];
+        bool correctA = true, correctSRV = true;
+
+        PRLibrary *lib = PR_LoadLibrary("Dnsapi.dll");
+        if (!lib) {
+            goto out;
+        }
+
+        dnsQuery = (DnsQueryFunc) PR_FindFunctionSymbol(lib, "DnsQuery_A");
+        if (!dnsQuery) {
+            goto library_cleanup;
+        }
+
+        // Generate hostnames that are subhosts of aus.mozilla.org, as we want
+        // to make sure that whatever hostname we lookup will not be cached
+        // anywhere. Use separate names for the A and SRV lookups to ensure that
+        // Windows doesn't do any odd caching of NXDOMAIN in case the A lookup
+        // fails.
+        uuidgen = do_GetService("@mozilla.org/uuid-generator;1", &rv);
+        if (NS_FAILED(rv)) {
+            goto library_cleanup;
+        }
+        rv = uuidgen->GenerateUUIDInPlace(&id);
+        NS_ENSURE_SUCCESS(rv, NS_OK);
+        id.ToProvidedString(uuid);
+        // Strip off the { and } surrounding the UUID string
+        dnsUUID.Assign(Substring(nsDependentCString(uuid), 1, NSID_LENGTH - 3));
+
+        // Create events for A and SRV resolvers
+        events[0] = CreateEvent(NULL, TRUE, FALSE, TEXT("FinishedA"));
+        if (!events[0]) {
+            goto library_cleanup;
+        }
+
+        events[1] = CreateEvent(NULL, TRUE, FALSE, TEXT("FinishedSRV"));
+        if (!events[1]) {
+            goto aevent_cleanup;
+        }
+
+        // dispatch A resolver
+        mResolveAThread->Dispatch(new ExperimentResolver(DNS_TYPE_A,
+                                                         dnsUUID,
+                                                         &events[0],
+                                                         &startALookup,
+                                                         &endALookup,
+                                                         &aStatus,
+                                                         &aResults,
+                                                         dnsQuery),
+                                  NS_DISPATCH_NORMAL);
+
+        // dispatch SRV resolver
+        mResolveSRVThread->Dispatch(new ExperimentResolver(DNS_TYPE_SRV,
+                                                           dnsUUID,
+                                                           &events[1],
+                                                           &startSRVLookup,
+                                                           &endSRVLookup,
+                                                           &srvStatus,
+                                                           &srvResults,
+                                                           dnsQuery),
+                                    NS_DISPATCH_NORMAL);
+
+        WaitForMultipleObjects(2, events, TRUE, INFINITE);
+
+        // Ensure we got the expected results
+        if (aStatus == DNS_RCODE_NOERROR) {
+            if (aResults->Data.A.IpAddress != 0x7F000001) {
+                correctA = false;
+            }
+        }
+
+        if (srvStatus == DNS_RCODE_NOERROR) {
+            DNS_SRV_DATA *srvData = &srvResults->Data.Srv;
+            if (_stricmp(srvData->pNameTarget, "success.http2test.mozilla.org") ||
+                srvData->wPort != 443 ||
+                srvData->wPriority != 100 ||
+                srvData->wWeight != 100) {
+                correctSRV = false;
+            }
+        }
+
+        if (aStatus == DNS_RCODE_NOERROR && srvStatus == DNS_RCODE_NOERROR) {
+            experimentStatus = kBothSucceed;
+            deltaKey = Telemetry::SRV_EXPERIMENT_SUCCESS_DELTA;
+            Telemetry::Accumulate(Telemetry::SRV_EXPERIMENT_A_CORRECT, correctA);
+            Telemetry::Accumulate(Telemetry::SRV_EXPERIMENT_SRV_CORRECT, correctSRV);
+        } else if (aStatus == DNS_RCODE_NOERROR) {
+            experimentStatus = kSRVFail;
+            deltaKey = Telemetry::SRV_EXPERIMENT_SRV_FAIL_DELTA;
+            Telemetry::Accumulate(Telemetry::SRV_EXPERIMENT_SRV_CORRECT, correctSRV);
+        } else if (srvStatus == DNS_RCODE_NOERROR) {
+            experimentStatus = kAFail;
+            deltaKey = Telemetry::SRV_EXPERIMENT_A_FAIL_DELTA;
+            Telemetry::Accumulate(Telemetry::SRV_EXPERIMENT_A_CORRECT, correctA);
+        } else { // aStatus != DNS_RCODE_NOERROR && srvStatus != DNS_RCODE_NOERROR
+            experimentStatus = kBothFail;
+            deltaKey = Telemetry::SRV_EXPERIMENT_FAIL_DELTA;
+            // Neither one succeeded, so our correctness flags are irrelevant
+        }
+
+        Telemetry::Accumulate(Telemetry::SRV_EXPERIMENT_STATUS,
+                              experimentStatus);
+        Telemetry::AccumulateTimeDelta(Telemetry::SRV_EXPERIMENT_SRV_TIME,
+                                       startSRVLookup, endSRVLookup);
+        Telemetry::AccumulateTimeDelta(Telemetry::SRV_EXPERIMENT_A_TIME,
+                                       startALookup, endALookup);
+
+        // Calculate time delta in ms clamped to [0, 2000] where 1000 means both
+        // lookups took the same amount of time, 0-999 means the SRV record came
+        // back faster, and 1001-2000 means the A record came back faster.
+        duration = (endALookup - startALookup) - (endSRVLookup - startSRVLookup);
+        delta = duration.ToMilliseconds();
+        if (delta < -1000.0) {
+            delta = -1000.0;
+        } else if (delta > 1000.0) {
+            delta = 1000.0;
+        }
+
+        timeDelta = static_cast<uint32_t>(delta) + 1000;
+        Telemetry::Accumulate(deltaKey, timeDelta);
+
+        mResolveSRVThread->Shutdown();
+        mResolveAThread->Shutdown();
+        CloseHandle(events[1]);
+aevent_cleanup:
+        CloseHandle(events[0]);
+        // Do the library cleanup here to avoid doing I/O on the main thread
+library_cleanup:
+        dnsQuery = nullptr;
+        PR_UnloadLibrary(lib);
+out:
+        NS_DispatchToMainThread(new ExperimentFinishedRunner(mExperimentThread));
+
+        return NS_OK;
+    }
+
+private:
+    nsCOMPtr<nsIThread> mExperimentThread;
+    nsCOMPtr<nsIThread> mResolveAThread;
+    nsCOMPtr<nsIThread> mResolveSRVThread;
+    static const uint32_t kBothSucceed = 0;
+    static const uint32_t kSRVFail = 1;
+    static const uint32_t kAFail = 2;
+    static const uint32_t kBothFail = 3;
+};
+
+void
+nsHostResolver::RunExperiment()
+{
+    if (!NS_IsMainThread()) {
+        return;
+    }
+
+    {
+        MutexAutoLock lock(mExperimentLock);
+        if (mHasRunExperiment) {
+            return;
+        }
+
+        mHasRunExperiment = true;
+    }
+
+    nsCOMPtr<nsIThread> experimentThread;
+    NS_NewNamedThread("SRV Experiment", getter_AddRefs(experimentThread));
+    if (!experimentThread) {
+        return;
+    }
+
+    // Create threads for A and SRV resolvers
+    nsCOMPtr<nsIThread> resolveAThread;
+    NS_NewNamedThread("Experiment A", getter_AddRefs(resolveAThread));
+    if (!resolveAThread) {
+        experimentThread->Shutdown();
+        return;
+    }
+
+    nsCOMPtr<nsIThread> resolveSRVThread;
+    NS_NewNamedThread("Experiment SRV", getter_AddRefs(resolveSRVThread));
+    if (!resolveSRVThread) {
+        resolveAThread->Shutdown();
+        experimentThread->Shutdown();
+        return;
+    }
+
+    experimentThread->Dispatch(new ExperimentRunner(experimentThread,
+                                                    resolveAThread,
+                                                    resolveSRVThread),
+                               NS_DISPATCH_NORMAL);
+}
+#endif
+
 nsresult
 nsHostResolver::IssueLookup(nsHostRecord *rec)
 {
     MOZ_EVENT_TRACER_WAIT(rec, "net::dns::resolve");
+
+#if defined(XP_WIN)
+    // See bug 942317 in case you're all "WTF, mate?!"
+    if (mNetworkExperimentsOK && mDnsExperimentOK && Telemetry::CanRecord() &&
+        !mHasRunExperiment) {
+        int offset = strlen(rec->host) - strlen(".mozilla.org");
+        if ((offset > 0) && (_stricmp(rec->host + offset, ".mozilla.org") == 0)) {
+            RunExperiment();
+        }
+    }
+#endif
 
     nsresult rv = NS_OK;
     NS_ASSERTION(!rec->resolving, "record is already being resolved");
@@ -1068,6 +1446,31 @@ nsHostResolver::CancelAsyncRequest(const char            *host,
             }
         }
     }
+}
+
+static size_t
+SizeOfHostDBEntExcludingThis(PLDHashEntryHdr* hdr, MallocSizeOf mallocSizeOf,
+                             void*)
+{
+    nsHostDBEnt* ent = static_cast<nsHostDBEnt*>(hdr);
+    return ent->rec->SizeOfIncludingThis(mallocSizeOf);
+}
+
+size_t
+nsHostResolver::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const
+{
+    MutexAutoLock lock(mLock);
+
+    size_t n = mallocSizeOf(this);
+    n += PL_DHashTableSizeOfExcludingThis(&mDB, SizeOfHostDBEntExcludingThis,
+                                          mallocSizeOf);
+
+    // The following fields aren't measured.
+    // - mHighQ, mMediumQ, mLowQ, mEvictionQ, because they just point to
+    //   nsHostRecords that also pointed to by entries |mDB|, and measured when
+    //   |mDB| is measured.
+
+    return n;
 }
 
 void

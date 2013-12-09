@@ -17,15 +17,19 @@
       <footer id="PanelUI-footer">
         <!-- The parentNode is used so that the footer is presented as the anchor
              instead of just the button being the anchor. -->
-        <toolbarbutton id="PanelUI-help" label="&helpMenu.label;" tabindex="0"
-                       oncommand="PanelUI.showHelpView(this.parentNode);"/>
-        <toolbarbutton id="PanelUI-customize" label="&appMenuCustomize.label;" tabindex="0"
+        <toolbarbutton id="PanelUI-customize" label="&appMenuCustomize.label;"
+                       exitLabel="&appMenuCustomizeExit.label;" tabindex="0"
                        oncommand="gCustomizeMode.toggle();"/>
+        <toolbarbutton id="PanelUI-help" label="&helpMenu.label;" tabindex="0"
+                       tooltiptext="&helpMenu.label;"
+                       oncommand="PanelUI.showHelpView(this.parentNode);"/>
         <toolbarbutton id="PanelUI-quit" tabindex="0"
 #ifdef XP_WIN
                        label="&quitApplicationCmdWin.label;"
+                       tooltiptext="&quitApplicationCmdWin.label;"
 #else
                        label="&quitApplicationCmd.label;"
+                       tooltiptext="&quitApplicationCmd.label;"
 #endif
                        command="cmd_quitApplication"/>
       </footer>
@@ -106,8 +110,6 @@
 
     <panelview id="PanelUI-characterEncodingView" flex="1">
       <label value="&charsetMenu.label;"/>
-      <toolbarbutton label="&charsetCustomize.label;"
-                     oncommand="PanelUI.onCharsetCustomizeCommand();"/>
 
       <vbox id="PanelUI-characterEncodingView-customlist"
             class="PanelUI-characterEncodingView-list"/>

@@ -53,9 +53,7 @@ NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(ImagesMallocSizeOf)
 class imgMemoryReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-  imgMemoryReporter()
-    : MemoryMultiReporter("images")
-  {}
+  imgMemoryReporter() {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback *callback,
                             nsISupports *closure)
@@ -820,7 +818,7 @@ void imgLoader::GlobalInit()
     sCacheMaxSize = 5 * 1024 * 1024;
 
   sMemReporter = new imgMemoryReporter();
-  NS_RegisterMemoryReporter(sMemReporter);
+  RegisterStrongMemoryReporter(sMemReporter);
   RegisterImagesContentUsedUncompressedDistinguishedAmount(imgMemoryReporter::ImagesContentUsedUncompressedDistinguishedAmount);
 }
 

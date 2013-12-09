@@ -439,6 +439,11 @@ pref("dom.mozNetworkStats.enabled", true);
 pref("dom.webapps.firstRunWithSIM", true);
 #endif
 
+#ifdef MOZ_B2G_RIL
+// SingleVariant
+pref("dom.mozApps.single_variant_sourcedir", "/persist/svoperapps");
+#endif
+
 // WebSettings
 pref("dom.mozSettings.enabled", true);
 pref("dom.navigator-property.disable.mozSettings", false);
@@ -736,8 +741,7 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
 
-pref("layout.imagevisibility.enabled", false);
-pref("layout.imagevisibility.enabled_for_browser_elements_only", true);
+pref("layout.imagevisibility.enabled", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -839,3 +843,13 @@ pref("b2g.neterror.url", "app://system.gaiamobile.org/net_error.html");
 
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
+
+// Downloads API
+pref("dom.mozDownloads.enabled", true);
+pref("dom.downloads.max_retention_days", 7);
+
+// Inactivity time in milliseconds after which we shut down the OS.File worker.
+pref("osfile.reset_worker_delay", 5000);
+
+// The URL of the Firefox Accounts auth server backend
+pref("identity.fxaccounts.auth.uri", "https://api-accounts.dev.lcip.org/v1");

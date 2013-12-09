@@ -25,6 +25,14 @@ const kWidePanelItemClass = "panel-wide-item";
 let gModuleName = "[CustomizableWidgets]";
 #include logging.js
 
+function isWin8OrHigher() {
+  let osName = Services.sysinfo.getProperty("name");
+  let version = Services.sysinfo.getProperty("version");
+
+  // Windows 8 is version >= 6.2
+  return osName == "Windows_NT" && Services.vc.compare(version, "6.2") >= 0;
+}
+
 function setAttributes(aNode, aAttrs) {
   for (let [name, value] of Iterator(aAttrs)) {
     if (!value) {
@@ -40,7 +48,7 @@ function setAttributes(aNode, aAttrs) {
 
 function updateCombinedWidgetStyle(aNode, aArea, aModifyAutoclose) {
   let inPanel = (aArea == CustomizableUI.AREA_PANEL);
-  let cls = inPanel ? "panel-combined-button" : null;
+  let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
   let attrs = {class: cls};
   if (aModifyAutoclose) {
     attrs.noautoclose = inPanel ? true : null;
@@ -297,7 +305,7 @@ const CustomizableWidgets = [{
       const kPanelId = "PanelUI-popup";
       let inPanel = (this.currentArea == CustomizableUI.AREA_PANEL);
       let noautoclose = inPanel ? "true" : null;
-      let cls = inPanel ? "panel-combined-button" : null;
+      let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
 
       if (!this.currentArea)
         cls = null;
@@ -441,7 +449,7 @@ const CustomizableWidgets = [{
     defaultArea: CustomizableUI.AREA_PANEL,
     onBuild: function(aDocument) {
       let inPanel = (this.currentArea == CustomizableUI.AREA_PANEL);
-      let cls = inPanel ? "panel-combined-button" : null;
+      let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
 
       if (!this.currentArea)
         cls = null;
@@ -480,8 +488,6 @@ const CustomizableWidgets = [{
           node.appendChild(aDocument.createElementNS(kNSXUL, "separator"));
         let btnNode = aDocument.createElementNS(kNSXUL, "toolbarbutton");
         setAttributes(btnNode, aButton);
-        if (inPanel)
-          btnNode.setAttribute("tabindex", "0");
         node.appendChild(btnNode);
       });
 
@@ -779,4 +785,33 @@ const CustomizableWidgets = [{
       };
       CustomizableUI.addListener(listener);
     }
+  }, {
+    id: "email-link-button",
+    removable: true,
+    onCommand: function(aEvent) {
+      let win = aEvent.view;
+      win.MailIntegration.sendLinkForWindow(win.content);
+    }
   }];
+
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+if (isWin8OrHigher()) {
+  CustomizableWidgets.push({
+    id: "switch-to-metro-button",
+    label: "switch-to-metro-button2.label",
+    tooltiptext: "switch-to-metro-button2.tooltiptext",
+    removable: true,
+    defaultArea: CustomizableUI.AREA_PANEL,
+    onCommand: function(aEvent) {
+      let win = aEvent.target &&
+        aEvent.target.ownerDocument &&
+        aEvent.target.ownerDocument.defaultView;
+      if (win && typeof win.SwitchToMetro == "function") {
+        win.SwitchToMetro();
+      }
+    }
+  });
+}
+#endif
+#endif

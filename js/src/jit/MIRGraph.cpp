@@ -95,11 +95,11 @@ MIRGraph::removeBlock(MBasicBlock *block)
     if (block == osrBlock_)
         osrBlock_ = nullptr;
 
-    if (exitAccumulator_) {
+    if (returnAccumulator_) {
         size_t i = 0;
-        while (i < exitAccumulator_->length()) {
-            if ((*exitAccumulator_)[i] == block)
-                exitAccumulator_->erase(exitAccumulator_->begin() + i);
+        while (i < returnAccumulator_->length()) {
+            if ((*returnAccumulator_)[i] == block)
+                returnAccumulator_->erase(returnAccumulator_->begin() + i);
             else
                 i++;
         }
@@ -305,13 +305,13 @@ MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kin
 bool
 MBasicBlock::init()
 {
-    return slots_.init(info_.nslots());
+    return slots_.init(graph_.alloc(), info_.nslots());
 }
 
 bool
 MBasicBlock::increaseSlots(size_t num)
 {
-    return slots_.growBy(num);
+    return slots_.growBy(graph_.alloc(), num);
 }
 
 void
@@ -348,7 +348,7 @@ MBasicBlock::inherit(TempAllocator &alloc, BytecodeAnalysis *analysis, MBasicBlo
 
     // Create a resume point using our initial stack state.
     entryResumePoint_ = new(alloc) MResumePoint(this, pc(), callerResumePoint, MResumePoint::ResumeAt);
-    if (!entryResumePoint_->init())
+    if (!entryResumePoint_->init(alloc))
         return false;
 
     if (pred) {
@@ -1203,6 +1203,12 @@ MIRGraph::dump(FILE *fp)
 }
 
 void
+MIRGraph::dump()
+{
+    dump(stderr);
+}
+
+void
 MBasicBlock::dump(FILE *fp)
 {
 #ifdef DEBUG
@@ -1213,4 +1219,10 @@ MBasicBlock::dump(FILE *fp)
         iter->dump(fp);
     }
 #endif
+}
+
+void
+MBasicBlock::dump()
+{
+    dump(stderr);
 }
