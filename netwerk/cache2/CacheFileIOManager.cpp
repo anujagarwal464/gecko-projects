@@ -2019,6 +2019,9 @@ CacheFileIOManager::RenameFileInternal(CacheFileHandle *aHandle,
     return NS_OK;
   }
 
+  if (aHandle->mFD)
+    ReleaseNSPRHandleInternal(aHandle);
+
   rv = aHandle->mFile->MoveToNative(nullptr, aNewName);
   NS_ENSURE_SUCCESS(rv, rv);
 
