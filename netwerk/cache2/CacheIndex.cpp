@@ -845,9 +845,8 @@ CacheIndex::FinishWrite(bool aSucceeded)
   if (aSucceeded) {
     mIndex.EnumerateEntries(&CacheIndex::ApplyIndexChanges, &data);
     mIndexOnDiskIsValid = true;
+    MOZ_ASSERT(data.mCacheSize == mIndexStats.Size());
   }
-
-  MOZ_ASSERT(data.mCacheSize == mIndexStats.Size());
 
   ProcessPendingOperations();
   mIndexStats.Log();
