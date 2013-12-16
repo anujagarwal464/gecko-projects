@@ -377,7 +377,6 @@ private:
                       ErrorResult& aRv);
 
 public:
-
   virtual JSObject*
   WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
@@ -600,6 +599,15 @@ public:
     return mLoadInfo.mPrincipal;
   }
 
+  // This method allows the principal to be retrieved off the main thread.
+  // Principals are main-thread objects so the caller must ensure that all
+  // access occurs on the main thread.
+  nsIPrincipal*
+  GetPrincipalDontAssertMainThread() const
+  {
+      return mLoadInfo.mPrincipal;
+  }
+
   void
   SetPrincipal(nsIPrincipal* aPrincipal);
 
@@ -685,6 +693,14 @@ public:
   {
     mozilla::MutexAutoLock lock(mMutex);
     aSettings = mJSSettings;
+  }
+
+  void
+  CopyJSCompartmentOptions(JS::CompartmentOptions& aOptions)
+  {
+    mozilla::MutexAutoLock lock(mMutex);
+    aOptions = IsChromeWorker() ? mJSSettings.chrome.compartmentOptions
+                                : mJSSettings.content.compartmentOptions;
   }
 
   // The ability to be a chrome worker is orthogonal to the type of

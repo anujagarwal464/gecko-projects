@@ -17,6 +17,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "RecentlyClosedTabsAndWindowsMenuUtils",
 XPCOMUtils.defineLazyServiceGetter(this, "CharsetManager",
                                    "@mozilla.org/charset-converter-manager;1",
                                    "nsICharsetConverterManager");
+XPCOMUtils.defineLazyGetter(this, "BrandBundle", function() {
+  const kBrandBundle = "chrome://branding/locale/brand.properties";
+  return Services.strings.createBundle(kBrandBundle);
+});
 
 const kNSXUL = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 const kPrefCustomizationDebug = "browser.uiCustomization.debug";
@@ -24,14 +28,6 @@ const kWidePanelItemClass = "panel-wide-item";
 
 let gModuleName = "[CustomizableWidgets]";
 #include logging.js
-
-function isWin8OrHigher() {
-  let osName = Services.sysinfo.getProperty("name");
-  let version = Services.sysinfo.getProperty("version");
-
-  // Windows 8 is version >= 6.2
-  return osName == "Windows_NT" && Services.vc.compare(version, "6.2") >= 0;
-}
 
 function setAttributes(aNode, aAttrs) {
   for (let [name, value] of Iterator(aAttrs)) {
@@ -65,7 +61,6 @@ const CustomizableWidgets = [{
     type: "view",
     viewId: "PanelUI-history",
     shortcutId: "key_gotoHistory",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
     onViewShowing: function(aEvent) {
       // Populate our list of history
@@ -152,7 +147,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "privatebrowsing-button",
-    removable: true,
     shortcutId: "key_privatebrowsing",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(e) {
@@ -165,7 +159,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "save-page-button",
-    removable: true,
     shortcutId: "key_savePage",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
@@ -178,7 +171,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "find-button",
-    removable: true,
     shortcutId: "key_find",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
@@ -191,7 +183,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "open-file-button",
-    removable: true,
     shortcutId: "openFileKb",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
@@ -206,7 +197,6 @@ const CustomizableWidgets = [{
     id: "developer-button",
     type: "view",
     viewId: "PanelUI-developer",
-    removable: true,
     shortcutId: "key_devToolboxMenuItem",
     defaultArea: CustomizableUI.AREA_PANEL,
     onViewShowing: function(aEvent) {
@@ -269,7 +259,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "add-ons-button",
-    removable: true,
     shortcutId: "key_openAddons",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
@@ -282,7 +271,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "preferences-button",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
 #ifdef XP_WIN
     label: "preferences-button.labelWin",
@@ -299,7 +287,6 @@ const CustomizableWidgets = [{
   }, {
     id: "zoom-controls",
     type: "custom",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
     onBuild: function(aDocument) {
       const kPanelId = "PanelUI-popup";
@@ -406,8 +393,8 @@ const CustomizableWidgets = [{
           updateZoomResetButton();
         }.bind(this),
 
-        onWidgetReset: function(aWidgetId) {
-          if (aWidgetId != this.id)
+        onWidgetReset: function(aWidgetNode) {
+          if (aWidgetNode != node)
             return;
           updateCombinedWidgetStyle(node, this.currentArea, true);
           updateZoomResetButton();
@@ -445,7 +432,6 @@ const CustomizableWidgets = [{
   }, {
     id: "edit-controls",
     type: "custom",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
     onBuild: function(aDocument) {
       let inPanel = (this.currentArea == CustomizableUI.AREA_PANEL);
@@ -506,8 +492,8 @@ const CustomizableWidgets = [{
           updateCombinedWidgetStyle(node);
         }.bind(this),
 
-        onWidgetReset: function(aWidgetId) {
-          if (aWidgetId != this.id)
+        onWidgetReset: function(aWidgetNode) {
+          if (aWidgetNode != node)
             return;
           updateCombinedWidgetStyle(node, this.currentArea);
         }.bind(this),
@@ -540,7 +526,6 @@ const CustomizableWidgets = [{
     id: "feed-button",
     type: "view",
     viewId: "PanelUI-feeds",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
     onClick: function(aEvent) {
       let win = aEvent.target.ownerDocument.defaultView;
@@ -580,7 +565,6 @@ const CustomizableWidgets = [{
     id: "characterencoding-button",
     type: "view",
     viewId: "PanelUI-characterEncodingView",
-    removable: true,
     defaultArea: CustomizableUI.AREA_PANEL,
     maybeDisableMenu: function(aDocument) {
       let window = aDocument.defaultView;
@@ -787,7 +771,6 @@ const CustomizableWidgets = [{
     }
   }, {
     id: "email-link-button",
-    removable: true,
     onCommand: function(aEvent) {
       let win = aEvent.view;
       win.MailIntegration.sendLinkForWindow(win.content);
@@ -796,17 +779,19 @@ const CustomizableWidgets = [{
 
 #ifdef XP_WIN
 #ifdef MOZ_METRO
-if (isWin8OrHigher()) {
+if (Services.sysinfo.getProperty("hasWindowsTouchInterface")) {
+  let widgetArgs = {tooltiptext: "switch-to-metro-button2.tooltiptext"};
+  let brandShortName = BrandBundle.GetStringFromName("brandShortName");
+  let metroTooltip = CustomizableUI.getLocalizedProperty(widgetArgs, "tooltiptext",
+                                                         [brandShortName]);
   CustomizableWidgets.push({
     id: "switch-to-metro-button",
     label: "switch-to-metro-button2.label",
-    tooltiptext: "switch-to-metro-button2.tooltiptext",
-    removable: true,
+    tooltiptext: metroTooltip,
     defaultArea: CustomizableUI.AREA_PANEL,
+    showInPrivateBrowsing: false, /* See bug 928068 */
     onCommand: function(aEvent) {
-      let win = aEvent.target &&
-        aEvent.target.ownerDocument &&
-        aEvent.target.ownerDocument.defaultView;
+      let win = aEvent.view;
       if (win && typeof win.SwitchToMetro == "function") {
         win.SwitchToMetro();
       }

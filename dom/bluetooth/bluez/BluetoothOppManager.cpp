@@ -46,6 +46,13 @@ static const uint32_t kUpdateProgressBase = 50 * 1024;
  */
 static const uint32_t kPutRequestHeaderSize = 6;
 
+/*
+ * The format of the appended header of an PUT request is
+ * [headerId:1][header length:4]
+ * P.S. Length of name header is 4 since unicode is 2 bytes per char.
+ */
+static const uint32_t kPutRequestAppendHeaderSize = 5;
+
 StaticRefPtr<BluetoothOppManager> sBluetoothOppManager;
 static bool sInShutdown = false;
 }
@@ -175,7 +182,7 @@ BluetoothOppManager::BluetoothOppManager() : mConnected(false)
                                            , mRemoteMaxPacketLength(0)
                                            , mLastCommand(0)
                                            , mPacketLength(0)
-                                           , mPacketReceivedLength(0)
+                                           , mPutPacketReceivedLength(0)
                                            , mBodySegmentLength(0)
                                            , mAbortFlag(false)
                                            , mNewFileFlag(false)
@@ -331,7 +338,7 @@ BluetoothOppManager::StartSendingNextFile()
 
   MOZ_ASSERT(!IsConnected());
   MOZ_ASSERT(!mBatches.IsEmpty());
-  MOZ_ASSERT(mBatches[0].mBlobs.Length() > mCurrentBlobIndex + 1);
+  MOZ_ASSERT((int)mBatches[0].mBlobs.Length() > mCurrentBlobIndex + 1);
 
   mBlob = mBatches[0].mBlobs[++mCurrentBlobIndex];
 
@@ -463,8 +470,6 @@ BluetoothOppManager::ConfirmReceivingFile(bool aConfirm)
   NS_ENSURE_TRUE(mConnected, false);
   NS_ENSURE_TRUE(mWaitingForConfirmationFlag, false);
 
-  MOZ_ASSERT(mPacketReceivedLength == 0);
-
   mWaitingForConfirmationFlag = false;
 
   // For the first packet of first file
@@ -483,6 +488,7 @@ BluetoothOppManager::ConfirmReceivingFile(bool aConfirm)
   }
 
   ReplyToPut(mPutFinalFlag, success);
+
   return true;
 }
 
@@ -491,7 +497,7 @@ BluetoothOppManager::AfterFirstPut()
 {
   mUpdateProgressCounter = 1;
   mPutFinalFlag = false;
-  mPacketReceivedLength = 0;
+  mPutPacketReceivedLength = 0;
   mSentFileLength = 0;
   mWaitingToSendPutFinal = false;
   mSuccessFlag = false;
@@ -525,7 +531,7 @@ BluetoothOppManager::AfterOppDisconnected()
 
   mConnected = false;
   mLastCommand = 0;
-  mPacketReceivedLength = 0;
+  mPutPacketReceivedLength = 0;
   mDsFile = nullptr;
 
   // We can't reset mSuccessFlag here since this function may be called
@@ -570,13 +576,14 @@ BluetoothOppManager::DeleteReceivedFile()
 bool
 BluetoothOppManager::CreateFile()
 {
-  MOZ_ASSERT(mPacketReceivedLength == mPacketLength);
+  MOZ_ASSERT(mPutPacketReceivedLength == mPacketLength);
 
   nsString path;
   path.AssignLiteral(TARGET_SUBDIR);
   path.Append(mFileName);
 
-  mDsFile = DeviceStorageFile::CreateUnique(path, nsIFile::NORMAL_FILE_TYPE, 0644);
+  mDsFile = DeviceStorageFile::CreateUnique(
+              path, nsIFile::NORMAL_FILE_TYPE, 0644);
   NS_ENSURE_TRUE(mDsFile, false);
 
   nsCOMPtr<nsIFile> f;
@@ -752,7 +759,7 @@ BluetoothOppManager::ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage)
   int frameHeaderLength = 0;
 
   // See if this is the first part of each Put packet
-  if (mPacketReceivedLength == 0) {
+  if (mPutPacketReceivedLength == 0) {
     // Section 3.3.3 "Put", IrOBEX 1.2
     // [opcode:1][length:2][Headers:var]
     frameHeaderLength = 3;
@@ -762,8 +769,8 @@ BluetoothOppManager::ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage)
     /**
      * A PUT request from remote devices may be divided into multiple parts.
      * In other words, one request may need to be received multiple times,
-     * so here we keep a variable mPacketLeftLength to indicate if current
-     * PUT request is done.
+     * so here we keep a variable mPutPacketReceivedLength to indicate if
+     * current PUT request is done.
      */
     mReceivedDataBuffer = new uint8_t[mPacketLength];
     mPutFinalFlag = (aOpCode == ObexRequestCode::PutFinal);
@@ -773,7 +780,7 @@ BluetoothOppManager::ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage)
 
   // Check length before memcpy to prevent from memory pollution
   if (dataLength < 0 ||
-      mPacketReceivedLength + dataLength > mPacketLength) {
+      mPutPacketReceivedLength + dataLength > mPacketLength) {
     BT_LOGR("Received packet size is unreasonable");
 
     ReplyToPut(mPutFinalFlag, false);
@@ -783,12 +790,12 @@ BluetoothOppManager::ComposePacket(uint8_t aOpCode, UnixSocketRawData* aMessage)
     return false;
   }
 
-  memcpy(mReceivedDataBuffer.get() + mPacketReceivedLength,
+  memcpy(mReceivedDataBuffer.get() + mPutPacketReceivedLength,
          &aMessage->mData[frameHeaderLength], dataLength);
 
-  mPacketReceivedLength += dataLength;
+  mPutPacketReceivedLength += dataLength;
 
-  return (mPacketReceivedLength == mPacketLength);
+  return (mPutPacketReceivedLength == mPacketLength);
 }
 
 void
@@ -799,7 +806,7 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
   uint8_t opCode;
   int receivedLength = aMessage->mSize;
 
-  if (mPacketReceivedLength > 0) {
+  if (mPutPacketReceivedLength > 0) {
     opCode = mPutFinalFlag ? ObexRequestCode::PutFinal : ObexRequestCode::Put;
   } else {
     opCode = aMessage->mData[0];
@@ -854,11 +861,10 @@ BluetoothOppManager::ServerDataHandler(UnixSocketRawData* aMessage)
     }
 
     // A Put packet is received completely
-    ParseHeaders(mReceivedDataBuffer.get(), mPacketReceivedLength, &pktHeaders);
+    ParseHeaders(mReceivedDataBuffer.get(),
+                 mPutPacketReceivedLength, &pktHeaders);
     ExtractPacketHeaders(pktHeaders);
     ValidateFileName();
-
-    mPacketReceivedLength = 0;
 
     // When we cancel the transfer, delete the file and notify completion
     if (mAbortFlag) {
@@ -985,6 +991,15 @@ BluetoothOppManager::ClientDataHandler(UnixSocketRawData* aMessage)
     mRemoteMaxPacketLength =
       (((int)(aMessage->mData[5]) << 8) | aMessage->mData[6]);
 
+    // The length of file name exceeds maximum length.
+    int fileNameByteLen = (mFileName.Length() + 1) * 2;
+    int headerLen = kPutRequestHeaderSize + kPutRequestAppendHeaderSize;
+    if (fileNameByteLen > mRemoteMaxPacketLength - headerLen) {
+      BT_WARNING("The length of file name is aberrant.");
+      SendDisconnectRequest();
+      return;
+    }
+
     SendPutHeaderRequest(mFileName, mFileLength);
   } else if (mLastCommand == ObexRequestCode::Put) {
     if (mWaitingToSendPutFinal) {
@@ -1071,7 +1086,8 @@ BluetoothOppManager::SendPutHeaderRequest(const nsAString& aFileName,
   fileName[len * 2 + 1] = 0x00;
 
   int index = 3;
-  index += AppendHeaderName(&req[index], (char*)fileName, (len + 1) * 2);
+  index += AppendHeaderName(&req[index], mRemoteMaxPacketLength - index,
+                            (char*)fileName, (len + 1) * 2);
   index += AppendHeaderLength(&req[index], aFileSize);
 
   SendObexData(req, ObexRequestCode::Put, index);
@@ -1084,9 +1100,8 @@ void
 BluetoothOppManager::SendPutRequest(uint8_t* aFileBody,
                                     int aFileBodyLength)
 {
-  int packetLeftSpace = mRemoteMaxPacketLength - kPutRequestHeaderSize;
-
   if (!mConnected) return;
+  int packetLeftSpace = mRemoteMaxPacketLength - kPutRequestHeaderSize;
   if (aFileBodyLength > packetLeftSpace) {
     BT_WARNING("Not allowed such a small MaxPacketLength value");
     return;
@@ -1097,11 +1112,11 @@ BluetoothOppManager::SendPutRequest(uint8_t* aFileBody,
   uint8_t* req = new uint8_t[mRemoteMaxPacketLength];
 
   int index = 3;
-  index += AppendHeaderBody(&req[index], aFileBody, aFileBodyLength);
+  index += AppendHeaderBody(&req[index], mRemoteMaxPacketLength - index,
+                            aFileBody, aFileBodyLength);
 
   SendObexData(req, ObexRequestCode::Put, index);
   delete [] req;
-
   mSentFileLength += aFileBodyLength;
 }
 
@@ -1198,6 +1213,10 @@ void
 BluetoothOppManager::ReplyToPut(bool aFinal, bool aContinue)
 {
   if (!mConnected) return;
+
+  // The received length can be reset here because this is where we reply to a
+  // complete put packet.
+  mPutPacketReceivedLength = 0;
 
   // Section 3.3.2 "Disconnect", IrOBEX 1.2
   // [opcode:1][length:2][Headers:var]

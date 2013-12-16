@@ -219,7 +219,8 @@ public:
   enum EndTransactionFlags {
     END_DEFAULT = 0,
     END_NO_IMMEDIATE_REDRAW = 1 << 0,  // Do not perform the drawing phase
-    END_NO_COMPOSITE = 1 << 1 // Do not composite after drawing thebes layer contents.
+    END_NO_COMPOSITE = 1 << 1, // Do not composite after drawing thebes layer contents.
+    END_NO_REMOTE_COMPOSITE = 1 << 2 // Do not schedule a composition with a remote Compositor, if one exists.
   };
 
   FrameLayerBuilder* GetLayerBuilder() {
@@ -279,6 +280,13 @@ public:
   virtual void EndTransaction(DrawThebesLayerCallback aCallback,
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT) = 0;
+
+  /**
+   * Schedule a composition with the remote Compositor, if one exists
+   * for this LayerManager. Useful in conjunction with the END_NO_REMOTE_COMPOSITE
+   * flag to EndTransaction.
+   */
+  virtual void Composite() {}
 
   virtual bool HasShadowManagerInternal() const { return false; }
   bool HasShadowManager() const { return HasShadowManagerInternal(); }
@@ -436,12 +444,6 @@ public:
                      mozilla::gfx::SurfaceFormat aFormat);
 
   virtual bool CanUseCanvasLayerForSize(const gfxIntSize &aSize) { return true; }
-
-  /**
-   * Returns a TextureFactoryIdentifier which describes properties of the backend
-   * used to decide what kind of texture and buffer clients to create
-   */
-  virtual TextureFactoryIdentifier GetTextureFactoryIdentifier();
 
   /**
    * returns the maximum texture size on this layer backend, or INT32_MAX
@@ -690,7 +692,13 @@ public:
      * transaction where there is no possibility of redrawing the content, so the
      * implementation should be ready for that.
      */
-    CONTENT_MAY_CHANGE_TRANSFORM = 0x08
+    CONTENT_MAY_CHANGE_TRANSFORM = 0x08,
+
+    /**
+     * Disable subpixel AA for this layer. This is used if the display isn't suited
+     * for subpixel AA like hidpi or rotated content.
+     */
+    CONTENT_DISABLE_SUBPIXEL_AA = 0x10
   };
   /**
    * CONSTRUCTION PHASE ONLY
@@ -972,6 +980,28 @@ public:
     }
   }
 
+  enum ScrollDirection {
+    NONE,
+    VERTICAL,
+    HORIZONTAL
+  };
+
+  /**
+   * CONSTRUCTION PHASE ONLY
+   * If a layer is a scrollbar layer, |aScrollId| holds the scroll identifier
+   * of the scrollable content that the scrollbar is for.
+   */
+  void SetScrollbarData(FrameMetrics::ViewID aScrollId, ScrollDirection aDir)
+  {
+    if (mScrollbarTargetId != aScrollId ||
+        mScrollbarDirection != aDir) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ScrollbarData", this));
+      mScrollbarTargetId = aScrollId;
+      mScrollbarDirection = aDir;
+      Mutated();
+    }
+  }
+
   // These getters can be used anytime.
   float GetOpacity() { return mOpacity; }
   gfxContext::GraphicsOperator GetMixBlendMode() const { return mMixBlendMode; }
@@ -996,6 +1026,8 @@ public:
   FrameMetrics::ViewID GetStickyScrollContainerId() { return mStickyPositionData->mScrollId; }
   const LayerRect& GetStickyScrollRangeOuter() { return mStickyPositionData->mOuter; }
   const LayerRect& GetStickyScrollRangeInner() { return mStickyPositionData->mInner; }
+  FrameMetrics::ViewID GetScrollbarTargetContainerId() { return mScrollbarTargetId; }
+  ScrollDirection GetScrollbarDirection() { return mScrollbarDirection; }
   Layer* GetMaskLayer() const { return mMaskLayer; }
 
   // Note that all lengths in animation data are either in CSS pixels or app
@@ -1367,6 +1399,8 @@ protected:
     LayerRect mInner;
   };
   nsAutoPtr<StickyPositionData> mStickyPositionData;
+  FrameMetrics::ViewID mScrollbarTargetId;
+  ScrollDirection mScrollbarDirection;
   DebugOnly<uint32_t> mDebugColorIndex;
   // If this layer is used for OMTA, then this counter is used to ensure we
   // stay in sync with the animation manager

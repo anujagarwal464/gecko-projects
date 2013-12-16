@@ -52,7 +52,6 @@
 #include "builtin/Eval.h"
 #include "builtin/Intl.h"
 #include "builtin/MapObject.h"
-#include "builtin/ParallelArray.h"
 #include "builtin/RegExp.h"
 #include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
@@ -2375,7 +2374,16 @@ JS_SetPrototype(JSContext *cx, JS::Handle<JSObject*> obj, JS::Handle<JSObject*> 
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, proto);
 
-    return SetClassAndProto(cx, obj, obj->getClass(), proto, false);
+    bool succeeded;
+    if (!JSObject::setProto(cx, obj, proto, &succeeded))
+        return false;
+
+    if (!succeeded) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_SETPROTOTYPEOF_FAIL);
+        return false;
+    }
+
+    return true;
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -3394,25 +3402,6 @@ JS_ForwardGetElementTo(JSContext *cx, JSObject *objArg, uint32_t index, JSObject
 }
 
 JS_PUBLIC_API(bool)
-JS_GetElementIfPresent(JSContext *cx, JSObject *objArg, uint32_t index, JSObject *onBehalfOfArg,
-                       MutableHandleValue vp, bool* present)
-{
-    RootedObject obj(cx, objArg);
-    RootedObject onBehalfOf(cx, onBehalfOfArg);
-    AssertHeapIsIdle(cx);
-    CHECK_REQUEST(cx);
-    assertSameCompartment(cx, obj);
-    JSAutoResolveFlags rf(cx, 0);
-
-    bool isPresent;
-    if (!JSObject::getElementIfPresent(cx, obj, onBehalfOf, index, vp, &isPresent))
-        return false;
-
-    *present = isPresent;
-    return true;
-}
-
-JS_PUBLIC_API(bool)
 JS_GetProperty(JSContext *cx, JSObject *objArg, const char *name, MutableHandleValue vp)
 {
     RootedObject obj(cx, objArg);
@@ -3985,7 +3974,7 @@ JS_CloneFunctionObject(JSContext *cx, JSObject *funobjArg, JSObject *parentArg)
             return nullptr;
     }
     if (fun->isInterpreted() && (fun->nonLazyScript()->enclosingStaticScope() ||
-        (fun->nonLazyScript()->compileAndGo && !parent->is<GlobalObject>())))
+        (fun->nonLazyScript()->compileAndGo() && !parent->is<GlobalObject>())))
     {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_BAD_CLONE_FUNOBJ_SCOPE);
         return nullptr;
@@ -4025,7 +4014,7 @@ JS_GetFunctionDisplayId(JSFunction *fun)
 JS_PUBLIC_API(uint16_t)
 JS_GetFunctionArity(JSFunction *fun)
 {
-    return fun->nargs;
+    return fun->nargs();
 }
 
 JS_PUBLIC_API(bool)
@@ -4260,7 +4249,7 @@ struct AutoLastFrameCheck
 # define fast_getc getc
 #endif
 
-typedef Vector<char, 8, TempAllocPolicy> FileContents;
+typedef js::Vector<char, 8, TempAllocPolicy> FileContents;
 
 static bool
 ReadCompleteFile(JSContext *cx, FILE *fp, FileContents &buffer)
@@ -4589,7 +4578,7 @@ JS_BufferIsCompilableUnit(JSContext *cx, JSObject *objArg, const char *utf8, siz
 JS_PUBLIC_API(JSObject *)
 JS_GetGlobalFromScript(JSScript *script)
 {
-    JS_ASSERT(!script->isCachedEval);
+    JS_ASSERT(!script->isCachedEval());
     return &script->global();
 }
 
@@ -6098,11 +6087,43 @@ JS_DescribeScriptedCaller(JSContext *cx, MutableHandleScript script, unsigned *l
     if (i.done())
         return false;
 
+    // If the caller is hidden, the embedding wants us to return null here so
+    // that it can check its own stack.
+    if (i.activation()->scriptedCallerIsHidden())
+        return false;
+
     script.set(i.script());
     if (lineno)
         *lineno = js::PCToLineNumber(i.script(), i.pc());
     return true;
 }
+
+namespace JS {
+
+JS_PUBLIC_API(void)
+HideScriptedCaller(JSContext *cx)
+{
+    MOZ_ASSERT(cx);
+
+    // If there's no accessible activation on the stack, we'll return null from
+    // JS_DescribeScriptedCaller anyway, so there's no need to annotate
+    // anything.
+    Activation *act = cx->runtime()->mainThread.activation();
+    if (!act)
+        return;
+    act->hideScriptedCaller();
+}
+
+JS_PUBLIC_API(void)
+UnhideScriptedCaller(JSContext *cx)
+{
+    Activation *act = cx->runtime()->mainThread.activation();
+    if (!act)
+        return;
+    act->unhideScriptedCaller();
+}
+
+} /* namespace JS */
 
 #ifdef JS_THREADSAFE
 static PRStatus

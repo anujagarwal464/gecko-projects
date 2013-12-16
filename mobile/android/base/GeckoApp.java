@@ -1153,8 +1153,8 @@ public abstract class GeckoApp
         }
 
         // The clock starts...now. Better hurry!
-        mJavaUiStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_JAVAUI");
-        mGeckoReadyStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_GECKOREADY");
+        mJavaUiStartupTimer = new Telemetry.UptimeTimer("FENNEC_STARTUP_TIME_JAVAUI");
+        mGeckoReadyStartupTimer = new Telemetry.UptimeTimer("FENNEC_STARTUP_TIME_GECKOREADY");
 
         Intent intent = getIntent();
         String args = intent.getStringExtra("args");
@@ -1374,7 +1374,7 @@ public abstract class GeckoApp
     }
 
     protected void initializeChrome() {
-        mDoorHangerPopup = new DoorHangerPopup(this, null);
+        mDoorHangerPopup = new DoorHangerPopup(this);
         mPluginContainer = (AbsoluteLayout) findViewById(R.id.plugin_container);
         mFormAssistPopup = (FormAssistPopup) findViewById(R.id.form_assist_popup);
 

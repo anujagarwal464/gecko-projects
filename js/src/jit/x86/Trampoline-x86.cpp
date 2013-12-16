@@ -353,7 +353,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Load the number of |undefined|s to push into %ecx.
     masm.loadPtr(Address(esp, IonRectifierFrameLayout::offsetOfCalleeToken()), eax);
-    masm.movzwl(Operand(eax, offsetof(JSFunction, nargs)), ecx);
+    masm.movzwl(Operand(eax, JSFunction::offsetOfNargs()), ecx);
     masm.subl(esi, ecx);
 
     // Copy the number of actual arguments.
@@ -538,8 +538,6 @@ JitRuntime::generateBailoutHandler(JSContext *cx)
 IonCode *
 JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 {
-    typedef MoveResolver::MoveOperand MoveOperand;
-
     JS_ASSERT(!StackKeptAligned);
     JS_ASSERT(functionWrappers_);
     JS_ASSERT(functionWrappers_->initialized());
@@ -687,7 +685,7 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         if (cx->runtime()->jitSupportsFloatingPoint)
             masm.Pop(ReturnFloatReg);
         else
-            masm.assume_unreachable("Unable to pop to float reg, with no FP support.");
+            masm.assumeUnreachable("Unable to pop to float reg, with no FP support.");
         break;
 
       default:

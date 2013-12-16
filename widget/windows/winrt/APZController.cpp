@@ -301,6 +301,11 @@ APZController::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
 {
 }
 
+void
+APZController::HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers)
+{
+}
+
 // requests that we send a mozbrowserasyncscroll domevent. not in use.
 void
 APZController::SendAsyncScrollDOMEvent(bool aIsRoot,
@@ -334,7 +339,7 @@ class TransformedEndEvent : public nsRunnable
 };
 
 void
-APZController::NotifyTransformBegin()
+APZController::NotifyTransformBegin(const ScrollableLayerGuid& aGuid)
 {
   if (NS_IsMainThread()) {
     MetroUtils::FireObserver("apzc-transform-begin", L"");
@@ -345,7 +350,7 @@ APZController::NotifyTransformBegin()
 }
 
 void
-APZController::NotifyTransformEnd()
+APZController::NotifyTransformEnd(const ScrollableLayerGuid& aGuid)
 {
   if (NS_IsMainThread()) {
     MetroUtils::FireObserver("apzc-transform-end", L"");

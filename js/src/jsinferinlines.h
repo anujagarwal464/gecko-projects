@@ -15,7 +15,6 @@
 
 #include "jsanalyze.h"
 
-#include "builtin/ParallelArray.h"
 #include "jit/ExecutionModeInlines.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
@@ -104,17 +103,29 @@ CompilerOutput::ion() const
 }
 
 inline CompilerOutput*
-RecompileInfo::compilerOutput(TypeCompartment &types) const
+RecompileInfo::compilerOutput(TypeZone &types) const
 {
-    if (!types.constrainedOutputs || outputIndex >= types.constrainedOutputs->length())
+    if (!types.compilerOutputs || outputIndex >= types.compilerOutputs->length())
         return nullptr;
-    return &(*types.constrainedOutputs)[outputIndex];
+    return &(*types.compilerOutputs)[outputIndex];
 }
 
 inline CompilerOutput*
 RecompileInfo::compilerOutput(JSContext *cx) const
 {
-    return compilerOutput(cx->compartment()->types);
+    return compilerOutput(cx->zone()->types);
+}
+
+inline bool
+RecompileInfo::shouldSweep(TypeZone &types)
+{
+    CompilerOutput *output = compilerOutput(types);
+    if (!output || !output->isValid())
+        return true;
+
+    // Update this info for the output's new index in the zone's compiler outputs.
+    outputIndex = output->sweepIndex();
+    return false;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -223,7 +234,7 @@ IdToTypeId(jsid id)
     if (JSID_IS_STRING(id)) {
         JSFlatString *str = JSID_TO_FLAT_STRING(id);
         JS::TwoByteChars cp = str->range();
-        if (JS7_ISDEC(cp[0]) || cp[0] == '-') {
+        if (cp.length() > 0 && (JS7_ISDEC(cp[0]) || cp[0] == '-')) {
             for (size_t i = 1; i < cp.length(); ++i) {
                 if (!JS7_ISDEC(cp[i]))
                     return id;
@@ -288,14 +299,13 @@ struct AutoEnterAnalysis
          * If there are no more type inference activations on the stack,
          * process any triggered recompilations. Note that we should not be
          * invoking any scripted code while type inference is running.
-         * :TODO: assert this.
          */
         if (!compartment->activeAnalysis) {
-            TypeCompartment *types = &compartment->types;
-            if (compartment->zone()->types.pendingNukeTypes)
-                compartment->zone()->types.nukeTypes(freeOp);
-            else if (types->pendingRecompiles)
-                types->processPendingRecompiles(freeOp);
+            TypeZone &types = compartment->zone()->types;
+            if (types.pendingNukeTypes)
+                types.nukeTypes(freeOp);
+            else if (types.pendingRecompiles)
+                types.processPendingRecompiles(freeOp);
         }
     }
 
@@ -353,9 +363,6 @@ GetClassForProtoKey(JSProtoKey key)
 
       case JSProto_DataView:
         return &DataViewObject::class_;
-
-      case JSProto_ParallelArray:
-        return &ParallelArrayObject::class_;
 
       default:
         MOZ_ASSUME_UNREACHABLE("Bad proto key");
@@ -592,13 +599,13 @@ extern void TypeDynamicResult(JSContext *cx, JSScript *script, jsbytecode *pc,
 /* static */ inline unsigned
 TypeScript::NumTypeSets(JSScript *script)
 {
-    return script->nTypeSets + analyze::LocalSlot(script, 0);
+    return script->nTypeSets() + analyze::LocalSlot(script, 0);
 }
 
 /* static */ inline StackTypeSet *
 TypeScript::ThisTypes(JSScript *script)
 {
-    return script->types->typeArray() + script->nTypeSets + js::analyze::ThisSlot();
+    return script->types->typeArray() + script->nTypeSets() + js::analyze::ThisSlot();
 }
 
 /*
@@ -610,8 +617,8 @@ TypeScript::ThisTypes(JSScript *script)
 /* static */ inline StackTypeSet *
 TypeScript::ArgTypes(JSScript *script, unsigned i)
 {
-    JS_ASSERT(i < script->function()->nargs);
-    return script->types->typeArray() + script->nTypeSets + js::analyze::ArgSlot(i);
+    JS_ASSERT(i < script->function()->nargs());
+    return script->types->typeArray() + script->nTypeSets() + js::analyze::ArgSlot(i);
 }
 
 template <typename TYPESET>
@@ -628,7 +635,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc, uint32_t *hint, TYPE
     uint32_t offset = script->pcToOffset(pc);
 
     // See if this pc is the next typeset opcode after the last one looked up.
-    if (bytecodeMap[*hint + 1] == offset && (*hint + 1) < script->nTypeSets) {
+    if (bytecodeMap[*hint + 1] == offset && (*hint + 1) < script->nTypeSets()) {
         (*hint)++;
         return typeArray + *hint;
     }
@@ -639,7 +646,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc, uint32_t *hint, TYPE
 
     // Fall back to a binary search.
     size_t bottom = 0;
-    size_t top = script->nTypeSets - 1;
+    size_t top = script->nTypeSets() - 1;
     size_t mid = bottom + (top - bottom) / 2;
     while (mid < top) {
         if (bytecodeMap[mid] < offset)
@@ -665,7 +672,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc)
 {
     JS_ASSERT(CurrentThreadCanAccessRuntime(script->runtimeFromMainThread()));
 #ifdef JS_ION
-    uint32_t *hint = script->baselineScript()->bytecodeTypeMap() + script->nTypeSets;
+    uint32_t *hint = script->baselineScript()->bytecodeTypeMap() + script->nTypeSets();
 #else
     uint32_t *hint = nullptr;
     MOZ_CRASH();
@@ -707,7 +714,7 @@ TypeScript::InitObject(JSContext *cx, JSScript *script, jsbytecode *pc, JSProtoK
     /* :XXX: Limit script->length so we don't need to check the offset up front? */
     uint32_t offset = script->pcToOffset(pc);
 
-    if (!cx->typeInferenceEnabled() || !script->compileAndGo || offset >= AllocationSiteKey::OFFSET_LIMIT)
+    if (!cx->typeInferenceEnabled() || !script->compileAndGo() || offset >= AllocationSiteKey::OFFSET_LIMIT)
         return GetTypeNewObject(cx, kind);
 
     AllocationSiteKey key;
@@ -850,50 +857,6 @@ inline JSCompartment *
 TypeCompartment::compartment()
 {
     return (JSCompartment *)((char *)this - offsetof(JSCompartment, types));
-}
-
-inline void
-TypeCompartment::addPending(JSContext *cx, TypeConstraint *constraint,
-                            ConstraintTypeSet *source, Type type)
-{
-    JS_ASSERT(this == &cx->compartment()->types);
-    JS_ASSERT(!cx->runtime()->isHeapBusy());
-
-    InferSpew(ISpewOps, "pending: %sC%p%s %s",
-              InferSpewColor(constraint), constraint, InferSpewColorReset(),
-              TypeString(type));
-
-    if ((pendingCount == pendingCapacity) && !growPendingArray(cx))
-        return;
-
-    PendingWork &pending = pendingArray[pendingCount++];
-    pending.constraint = constraint;
-    pending.source = source;
-    pending.type = type;
-}
-
-inline void
-TypeCompartment::resolvePending(JSContext *cx)
-{
-    JS_ASSERT(this == &cx->compartment()->types);
-
-    if (resolving) {
-        /* There is an active call further up resolving the worklist. */
-        return;
-    }
-
-    resolving = true;
-
-    /* Handle all pending type registrations. */
-    while (pendingCount) {
-        const PendingWork &pending = pendingArray[--pendingCount];
-        InferSpew(ISpewOps, "resolve: %sC%p%s %s",
-                  InferSpewColor(pending.constraint), pending.constraint,
-                  InferSpewColorReset(), TypeString(pending.type));
-        pending.constraint->newType(cx, pending.source, pending.type);
-    }
-
-    resolving = false;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1219,10 +1182,9 @@ ConstraintTypeSet::addType(ExclusiveContext *cxArg, Type type)
     if (JSContext *cx = cxArg->maybeJSContext()) {
         TypeConstraint *constraint = constraintList;
         while (constraint) {
-            cx->compartment()->types.addPending(cx, constraint, this, type);
+            constraint->newType(cx, this, type);
             constraint = constraint->next;
         }
-        cx->compartment()->types.resolvePending(cx);
     } else {
         JS_ASSERT(!constraintList);
     }

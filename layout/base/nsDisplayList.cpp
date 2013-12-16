@@ -338,12 +338,12 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
         animSegment->startState() = InfallibleTArray<TransformFunction>();
         animSegment->endState() = InfallibleTArray<TransformFunction>();
 
-        nsCSSValueList* list = segment->mFromValue.GetCSSValueListValue();
-        AddTransformFunctions(list, styleContext, presContext, bounds, scale,
+        nsCSSValueSharedList* list = segment->mFromValue.GetCSSValueSharedListValue();
+        AddTransformFunctions(list->mHead, styleContext, presContext, bounds, scale,
                               animSegment->startState().get_ArrayOfTransformFunction());
 
-        list = segment->mToValue.GetCSSValueListValue();
-        AddTransformFunctions(list, styleContext, presContext, bounds, scale,
+        list = segment->mToValue.GetCSSValueSharedListValue();
+        AddTransformFunctions(list->mHead, styleContext, presContext, bounds, scale,
                               animSegment->endState().get_ArrayOfTransformFunction());
       } else if (aProperty == eCSSProperty_opacity) {
         animSegment->startState() = segment->mFromValue.GetFloatValue();
@@ -1205,8 +1205,21 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
   layerManager->SetRoot(root);
   layerBuilder->WillEndTransaction();
   bool temp = aBuilder->SetIsCompositingCheap(layerManager->IsCompositingCheap());
+  LayerManager::EndTransactionFlags flags = LayerManager::END_DEFAULT;
+  if (layerManager->NeedsWidgetInvalidation()) {
+    if (aFlags & PAINT_NO_COMPOSITE) {
+      flags = LayerManager::END_NO_COMPOSITE;
+    }
+  } else {
+    // Client layer managers never composite directly, so
+    // we don't need to worry about END_NO_COMPOSITE.
+    if (aBuilder->WillComputePluginGeometry()) {
+      flags = LayerManager::END_NO_REMOTE_COMPOSITE;
+    }
+  }
+
   layerManager->EndTransaction(FrameLayerBuilder::DrawThebesLayer,
-                               aBuilder, (aFlags & PAINT_NO_COMPOSITE) ? LayerManager::END_NO_COMPOSITE : LayerManager::END_DEFAULT);
+                               aBuilder, flags);
   aBuilder->SetIsCompositingCheap(temp);
   layerBuilder->DidEndTransaction();
 
@@ -1883,7 +1896,7 @@ nsDisplayBackgroundImage::GetLayerState(nsDisplayListBuilder* aBuilder,
   }
 
   if (!animated) {
-    gfxSize imageSize = mImageContainer->GetCurrentSize();
+    mozilla::gfx::IntSize imageSize = mImageContainer->GetCurrentSize();
     NS_ASSERTION(imageSize.width != 0 && imageSize.height != 0, "Invalid image size!");
 
     gfxRect destRect = mDestRect;
@@ -1930,7 +1943,7 @@ nsDisplayBackgroundImage::ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& a
 {
   aLayer->SetFilter(nsLayoutUtils::GetGraphicsFilterForFrame(mFrame));
 
-  gfxIntSize imageSize = mImageContainer->GetCurrentSize();
+  mozilla::gfx::IntSize imageSize = mImageContainer->GetCurrentSize();
   NS_ASSERTION(imageSize.width != 0 && imageSize.height != 0, "Invalid image size!");
 
   gfxMatrix transform;
@@ -3259,9 +3272,10 @@ bool nsDisplayBlendContainer::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplay
 
 nsDisplayOwnLayer::nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayList* aList,
-                                     uint32_t aFlags)
+                                     uint32_t aFlags, ViewID aScrollTarget)
     : nsDisplayWrapList(aBuilder, aFrame, aList)
-    , mFlags(aFlags) {
+    , mFlags(aFlags)
+    , mScrollTarget(aScrollTarget) {
   MOZ_COUNT_CTOR(nsDisplayOwnLayer);
 }
 
@@ -3279,6 +3293,12 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
   nsRefPtr<ContainerLayer> layer = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
                            aContainerParameters, nullptr);
+  if (mFlags & VERTICAL_SCROLLBAR) {
+    layer->SetScrollbarData(mScrollTarget, Layer::ScrollDirection::VERTICAL);
+  }
+  if (mFlags & HORIZONTAL_SCROLLBAR) {
+    layer->SetScrollbarData(mScrollTarget, Layer::ScrollDirection::HORIZONTAL);
+  }
 
   if (mFlags & GENERATE_SUBDOC_INVALIDATIONS) {
     mFrame->PresContext()->SetNotifySubDocInvalidationData(layer);
@@ -3356,9 +3376,8 @@ nsDisplayStickyPosition::BuildLayer(nsDisplayListBuilder* aBuilder,
   }
 
   nsLayoutUtils::SetFixedPositionLayerData(layer, scrollFrame, scrollFrameSize,
-                                           mStickyPosFrame, ReferenceFrame(),
-                                           presContext,
-                                           aContainerParameters);
+                                           mStickyPosFrame,
+                                           presContext, aContainerParameters);
 
   ViewID scrollId = nsLayoutUtils::FindOrCreateIDFor(
     stickyScrollContainer->ScrollFrame()->GetScrolledFrame()->GetContent());
@@ -3493,6 +3512,16 @@ nsDisplayScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
 }
 
 bool
+nsDisplayScrollLayer::ShouldBuildLayerEvenIfInvisible(nsDisplayListBuilder* aBuilder)
+{
+  if (nsLayoutUtils::GetDisplayPort(mScrolledFrame->GetContent(), nullptr)) {
+    return true;
+  }
+
+  return nsDisplayWrapList::ShouldBuildLayerEvenIfInvisible(aBuilder);
+}
+
+bool
 nsDisplayScrollLayer::ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                         nsRegion* aVisibleRegion,
                                         const nsRect& aAllowVisibleRegionExpansion)
@@ -3566,10 +3595,33 @@ nsDisplayScrollLayer::TryMerge(nsDisplayListBuilder* aBuilder,
   return true;
 }
 
+void
+PropagateClip(nsDisplayListBuilder* aBuilder, const DisplayItemClip& aClip,
+              nsDisplayList* aList)
+{
+  for (nsDisplayItem* i = aList->GetBottom(); i != nullptr; i = i->GetAbove()) {
+    DisplayItemClip clip(i->GetClip());
+    clip.IntersectWith(aClip);
+    i->SetClip(aBuilder, clip);
+    nsDisplayList* list = i->GetSameCoordinateSystemChildren();
+    if (list) {
+      PropagateClip(aBuilder, aClip, list);
+    }
+  }
+}
+
 bool
 nsDisplayScrollLayer::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
 {
-  return GetScrollLayerCount() > 1;
+  if (GetScrollLayerCount() > 1) {
+    // Propagate our clip to our children. The clip for the scroll frame is
+    // on this item, but not our child items so that they can draw non-visible
+    // parts of the display port. But if we are flattening we failed and can't
+    // draw the extra content, so it needs to be clipped.
+    PropagateClip(aBuilder, GetClip(), &mList);
+    return true;
+  }
+  return false;
 }
 
 intptr_t
@@ -4029,7 +4081,7 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     frame && frame->IsSVGTransformed(&svgTransform, &transformFromSVGParent);
   /* Transformed frames always have a transform, or are preserving 3d (and might still have perspective!) */
   if (aProperties.mTransformList) {
-    result = nsStyleTransformMatrix::ReadTransforms(aProperties.mTransformList,
+    result = nsStyleTransformMatrix::ReadTransforms(aProperties.mTransformList->mHead,
                                                     frame ? frame->StyleContext() : nullptr,
                                                     frame ? frame->PresContext() : nullptr,
                                                     dummy, bounds, aAppUnitsPerPixel);

@@ -1073,6 +1073,7 @@ FileAsString(JSContext *cx, const char *pathname)
         JS_ReportError(cx, "can't open %s: %s", pathname, strerror(errno));
         return nullptr;
     }
+    AutoCloseInputFile autoClose(file);
 
     if (fseek(file, 0, SEEK_END) != 0) {
         JS_ReportError(cx, "can't seek end of %s", pathname);
@@ -1102,7 +1103,6 @@ FileAsString(JSContext *cx, const char *pathname)
             }
         }
     }
-    fclose(file);
 
     return str;
 }
@@ -1115,6 +1115,7 @@ FileAsTypedArray(JSContext *cx, const char *pathname)
         JS_ReportError(cx, "can't open %s: %s", pathname, strerror(errno));
         return nullptr;
     }
+    AutoCloseInputFile autoClose(file);
 
     RootedObject obj(cx);
     if (fseek(file, 0, SEEK_END) != 0) {
@@ -1136,7 +1137,6 @@ FileAsTypedArray(JSContext *cx, const char *pathname)
             }
         }
     }
-    fclose(file);
     return obj;
 }
 
@@ -1512,7 +1512,7 @@ TrapHandler(JSContext *cx, JSScript *, jsbytecode *pc, jsval *rvalArg,
     JS_ASSERT(!iter.done());
 
     /* Debug-mode currently disables Ion compilation. */
-    JSAbstractFramePtr frame(Jsvalify(iter.abstractFramePtr()));
+    JSAbstractFramePtr frame(iter.abstractFramePtr().raw(), iter.pc());
     RootedScript script(cx, iter.script());
 
     size_t length;
@@ -1522,7 +1522,7 @@ TrapHandler(JSContext *cx, JSScript *, jsbytecode *pc, jsval *rvalArg,
 
     if (!frame.evaluateUCInStackFrame(cx, chars, length,
                                       script->filename(),
-                                      script->lineno,
+                                      script->lineno(),
                                       &rval))
     {
         *rvalArg = rval;
@@ -1706,7 +1706,7 @@ SrcNotes(JSContext *cx, HandleScript script, Sprinter *sp)
     Sprint(sp, "---- ---- ----- ------ -------- ------\n");
     unsigned offset = 0;
     unsigned colspan = 0;
-    unsigned lineno = script->lineno;
+    unsigned lineno = script->lineno();
     jssrcnote *notes = script->notes();
     unsigned switchTableEnd = 0, switchTableStart = 0;
     for (jssrcnote *sn = notes; !SN_IS_TERMINATOR(sn); sn = SN_NEXT(sn)) {
@@ -2293,7 +2293,7 @@ Clone(JSContext *cx, unsigned argc, jsval *vp)
     }
     if (funobj->compartment() != cx->compartment()) {
         JSFunction *fun = &funobj->as<JSFunction>();
-        if (fun->hasScript() && fun->nonLazyScript()->compileAndGo) {
+        if (fun->hasScript() && fun->nonLazyScript()->compileAndGo()) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
                                  "function", "compile-and-go");
             return false;
@@ -2590,7 +2590,7 @@ EvalInFrame(JSContext *cx, unsigned argc, jsval *vp)
     if (!chars)
         return false;
 
-    JSAbstractFramePtr frame(Jsvalify(fi.abstractFramePtr()));
+    JSAbstractFramePtr frame(fi.abstractFramePtr().raw(), fi.pc());
     RootedScript fpscript(cx, frame.script());
     bool ok = !!frame.evaluateUCInStackFrame(cx, chars, length,
                                              fpscript->filename(),
@@ -2715,10 +2715,22 @@ static const JSClass resolver_class = {
 static bool
 Resolver(JSContext *cx, unsigned argc, jsval *vp)
 {
-    RootedObject referent(cx, nullptr);
-    RootedObject proto(cx, nullptr);
-    if (!JS_ConvertArguments(cx, argc, JS_ARGV(cx, vp), "o/o", &referent, &proto))
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    RootedObject referent(cx);
+    if (!JS_ValueToObject(cx, args.get(0), &referent))
         return false;
+    if (!referent) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
+                             args.get(0).isNull() ? "null" : "undefined", "object");
+        return false;
+    }
+
+    RootedObject proto(cx, nullptr);
+    if (!args.get(1).isNullOrUndefined()) {
+        if (!JS_ValueToObject(cx, args.get(1), &proto))
+            return false;
+    }
 
     RootedObject parent(cx, JS_GetParent(referent));
     JSObject *result = (argc > 1
@@ -2727,8 +2739,8 @@ Resolver(JSContext *cx, unsigned argc, jsval *vp)
     if (!result)
         return false;
 
-    JS_SetReservedSlot(result, 0, OBJECT_TO_JSVAL(referent));
-    JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(result));
+    JS_SetReservedSlot(result, 0, ObjectValue(*referent));
+    args.rval().setObject(*result);
     return true;
 }
 
@@ -3579,13 +3591,17 @@ EscapeForShell(AutoCStringVector &argv)
 }
 #endif
 
-Vector<const char*, 4, js::SystemAllocPolicy> sPropagatedFlags;
+static Vector<const char*, 4, js::SystemAllocPolicy> sPropagatedFlags;
 
+#ifdef DEBUG
+#if (defined(JS_CPU_X86) || defined(JS_CPU_X64)) && defined(JS_ION)
 static bool
 PropagateFlagToNestedShells(const char *flag)
 {
     return sPropagatedFlags.append(flag);
 }
+#endif
+#endif
 
 static bool
 NestedShell(JSContext *cx, unsigned argc, jsval *vp)
@@ -3727,6 +3743,34 @@ ThisFilename(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * Internal class for testing hasPrototype easily.
+ * Uses passed in prototype instead of target's.
+ */
+class WrapperWithProto : public Wrapper
+{
+  public:
+    explicit WrapperWithProto(unsigned flags)
+      : Wrapper(flags, true)
+    { }
+
+    static JSObject *New(JSContext *cx, JSObject *obj, JSObject *proto, JSObject *parent,
+                         Wrapper *handler);
+};
+
+/* static */ JSObject *
+WrapperWithProto::New(JSContext *cx, JSObject *obj, JSObject *proto, JSObject *parent,
+                      Wrapper *handler)
+{
+    JS_ASSERT(parent);
+    AutoMarkInDeadZone amd(cx->zone());
+
+    RootedValue priv(cx, ObjectValue(*obj));
+    ProxyOptions options;
+    options.setCallable(obj->isCallable());
+    return NewProxyObject(cx, handler, priv, proto, parent, options);
+}
+
 static bool
 Wrap(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -3737,10 +3781,7 @@ Wrap(JSContext *cx, unsigned argc, jsval *vp)
     }
 
     RootedObject obj(cx, JSVAL_TO_OBJECT(v));
-    RootedObject proto(cx);
-    if (!JSObject::getProto(cx, obj, &proto))
-        return false;
-    JSObject *wrapped = Wrapper::New(cx, obj, proto, &obj->global(),
+    JSObject *wrapped = Wrapper::New(cx, obj, &obj->global(),
                                      &Wrapper::singleton);
     if (!wrapped)
         return false;
@@ -3763,9 +3804,9 @@ WrapWithProto(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    JSObject *wrapped = Wrapper::New(cx, &obj.toObject(), proto.toObjectOrNull(),
-                                     &obj.toObject().global(),
-                                     &Wrapper::singletonWithPrototype);
+    JSObject *wrapped = WrapperWithProto::New(cx, &obj.toObject(), proto.toObjectOrNull(),
+                                              &obj.toObject().global(),
+                                              &Wrapper::singletonWithPrototype);
     if (!wrapped)
         return false;
 
@@ -4641,8 +4682,9 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
     int rv;
 
     RootedValue idvalue(cx, IdToValue(id));
+    RootedString idstring(cx, ToString(cx, idvalue));
     JSAutoByteString idstr;
-    if (!idstr.encodeLatin1(cx, idvalue.toString()))
+    if (!idstr.encodeLatin1(cx, idstring))
         return false;
 
     RootedString value(cx, ToString(cx, vp));
@@ -4716,8 +4758,9 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
             MutableHandleObject objp)
 {
     RootedValue idvalue(cx, IdToValue(id));
+    RootedString idstring(cx, ToString(cx, idvalue));
     JSAutoByteString idstr;
-    if (!idstr.encodeLatin1(cx, idvalue.toString()))
+    if (!idstr.encodeLatin1(cx, idstring))
         return false;
 
     const char *name = idstr.ptr();
@@ -5524,25 +5567,16 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     if (op->getBoolOption("ion-compile-try-catch"))
         jit::js_IonOptions.compileTryCatch = true;
 
-#ifdef JS_THREADSAFE
-    bool parallelCompilation = false;
+    bool parallelCompilation = true;
     if (const char *str = op->getStringOption("ion-parallel-compile")) {
-        if (strcmp(str, "on") == 0) {
-            if (cx->runtime()->workerThreadCount() == 0) {
-                fprintf(stderr, "Parallel compilation not available without helper threads");
-                return EXIT_FAILURE;
-            }
-            parallelCompilation = true;
-        } else if (strcmp(str, "off") != 0) {
+        if (strcmp(str, "off") == 0)
+            parallelCompilation = false;
+        else if (strcmp(str, "on") != 0)
             return OptionFailure("ion-parallel-compile", str);
-        }
     }
-    /*
-     * Note: In shell builds, parallel compilation is only enabled with an
-     * explicit option.
-     */
+#ifdef JS_THREADSAFE
     cx->runtime()->setParallelIonCompilationEnabled(parallelCompilation);
-#endif /* JS_THREADSAFE */
+#endif
 
 #endif /* JS_ION */
 
@@ -5795,10 +5829,8 @@ main(int argc, char **argv, char **envp)
                                "  stupid: Simple block local register allocation")
         || !op.addBoolOption('\0', "ion-eager", "Always ion-compile methods (implies --baseline-eager)")
         || !op.addBoolOption('\0', "ion-compile-try-catch", "Ion-compile try-catch statements")
-#ifdef JS_THREADSAFE
         || !op.addStringOption('\0', "ion-parallel-compile", "on/off",
                                "Compile scripts off thread (default: off)")
-#endif
         || !op.addBoolOption('\0', "baseline", "Enable baseline compiler (default)")
         || !op.addBoolOption('\0', "no-baseline", "Disable baseline compiler")
         || !op.addBoolOption('\0', "baseline-eager", "Always baseline-compile methods")

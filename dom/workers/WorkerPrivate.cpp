@@ -94,7 +94,7 @@ using mozilla::AutoSafeJSContext;
 USING_WORKERS_NAMESPACE
 using namespace mozilla::dom;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsWorkerMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(JsWorkerMallocSizeOf)
 
 namespace {
 
@@ -1208,11 +1208,10 @@ public:
         JS::Rooted<JSObject*> target(aCx, JS::CurrentGlobalOrNull(aCx));
         NS_ASSERTION(target, "This should never be null!");
 
-        bool preventDefaultCalled;
+        nsEventStatus status = nsEventStatus_eIgnore;
         nsIScriptGlobalObject* sgo;
 
-        if (aWorkerPrivate ||
-            !(sgo = nsJSUtils::GetStaticScriptGlobal(target))) {
+        if (aWorkerPrivate) {
           WorkerGlobalScope* globalTarget = aWorkerPrivate->GlobalScope();
           MOZ_ASSERT(target == globalTarget->GetWrapperPreserveColor());
 
@@ -1223,33 +1222,28 @@ public:
           event.fileName = aFilename.get();
           event.typeString = NS_LITERAL_STRING("error");
 
-          nsEventStatus status = nsEventStatus_eIgnore;
           nsIDOMEventTarget* target = static_cast<nsIDOMEventTarget*>(globalTarget);
           if (NS_FAILED(nsEventDispatcher::Dispatch(target, nullptr, &event,
                                                     nullptr, &status))) {
             NS_WARNING("Failed to dispatch worker thread error event!");
             status = nsEventStatus_eIgnore;
           }
-
-          preventDefaultCalled = status == nsEventStatus_eConsumeNoDefault;
         }
-        else {
+        else if ((sgo = nsJSUtils::GetStaticScriptGlobal(target))) {
           // Icky, we have to fire an InternalScriptErrorEvent...
           InternalScriptErrorEvent event(true, NS_LOAD_ERROR);
           event.lineNr = aLineNumber;
           event.errorMsg = aMessage.get();
           event.fileName = aFilename.get();
 
-          nsEventStatus status = nsEventStatus_eIgnore;
           if (NS_FAILED(sgo->HandleScriptError(&event, &status))) {
             NS_WARNING("Failed to dispatch main thread error event!");
             status = nsEventStatus_eIgnore;
           }
-
-          preventDefaultCalled = status == nsEventStatus_eConsumeNoDefault;
         }
 
-        if (preventDefaultCalled) {
+        // Was preventDefault() called?
+        if (status == nsEventStatus_eConsumeNoDefault) {
           return true;
         }
       }
@@ -2007,8 +2001,10 @@ struct WorkerPrivate::TimeoutInfo
   bool mCanceled;
 };
 
-class WorkerPrivate::MemoryReporter MOZ_FINAL : public MemoryMultiReporter
+class WorkerPrivate::MemoryReporter MOZ_FINAL : public nsIMemoryReporter
 {
+  NS_DECL_THREADSAFE_ISUPPORTS
+
   friend class WorkerPrivate;
 
   SharedMutex mMutex;
@@ -2119,6 +2115,8 @@ private:
     mRtPath.Insert(addonId, explicitLength);
   }
 };
+
+NS_IMPL_ISUPPORTS1(WorkerPrivate::MemoryReporter, nsIMemoryReporter)
 
 template <class Derived>
 WorkerPrivateParent<Derived>::WorkerPrivateParent(
@@ -2813,16 +2811,17 @@ WorkerPrivateParent<Derived>::GetInnerWindowId()
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::UpdateJSContextOptions(JSContext* aCx,
-                                                     const JS::ContextOptions& aContentOptions,
-                                                     const JS::ContextOptions& aChromeOptions)
+WorkerPrivateParent<Derived>::UpdateJSContextOptions(
+                                      JSContext* aCx,
+                                      const JS::ContextOptions& aContentOptions,
+                                      const JS::ContextOptions& aChromeOptions)
 {
   AssertIsOnParentThread();
 
   {
     MutexAutoLock lock(mMutex);
-    mJSSettings.content.options = aContentOptions;
-    mJSSettings.chrome.options = aChromeOptions;
+    mJSSettings.content.contextOptions = aContentOptions;
+    mJSSettings.chrome.contextOptions = aChromeOptions;
   }
 
   nsRefPtr<UpdateJSContextOptionsRunnable> runnable =
@@ -5446,14 +5445,7 @@ WorkerPrivate::CreateGlobalScope(JSContext* aCx)
     globalScope = new DedicatedWorkerGlobalScope(this);
   }
 
-  JS::CompartmentOptions options;
-  if (IsChromeWorker()) {
-    options.setVersion(JSVERSION_LATEST);
-  }
-
-  JS::Rooted<JSObject*> global(aCx,
-                               globalScope->WrapGlobalObject(aCx, options,
-                                                             GetWorkerPrincipal()));
+  JS::Rooted<JSObject*> global(aCx, globalScope->WrapGlobalObject(aCx));
   NS_ENSURE_TRUE(global, nullptr);
 
   JSAutoCompartment ac(aCx, global);

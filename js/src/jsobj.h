@@ -478,6 +478,9 @@ class JSObject : public js::ObjectImpl
     }
     static inline bool getProto(JSContext *cx, js::HandleObject obj,
                                 js::MutableHandleObject protop);
+    // Returns false on error, success of operation in outparam.
+    static inline bool setProto(JSContext *cx, JS::HandleObject obj,
+                                JS::HandleObject proto, bool *succeeded);
 
     // uninlinedSetType() is the same as setType(), but not inlined.
     inline void setType(js::types::TypeObject *newType);
@@ -1029,12 +1032,6 @@ class JSObject : public js::ObjectImpl
                                   uint32_t index, js::MutableHandleValue vp);
     static inline bool getElementNoGC(JSContext *cx, JSObject *obj, JSObject *receiver,
                                       uint32_t index, js::Value *vp);
-
-    /* If element is not present (e.g. array hole) *present is set to
-       false and the contents of *vp are unusable garbage. */
-    static inline bool getElementIfPresent(JSContext *cx, js::HandleObject obj,
-                                           js::HandleObject receiver, uint32_t index,
-                                           js::MutableHandleValue vp, bool *present);
 
     static bool getSpecial(JSContext *cx, js::HandleObject obj,
                            js::HandleObject receiver, js::SpecialId sid,
@@ -1606,7 +1603,7 @@ GetClassPrototypePure(GlobalObject *global, JSProtoKey protoKey);
 
 extern bool
 SetClassAndProto(JSContext *cx, HandleObject obj,
-                 const Class *clasp, Handle<TaggedProto> proto, bool checkForCycles);
+                 const Class *clasp, Handle<TaggedProto> proto, bool *succeeded);
 
 extern JSObject *
 NonNullObject(JSContext *cx, const Value &v);

@@ -73,7 +73,7 @@ js::StartOffThreadAsmJSCompile(ExclusiveContext *cx, AsmJSParallelTask *asmData)
     if (!state.asmJSWorklist.append(asmData))
         return false;
 
-    state.notifyAll(WorkerThreadState::PRODUCER);
+    state.notifyOne(WorkerThreadState::PRODUCER);
     return true;
 }
 
@@ -501,6 +501,13 @@ WorkerThreadState::notifyAll(CondVar which)
     PR_NotifyAllCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
 }
 
+void
+WorkerThreadState::notifyOne(CondVar which)
+{
+    JS_ASSERT(isLocked());
+    PR_NotifyCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
+}
+
 bool
 WorkerThreadState::canStartAsmJSCompile()
 {
@@ -639,7 +646,7 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
         if (script) {
             // The Debugger only needs to be told about the topmost script that was compiled.
             GlobalObject *compileAndGoGlobal = nullptr;
-            if (script->compileAndGo)
+            if (script->compileAndGo())
                 compileAndGoGlobal = &script->global();
             Debugger::onNewScript(maybecx, script, compileAndGoGlobal);
 
@@ -760,14 +767,14 @@ WorkerThread::handleIonWorkload(WorkerThreadState &state)
     FinishOffThreadIonCompile(ionBuilder);
     ionBuilder = nullptr;
 
-    // Notify the main thread in case it is waiting for the compilation to finish.
-    state.notifyAll(WorkerThreadState::CONSUMER);
-
     // Ping the main thread so that the compiled code can be incorporated
     // at the next operation callback. Don't interrupt Ion code for this, as
     // this incorporation can be delayed indefinitely without affecting
     // performance as long as the main thread is actually executing Ion code.
     runtime->triggerOperationCallback(JSRuntime::TriggerCallbackAnyThreadDontStopIon);
+
+    // Notify the main thread in case it is waiting for the compilation to finish.
+    state.notifyAll(WorkerThreadState::CONSUMER);
 }
 
 void

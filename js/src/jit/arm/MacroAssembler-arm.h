@@ -50,7 +50,8 @@ class MacroAssemblerARM : public Assembler
     void convertInt32ToDouble(const Address &src, FloatRegister dest);
     void convertUInt32ToFloat32(const Register &src, const FloatRegister &dest);
     void convertUInt32ToDouble(const Register &src, const FloatRegister &dest);
-    void convertDoubleToFloat(const FloatRegister &src, const FloatRegister &dest);
+    void convertDoubleToFloat(const FloatRegister &src, const FloatRegister &dest,
+                              Condition c = Always);
     void branchTruncateDouble(const FloatRegister &src, const Register &dest, Label *fail);
     void convertDoubleToInt32(const FloatRegister &src, const Register &dest, Label *fail,
                               bool negativeZeroCheck = true);
@@ -461,8 +462,8 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
 
     // Used to work around the move resolver's lack of support for
     // moving into register pairs, which the softfp ABI needs.
-    MoveResolver::MoveOperand floatArgsInGPR[2];
-    bool floatArgsInGPRValid[2];
+    mozilla::Array<MoveOperand, 2> floatArgsInGPR;
+    mozilla::Array<bool, 2> floatArgsInGPRValid;
 
     // Compute space needed for the function call and set the properties of the
     // callee.  It returns the space which has to be allocated for calling the
@@ -484,9 +485,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         setFramePushed(framePushed_ + value);
     }
   public:
-    typedef MoveResolver::MoveOperand MoveOperand;
-    typedef MoveResolver::Move Move;
-
     enum Result {
         GENERAL,
         DOUBLE,
@@ -1238,6 +1236,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void andPtr(Register src, Register dest);
     void addPtr(Register src, Register dest);
     void addPtr(const Address &src, Register dest);
+    void not32(Register reg);
 
     void move32(const Imm32 &imm, const Register &dest);
     void move32(const Register &src, const Register &dest);
@@ -1493,11 +1492,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         return as_cmp(bounded, Imm8(0));
     }
 
-    void storeFloat(VFPRegister src, Register base, Register index, Condition cond) {
-        as_vcvt(VFPRegister(ScratchFloatReg).singleOverlay(), src, false, cond);
-        ma_vstr(VFPRegister(ScratchFloatReg).singleOverlay(), base, index, 0, cond);
-
-    }
     void moveFloat(FloatRegister src, FloatRegister dest) {
         as_vmov(VFPRegister(src).singleOverlay(), VFPRegister(dest).singleOverlay());
     }

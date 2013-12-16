@@ -174,7 +174,7 @@ jit::EnterBaselineAtBranch(JSContext *cx, StackFrame *fp, jsbytecode *pc)
         data.jitcode += MacroAssembler::ToggledCallSize();
 
     data.osrFrame = fp;
-    data.osrNumStackValues = fp->script()->nfixed + cx->interpreterRegs().stackDepth();
+    data.osrNumStackValues = fp->script()->nfixed() + cx->interpreterRegs().stackDepth();
 
     RootedValue thisv(cx);
 
@@ -247,7 +247,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
 {
     // Limit the locals on a given script so that stack check on baseline frames        
     // doesn't overflow a uint32_t value.
-    static_assert(sizeof(script->nslots) == sizeof(uint16_t), "script->nslots may get too large!");
+    JS_ASSERT(script->nslots() <= UINT16_MAX);
 
     JS_ASSERT(jit::IsBaselineEnabled(cx));
 
@@ -280,7 +280,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
         return Method_Skipped;
     }
 
-    if (script->isCallsiteClone) {
+    if (script->isCallsiteClone()) {
         // Ensure the original function is compiled too, so that bailouts from
         // Ion code have a BaselineScript to resume into.
         RootedScript original(cx, script->originalFunction()->nonLazyScript());
@@ -443,6 +443,16 @@ BaselineScript::Trace(JSTracer *trc, BaselineScript *script)
 void
 BaselineScript::Destroy(FreeOp *fop, BaselineScript *script)
 {
+#ifdef JSGC_GENERATIONAL
+    /*
+     * When the script contains pointers to nursery things, the store buffer
+     * will contain entries refering to the referenced things. Since we can
+     * destroy scripts outside the context of a GC, this situation can result
+     * in invalid store buffer entries. Assert that if we do destroy scripts
+     * outside of a GC that we at least emptied the nursery first.
+     */
+    JS_ASSERT(fop->runtime()->gcNursery.isEmpty());
+#endif
     fop->delete_(script);
 }
 
@@ -747,7 +757,7 @@ BaselineScript::toggleDebugTraps(JSScript *script, jsbytecode *pc)
     if (!debugMode())
         return;
 
-    SrcNoteLineScanner scanner(script->notes(), script->lineno);
+    SrcNoteLineScanner scanner(script->notes(), script->lineno());
 
     JSRuntime *rt = script->runtimeFromMainThread();
     IonContext ictx(CompileRuntime::get(rt),

@@ -196,6 +196,9 @@ public:
     void HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
     void HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
     void HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers);
+    void HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers);
+    void NotifyTransformBegin(ViewID aViewId);
+    void NotifyTransformEnd(ViewID aViewId);
     void Activate();
     void Deactivate();
 
@@ -215,6 +218,7 @@ public:
     bool SendRealTouchEvent(WidgetTouchEvent& event);
     bool SendHandleSingleTap(const CSSIntPoint& aPoint);
     bool SendHandleLongTap(const CSSIntPoint& aPoint);
+    bool SendHandleLongTapUp(const CSSIntPoint& aPoint);
     bool SendHandleDoubleTap(const CSSIntPoint& aPoint);
 
     virtual PDocumentRendererParent*
@@ -225,8 +229,7 @@ public:
     virtual bool DeallocPDocumentRendererParent(PDocumentRendererParent* actor);
 
     virtual PContentPermissionRequestParent*
-    AllocPContentPermissionRequestParent(const InfallibleTArray<PermissionRequest>& aRequests,
-                                         const IPC::Principal& aPrincipal);
+    AllocPContentPermissionRequestParent(const nsCString& aType, const nsCString& aAccess, const IPC::Principal& aPrincipal);
     virtual bool DeallocPContentPermissionRequestParent(PContentPermissionRequestParent* actor);
 
     virtual POfflineCacheUpdateParent* AllocPOfflineCacheUpdateParent(
