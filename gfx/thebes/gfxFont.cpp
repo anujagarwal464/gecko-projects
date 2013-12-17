@@ -1360,7 +1360,9 @@ gfxFontFamily::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
  * shaped-word caches to free up memory.
  */
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(FontCacheMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(FontCacheMallocSizeOf)
+
+NS_IMPL_ISUPPORTS1(gfxFontCache::MemoryReporter, nsIMemoryReporter)
 
 NS_IMETHODIMP
 gfxFontCache::MemoryReporter::CollectReports
@@ -2323,7 +2325,7 @@ struct GlyphBufferAzure {
         if (int(aDrawMode) & int(DrawMode::GLYPH_PATH)) {
             aThebesContext->EnsurePathBuilder();
 			Matrix mat = aDT->GetTransform();
-            aFont->CopyGlyphsToBuilder(buf, aThebesContext->mPathBuilder, &mat);
+            aFont->CopyGlyphsToBuilder(buf, aThebesContext->mPathBuilder, aDT->GetType(), &mat);
         }
         if ((int(aDrawMode) & (int(DrawMode::GLYPH_STROKE) | int(DrawMode::GLYPH_STROKE_UNDERNEATH))) ==
                               int(DrawMode::GLYPH_STROKE)) {

@@ -2816,9 +2816,6 @@ nsWindow::OnButtonReleaseEvent(GdkEventButton *aEvent)
 void
 nsWindow::OnContainerFocusInEvent(GdkEventFocus *aEvent)
 {
-    NS_ASSERTION(mWindowType != eWindowType_popup,
-                 "Unexpected focus on a popup window");
-
     LOGFOCUS(("OnContainerFocusInEvent [%p]\n", (void *)this));
 
     // Unset the urgency hint, if possible
@@ -3320,7 +3317,7 @@ GetBrandName(nsXPIDLString& brandName)
 
     if (bundle)
         bundle->GetStringFromName(
-            NS_LITERAL_STRING("brandShortName").get(),
+            MOZ_UTF16("brandShortName"),
             getter_Copies(brandName));
 
     if (brandName.IsEmpty())

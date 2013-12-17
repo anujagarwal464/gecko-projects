@@ -313,7 +313,7 @@ CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t loca
     SnapshotIterator si = frame.snapshotIterator();
 
     // Skip stack slots until we reach the iterator object.
-    uint32_t base = CountArgSlots(frame.script(), frame.maybeCallee()) + frame.script()->nfixed;
+    uint32_t base = CountArgSlots(frame.script(), frame.maybeCallee()) + frame.script()->nfixed();
     uint32_t skipSlots = base + localSlot - 1;
 
     for (unsigned i = 0; i < skipSlots; i++)
@@ -434,7 +434,7 @@ HandleExceptionBaseline(JSContext *cx, const IonFrameIterator &frame, ResumeFrom
 
           case JSTRAP_RETURN:
             JS_ASSERT(baselineFrame->hasReturnValue());
-            if (jit::DebugEpilogue(cx, baselineFrame, true)) {
+            if (jit::DebugEpilogue(cx, baselineFrame, pc, true)) {
                 rfe->kind = ResumeFromException::RESUME_FORCED_RETURN;
                 rfe->framePointer = frame.fp() - BaselineFrame::FramePointerOffset;
                 rfe->stackPointer = reinterpret_cast<uint8_t *>(baselineFrame);
@@ -457,6 +457,7 @@ HandleExceptionBaseline(JSContext *cx, const IonFrameIterator &frame, ResumeFrom
     JSTryNote *tnEnd = tn + script->trynotes()->length;
 
     uint32_t pcOffset = uint32_t(pc - script->main());
+    ScopeIter si(frame.baselineFrame(), pc, cx);
     for (; tn != tnEnd; ++tn) {
         if (pcOffset < tn->start)
             continue;
@@ -465,19 +466,19 @@ HandleExceptionBaseline(JSContext *cx, const IonFrameIterator &frame, ResumeFrom
 
         // Skip if the try note's stack depth exceeds the frame's stack depth.
         // See the big comment in TryNoteIter::settle for more info.
-        JS_ASSERT(frame.baselineFrame()->numValueSlots() >= script->nfixed);
-        size_t stackDepth = frame.baselineFrame()->numValueSlots() - script->nfixed;
+        JS_ASSERT(frame.baselineFrame()->numValueSlots() >= script->nfixed());
+        size_t stackDepth = frame.baselineFrame()->numValueSlots() - script->nfixed();
         if (tn->stackDepth > stackDepth)
             continue;
 
         // Unwind scope chain (pop block objects).
         if (cx->isExceptionPending())
-            UnwindScope(cx, frame.baselineFrame(), tn->stackDepth);
+            UnwindScope(cx, si, tn->stackDepth);
 
         // Compute base pointer and stack pointer.
         rfe->framePointer = frame.fp() - BaselineFrame::FramePointerOffset;
         rfe->stackPointer = rfe->framePointer - BaselineFrame::Size() -
-            (script->nfixed + tn->stackDepth) * sizeof(Value);
+            (script->nfixed() + tn->stackDepth) * sizeof(Value);
 
         switch (tn->kind) {
           case JSTRY_CATCH:
@@ -607,7 +608,10 @@ HandleException(ResumeFromException *rfe)
                 // If DebugEpilogue returns |true|, we have to perform a forced
                 // return, e.g. return frame->returnValue() to the caller.
                 BaselineFrame *frame = iter.baselineFrame();
-                if (jit::DebugEpilogue(cx, frame, false)) {
+                RootedScript script(cx);
+                jsbytecode *pc;
+                iter.baselineScriptAndPc(script.address(), &pc);
+                if (jit::DebugEpilogue(cx, frame, pc, false)) {
                     JS_ASSERT(frame->hasReturnValue());
                     rfe->kind = ResumeFromException::RESUME_FORCED_RETURN;
                     rfe->framePointer = iter.fp() - BaselineFrame::FramePointerOffset;
@@ -1463,8 +1467,8 @@ template bool InlineFrameIteratorMaybeGC<NoGC>::isFunctionFrame() const;
 template bool InlineFrameIteratorMaybeGC<CanGC>::isFunctionFrame() const;
 
 MachineState
-MachineState::FromBailout(uintptr_t regs[Registers::Total],
-                          double fpregs[FloatRegisters::Total])
+MachineState::FromBailout(mozilla::Array<uintptr_t, Registers::Total> &regs,
+                          mozilla::Array<double, FloatRegisters::Total> &fpregs)
 {
     MachineState machine;
 
@@ -1590,7 +1594,7 @@ IonFrameIterator::dumpBaseline() const
     }
 
     fprintf(stderr, "  file %s line %u\n",
-            script()->filename(), (unsigned) script()->lineno);
+            script()->filename(), (unsigned) script()->lineno());
 
     JSContext *cx = GetIonContext()->cx;
     RootedScript script(cx);
@@ -1638,7 +1642,7 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
     }
 
     fprintf(stderr, "  file %s line %u\n",
-            script()->filename(), (unsigned) script()->lineno);
+            script()->filename(), (unsigned) script()->lineno());
 
     fprintf(stderr, "  script = %p, pc = %p\n", (void*) script(), pc());
     fprintf(stderr, "  current op: %s\n", js_CodeName[*pc()]);
@@ -1655,15 +1659,15 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
                 fprintf(stderr, "  scope chain: ");
             else if (i == 1)
                 fprintf(stderr, "  this: ");
-            else if (i - 2 < callee()->nargs)
+            else if (i - 2 < callee()->nargs())
                 fprintf(stderr, "  formal (arg %d): ", i - 2);
             else {
-                if (i - 2 == callee()->nargs && numActualArgs() > callee()->nargs) {
-                    DumpOp d(callee()->nargs);
+                if (i - 2 == callee()->nargs() && numActualArgs() > callee()->nargs()) {
+                    DumpOp d(callee()->nargs());
                     forEachCanonicalActualArg(GetIonContext()->cx, d, d.i_, numActualArgs() - d.i_);
                 }
 
-                fprintf(stderr, "  slot %d: ", i - 2 - callee()->nargs);
+                fprintf(stderr, "  slot %d: ", int(i - 2 - callee()->nargs()));
             }
         } else
             fprintf(stderr, "  slot %u: ", i);

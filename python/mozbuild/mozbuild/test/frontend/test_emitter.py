@@ -31,14 +31,16 @@ from mozbuild.frontend.reader import (
 
 from mozbuild.test.common import MockConfig
 
+import mozpack.path as mozpath
 
-data_path = os.path.abspath(os.path.dirname(__file__))
-data_path = os.path.join(data_path, 'data')
+
+data_path = mozpath.abspath(mozpath.dirname(__file__))
+data_path = mozpath.join(data_path, 'data')
 
 
 class TestEmitterBasic(unittest.TestCase):
     def reader(self, name):
-        config = MockConfig(os.path.join(data_path, name), extra_substs=dict(
+        config = MockConfig(mozpath.join(data_path, name), extra_substs=dict(
             ENABLE_TESTS='1',
             BIN_SUFFIX='.prog',
         ))
@@ -100,9 +102,6 @@ class TestEmitterBasic(unittest.TestCase):
                 self.assertEqual(o.test_dirs, ['test'])
                 self.assertEqual(o.test_tool_dirs, ['test_tool'])
                 self.assertEqual(o.tool_dirs, ['tool'])
-                self.assertEqual(o.external_make_dirs, ['external_make'])
-                self.assertEqual(o.parallel_external_make_dirs,
-                    ['parallel_external_make'])
 
     def test_tier_simple(self):
         reader = self.reader('traversal-tier-simple')
@@ -121,12 +120,12 @@ class TestEmitterBasic(unittest.TestCase):
         self.assertIsInstance(objs[1], ConfigFileSubstitution)
         self.assertIsInstance(objs[2], ConfigFileSubstitution)
 
-        topobjdir = os.path.abspath(reader.config.topobjdir)
+        topobjdir = mozpath.abspath(reader.config.topobjdir)
         self.assertEqual(objs[1].relpath, 'foo')
-        self.assertEqual(os.path.normpath(objs[1].output_path),
-            os.path.normpath(os.path.join(topobjdir, 'foo')))
-        self.assertEqual(os.path.normpath(objs[2].output_path),
-            os.path.normpath(os.path.join(topobjdir, 'bar')))
+        self.assertEqual(mozpath.normpath(objs[1].output_path),
+            mozpath.normpath(mozpath.join(topobjdir, 'foo')))
+        self.assertEqual(mozpath.normpath(objs[2].output_path),
+            mozpath.normpath(mozpath.join(topobjdir, 'bar')))
 
     def test_variable_passthru(self):
         reader = self.reader('variable-passthru')
@@ -248,10 +247,8 @@ class TestEmitterBasic(unittest.TestCase):
                 'installs': {
                     'a11y.ini',
                     'test_a11y.js',
-                    # From ** wildcard.
-                    'a11y-support/foo',
-                    'a11y-support/dir1/bar',
                 },
+                'pattern-installs': 1,
             },
             'browser.ini': {
                 'flavor': 'browser-chrome',
@@ -302,13 +299,13 @@ class TestEmitterBasic(unittest.TestCase):
         }
 
         for o in objs:
-            m = metadata[os.path.basename(o.manifest_relpath)]
+            m = metadata[mozpath.basename(o.manifest_relpath)]
 
             self.assertTrue(o.path.startswith(o.directory))
             self.assertEqual(o.flavor, m['flavor'])
             self.assertEqual(o.dupe_manifest, m.get('dupe', False))
 
-            external_normalized = set(os.path.basename(p) for p in
+            external_normalized = set(mozpath.basename(p) for p in
                     o.external_installs)
             self.assertEqual(external_normalized, m.get('external', set()))
 
@@ -318,6 +315,9 @@ class TestEmitterBasic(unittest.TestCase):
                 path = path[len(o.directory)+1:]
 
                 self.assertIn(path, m['installs'])
+
+            if 'pattern-installs' in m:
+                self.assertEqual(len(o.pattern_installs), m['pattern-installs'])
 
     def test_test_manifest_unmatched_generated(self):
         reader = self.reader('test-manifest-unmatched-generated')
@@ -340,7 +340,7 @@ class TestEmitterBasic(unittest.TestCase):
         o = objs[0]
 
         self.assertEqual(o.flavor, 'mochitest')
-        basenames = set(os.path.basename(k) for k in o.installs.keys())
+        basenames = set(mozpath.basename(k) for k in o.installs.keys())
         self.assertEqual(basenames, {'mochitest.ini', 'test_active.html'})
 
     def test_ipdl_sources(self):

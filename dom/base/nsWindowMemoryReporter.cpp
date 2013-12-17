@@ -166,7 +166,7 @@ AppendWindowURI(nsGlobalWindow *aWindow, nsACString& aStr)
   }
 }
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(WindowsMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(WindowsMallocSizeOf)
 
 // The key is the window ID.
 typedef nsDataHashtable<nsUint64HashKey, nsCString> WindowPaths;
@@ -309,11 +309,6 @@ CollectWindowReports(nsGlobalWindow *aWindow,
               "Memory used by a window's DOM that isn't measured by the "
               "other 'dom/' numbers.");
   aWindowTotalSizes->mDOMOtherSize += windowSizes.mDOMOtherSize;
-
-  REPORT_SIZE("/proto-iface-cache", windowSizes.mProtoIfaceCacheSize,
-              "Memory used for prototype and interface binding caches "
-              "with a window.");
-  aWindowTotalSizes->mProtoIfaceCacheSize += windowSizes.mProtoIfaceCacheSize;
 
   REPORT_SIZE("/property-tables",
               windowSizes.mPropertyTablesSize,
@@ -528,9 +523,6 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
 
   REPORT("window-objects/dom/other", windowTotalSizes.mDOMOtherSize,
          "This is the sum of all windows' 'dom/other' numbers.");
-
-  REPORT("window-objects/proto-iface-cache", windowTotalSizes.mProtoIfaceCacheSize,
-         "This is the sum of all windows' 'proto-iface-cache' numbers.");
 
   REPORT("window-objects/property-tables",
          windowTotalSizes.mPropertyTablesSize,

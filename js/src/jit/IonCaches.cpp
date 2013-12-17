@@ -410,7 +410,7 @@ IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, StubAttacher &a
 
     if (pc_) {
         IonSpew(IonSpew_InlineCaches, "Cache %p(%s:%d/%d) generated %s %s stub at %p",
-                this, script_->filename(), script_->lineno, script_->pcToOffset(pc_),
+                this, script_->filename(), script_->lineno(), script_->pcToOffset(pc_),
                 attachKind, CacheName(kind()), code->raw());
     } else {
         IonSpew(IonSpew_InlineCaches, "Cache %p generated %s %s stub at %p",
@@ -468,7 +468,7 @@ GeneratePrototypeGuards(JSContext *cx, IonScript *ion, MacroAssembler &masm, JSO
         // Note: objectReg and scratchReg may be the same register, so we cannot
         // use objectReg in the rest of this function.
         masm.loadPtr(Address(objectReg, JSObject::offsetOfType()), scratchReg);
-        Address proto(scratchReg, offsetof(types::TypeObject, proto));
+        Address proto(scratchReg, types::TypeObject::offsetOfProto());
         masm.branchNurseryPtr(Assembler::NotEqual, proto,
                               ImmMaybeNurseryPtr(obj->getProto()), failures);
     }
@@ -796,11 +796,7 @@ GenerateReadSlot(JSContext *cx, IonScript *ion, MacroAssembler &masm,
             Register lastReg = object;
             JS_ASSERT(scratchReg != object);
             while (proto) {
-                Address addrType(lastReg, JSObject::offsetOfType());
-                masm.loadPtr(addrType, scratchReg);
-                Address addrProto(scratchReg, offsetof(types::TypeObject, proto));
-                masm.loadPtr(addrProto, scratchReg);
-                Address addrShape(scratchReg, JSObject::offsetOfShape());
+                masm.loadObjProto(lastReg, scratchReg);
 
                 // Guard the shape of the current prototype.
                 masm.branchPtr(Assembler::NotEqual,
@@ -1744,9 +1740,9 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
         //    be complicated since (due to GVN) there can be multiple pc's
         //    associated with a single idempotent cache.
         IonSpew(IonSpew_InlineCaches, "Invalidating from idempotent cache %s:%d",
-                topScript->filename(), topScript->lineno);
+                topScript->filename(), topScript->lineno());
 
-        topScript->invalidatedIdempotentCache = true;
+        topScript->setInvalidatedIdempotentCache();
 
         // Do not re-invalidate if the lookup already caused invalidation.
         if (!topScript->hasIonScript())
@@ -2584,8 +2580,7 @@ GenerateAddSlot(JSContext *cx, MacroAssembler &masm, IonCache::StubAttacher &att
         Shape *protoShape = proto->lastProperty();
 
         // load next prototype
-        masm.loadPtr(Address(protoReg, JSObject::offsetOfType()), protoReg);
-        masm.loadPtr(Address(protoReg, offsetof(types::TypeObject, proto)), protoReg);
+        masm.loadObjProto(protoReg, protoReg);
 
         // Ensure that its shape matches.
         masm.branchTestObjShape(Assembler::NotEqual, protoReg, protoShape, &failuresPopObject);
@@ -4033,7 +4028,7 @@ GenerateScopeChainGuard(MacroAssembler &masm, JSObject *scopeObj,
         if (!callObj->isForEval()) {
             JSFunction *fun = &callObj->callee();
             JSScript *script = fun->nonLazyScript();
-            if (!script->funHasExtensibleScope)
+            if (!script->funHasExtensibleScope())
                 return;
         }
     } else if (scopeObj->is<GlobalObject>()) {
@@ -4336,7 +4331,7 @@ CallsiteCloneIC::update(JSContext *cx, size_t cacheIndex, HandleObject callee)
     // Act as the identity for functions that are not clone-at-callsite, as we
     // generate this cache as long as some callees are clone-at-callsite.
     RootedFunction fun(cx, &callee->as<JSFunction>());
-    if (!fun->hasScript() || !fun->nonLazyScript()->shouldCloneAtCallsite)
+    if (!fun->hasScript() || !fun->nonLazyScript()->shouldCloneAtCallsite())
         return fun;
 
     IonScript *ion = GetTopIonJSScript(cx)->ionScript();

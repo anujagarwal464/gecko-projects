@@ -1108,12 +1108,12 @@ AddNewScriptRecipients(GlobalObject::DebuggerVector *src, AutoValueVector *dest)
 void
 Debugger::slowPathOnNewScript(JSContext *cx, HandleScript script, GlobalObject *compileAndGoGlobal_)
 {
-    if (script->selfHosted)
+    if (script->selfHosted())
         return;
 
     Rooted<GlobalObject*> compileAndGoGlobal(cx, compileAndGoGlobal_);
 
-    JS_ASSERT(script->compileAndGo == !!compileAndGoGlobal);
+    JS_ASSERT(script->compileAndGo() == !!compileAndGoGlobal);
 
     /*
      * Build the list of recipients. For compile-and-go scripts, this is the
@@ -1122,7 +1122,7 @@ Debugger::slowPathOnNewScript(JSContext *cx, HandleScript script, GlobalObject *
      * debugger observing any global in the script's compartment.
      */
     AutoValueVector triggered(cx);
-    if (script->compileAndGo) {
+    if (script->compileAndGo()) {
         if (GlobalObject::DebuggerVector *debuggers = compileAndGoGlobal->getDebuggers()) {
             if (!AddNewScriptRecipients(debuggers, &triggered))
                 return;
@@ -1277,7 +1277,7 @@ Debugger::onSingleStep(JSContext *cx, MutableHandleValue vp)
                 }
             }
         }
-        if (trappingScript->compileAndGo)
+        if (trappingScript->compileAndGo())
             JS_ASSERT(stepperCount == trappingScript->stepModeCount());
         else
             JS_ASSERT(stepperCount <= trappingScript->stepModeCount());
@@ -2571,7 +2571,7 @@ class Debugger::ScriptQuery {
      * condition occurred.
      */
     void consider(JSScript *script) {
-        if (oom || script->selfHosted)
+        if (oom || script->selfHosted())
             return;
         JSCompartment *compartment = script->compartment();
         if (!compartments.has(compartment))
@@ -2581,7 +2581,7 @@ class Debugger::ScriptQuery {
                 return;
         }
         if (hasLine) {
-            if (line < script->lineno || script->lineno + js_GetScriptLineExtent(script) < line)
+            if (line < script->lineno() || script->lineno() + js_GetScriptLineExtent(script) < line)
                 return;
         }
         if (innermost) {
@@ -2601,7 +2601,7 @@ class Debugger::ScriptQuery {
             if (p) {
                 /* Is our newly found script deeper than the last one we found? */
                 JSScript *incumbent = p->value();
-                if (script->staticLevel > incumbent->staticLevel)
+                if (script->staticLevel() > incumbent->staticLevel())
                     p->value() = script;
             } else {
                 /*
@@ -2884,7 +2884,7 @@ static bool
 DebuggerScript_getStartLine(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get startLine)", args, obj, script);
-    args.rval().setNumber(script->lineno);
+    args.rval().setNumber(uint32_t(script->lineno()));
     return true;
 }
 
@@ -2917,7 +2917,7 @@ static bool
 DebuggerScript_getSourceStart(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get sourceStart)", args, obj, script);
-    args.rval().setNumber(script->sourceStart);
+    args.rval().setNumber(uint32_t(script->sourceStart()));
     return true;
 }
 
@@ -2925,7 +2925,7 @@ static bool
 DebuggerScript_getSourceLength(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get sourceEnd)", args, obj, script);
-    args.rval().setNumber(script->sourceEnd - script->sourceStart);
+    args.rval().setNumber(uint32_t(script->sourceEnd() - script->sourceStart()));
     return true;
 }
 
@@ -2933,7 +2933,7 @@ static bool
 DebuggerScript_getStaticLevel(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get staticLevel)", args, obj, script);
-    args.rval().setNumber(uint32_t(script->staticLevel));
+    args.rval().setNumber(uint32_t(script->staticLevel()));
     return true;
 }
 
@@ -3037,7 +3037,7 @@ class BytecodeRangeWithPosition : private BytecodeRange
     using BytecodeRange::frontOffset;
 
     BytecodeRangeWithPosition(JSContext *cx, JSScript *script)
-      : BytecodeRange(cx, script), lineno(script->lineno), column(0),
+      : BytecodeRange(cx, script), lineno(script->lineno()), column(0),
         sn(script->notes()), snpc(script->code())
     {
         if (!SN_IS_TERMINATOR(sn))
@@ -3202,7 +3202,7 @@ class FlowGraphSummary {
         for (size_t i = mainOffset + 1; i < script->length(); i++)
             entries_[i] = Entry::createWithNoEdges();
 
-        size_t prevLineno = script->lineno;
+        size_t prevLineno = script->lineno();
         size_t prevColumn = 0;
         JSOp prevOp = JSOP_NOP;
         for (BytecodeRangeWithPosition r(cx, script); !r.empty(); r.popFront()) {
@@ -3438,7 +3438,7 @@ Debugger::observesScript(JSScript *script) const
 {
     if (!enabled)
         return false;
-    return observesGlobal(&script->global()) && !script->selfHosted;
+    return observesGlobal(&script->global()) && !script->selfHosted();
 }
 
 /* static */ bool
@@ -3582,7 +3582,7 @@ DebuggerScript_isInCatchScope(JSContext *cx, unsigned argc, Value* vp)
      * Try note ranges are relative to the mainOffset of the script, so adjust
      * offset accordingly.
      */
-    offset -= script->mainOffset;
+    offset -= script->mainOffset();
 
     args.rval().setBoolean(false);
     if (script->hasTrynotes()) {
@@ -3988,12 +3988,12 @@ DebuggerFrame_getType(JSContext *cx, unsigned argc, Value *vp)
 static bool
 DebuggerFrame_getEnvironment(JSContext *cx, unsigned argc, Value *vp)
 {
-    THIS_FRAME_OWNER(cx, argc, vp, "get environment", args, thisobj, frame, dbg);
+    THIS_FRAME_OWNER_ITER(cx, argc, vp, "get environment", args, thisobj, _, iter, dbg);
 
     Rooted<Env*> env(cx);
     {
-        AutoCompartment ac(cx, frame.scopeChain());
-        env = GetDebugScopeForFrame(cx, frame);
+        AutoCompartment ac(cx, iter.abstractFramePtr().scopeChain());
+        env = GetDebugScopeForFrame(cx, iter.abstractFramePtr(), iter.pc());
         if (!env)
             return false;
     }
@@ -4347,7 +4347,7 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFr
     if (!script)
         return false;
 
-    script->isActiveEval = true;
+    script->setActiveEval();
     ExecuteType type = !frame ? EXECUTE_DEBUG_GLOBAL : EXECUTE_DEBUG;
     return ExecuteKernel(cx, script, *env, thisv, type, frame, rval.address());
 }
@@ -4439,7 +4439,7 @@ DebuggerGenericEval(JSContext *cx, const char *fullMethodName, const Value &code
         if (!iter->computeThis(cx))
             return false;
         thisv = iter->thisv();
-        env = GetDebugScopeForFrame(cx, iter->abstractFramePtr());
+        env = GetDebugScopeForFrame(cx, iter->abstractFramePtr(), iter->pc());
         if (!env)
             return false;
     } else {
@@ -4720,23 +4720,23 @@ DebuggerObject_getParameterNames(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    RootedObject result(cx, NewDenseAllocatedArray(cx, fun->nargs));
+    RootedObject result(cx, NewDenseAllocatedArray(cx, fun->nargs()));
     if (!result)
         return false;
-    result->ensureDenseInitializedLength(cx, 0, fun->nargs);
+    result->ensureDenseInitializedLength(cx, 0, fun->nargs());
 
     if (fun->isInterpreted()) {
         RootedScript script(cx, GetOrCreateFunctionScript(cx, fun));
         if (!script)
             return false;
 
-        JS_ASSERT(fun->nargs == script->bindings.numArgs());
+        JS_ASSERT(fun->nargs() == script->bindings.numArgs());
 
-        if (fun->nargs > 0) {
+        if (fun->nargs() > 0) {
             BindingVector bindings(cx);
             if (!FillBindingVector(script, &bindings))
                 return false;
-            for (size_t i = 0; i < fun->nargs; i++) {
+            for (size_t i = 0; i < fun->nargs(); i++) {
                 Value v;
                 if (bindings[i].name()->length() == 0)
                     v = UndefinedValue();
@@ -4746,7 +4746,7 @@ DebuggerObject_getParameterNames(JSContext *cx, unsigned argc, Value *vp)
             }
         }
     } else {
-        for (size_t i = 0; i < fun->nargs; i++)
+        for (size_t i = 0; i < fun->nargs(); i++)
             result->setDenseElement(i, UndefinedValue());
     }
 

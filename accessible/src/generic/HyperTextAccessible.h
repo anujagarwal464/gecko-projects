@@ -17,6 +17,9 @@ namespace mozilla {
 namespace a11y {
 
 struct DOMPoint {
+  DOMPoint() : node(nullptr), idx(0) { }
+  DOMPoint(nsINode* aNode, int32_t aIdx) : node(aNode), idx(aIdx) { }
+
   nsINode* node;
   int32_t idx;
 };
@@ -128,15 +131,24 @@ public:
                                         bool aIsEndOffset = false) const;
 
   /**
-   * Turn a start and end hypertext offsets into DOM range.
+   * Convert start and end hypertext offsets into DOM range.
    *
-   * @param  aStartHTOffset  [in] the given start hypertext offset
-   * @param  aEndHTOffset    [in] the given end hypertext offset
-   * @param  aRange      [out] the range whose bounds to set
+   * @param  aStartOffset  [in] the given start hypertext offset
+   * @param  aEndOffset    [in] the given end hypertext offset
+   * @param  aRange        [in, out] the range whose bounds to set
+   * @return true   if conversion was successful
    */
-  nsresult HypertextOffsetsToDOMRange(int32_t aStartHTOffset,
-                                      int32_t aEndHTOffset,
-                                      nsRange* aRange);
+  bool OffsetsToDOMRange(int32_t aStartOffset, int32_t aEndOffset,
+                         nsRange* aRange);
+
+  /**
+   * Convert the given offset into DOM point.
+   *
+   * If offset is at text leaf then DOM point is (text node, offsetInTextNode),
+   * if before embedded object then (parent node, indexInParent), if after then
+   * (parent node, indexInParent + 1).
+   */
+  DOMPoint OffsetToDOMPoint(int32_t aOffset);
 
   /**
    * Return true if the used ARIA role (if any) allows the hypertext accessible
@@ -432,9 +444,9 @@ protected:
    * Return an offset corresponding to the given direction and selection amount
    * relative the given offset. A helper used to find word or line boundaries.
    */
-  int32_t FindOffset(int32_t aOffset, nsDirection aDirection,
-                     nsSelectionAmount aAmount,
-                     EWordMovementType aWordMovementType = eDefaultBehavior);
+  virtual int32_t FindOffset(int32_t aOffset, nsDirection aDirection,
+                             nsSelectionAmount aAmount,
+                             EWordMovementType aWordMovementType = eDefaultBehavior);
 
   /**
     * Provides information for substring that is defined by the given start

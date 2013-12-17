@@ -2042,12 +2042,7 @@ XULDocument::StartLayout(void)
         if (! cx)
             return NS_ERROR_UNEXPECTED;
 
-        nsCOMPtr<nsISupports> container = cx->GetContainer();
-        NS_ASSERTION(container != nullptr, "pres context has no container");
-        if (! container)
-            return NS_ERROR_UNEXPECTED;
-
-        nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+        nsCOMPtr<nsIDocShell> docShell = cx->GetDocShell();
         NS_ASSERTION(docShell != nullptr, "container is not a docshell");
         if (! docShell)
             return NS_ERROR_UNEXPECTED;
@@ -4740,7 +4735,7 @@ XULDocument::ResetDocumentDirection()
     DocumentStatesChanged(NS_DOCUMENT_STATE_RTL_LOCALE);
 }
 
-int
+void
 XULDocument::DirectionChanged(const char* aPrefName, void* aData)
 {
   // Reset the direction and restyle the document if necessary.
@@ -4748,8 +4743,6 @@ XULDocument::DirectionChanged(const char* aPrefName, void* aData)
   if (doc) {
       doc->ResetDocumentDirection();
   }
-
-  return 0;
 }
 
 int

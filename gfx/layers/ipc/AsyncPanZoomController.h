@@ -260,13 +260,6 @@ public:
    */
   static void SetFrameTime(const TimeStamp& aMilliseconds);
 
-  /**
-   * Update mFrameMetrics.mScrollOffset to the given offset.
-   * This is necessary in cases where a scroll is not caused by user
-   * input (for example, a content scrollTo()).
-   */
-  void UpdateScrollOffset(const CSSPoint& aScrollOffset);
-
   void StartAnimation(AsyncPanZoomAnimation* aAnimation);
 
   /**
@@ -350,30 +343,23 @@ protected:
   nsEventStatus OnScaleEnd(const PinchGestureInput& aEvent);
 
   /**
-   * Helper method for long press gestures.
-   *
-   * XXX: Implement this.
+   * Helper methods for long press gestures.
    */
   nsEventStatus OnLongPress(const TapGestureInput& aEvent);
+  nsEventStatus OnLongPressUp(const TapGestureInput& aEvent);
 
   /**
    * Helper method for single tap gestures.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnSingleTapUp(const TapGestureInput& aEvent);
 
   /**
    * Helper method for a single tap confirmed.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnSingleTapConfirmed(const TapGestureInput& aEvent);
 
   /**
    * Helper method for double taps.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnDoubleTap(const TapGestureInput& aEvent);
 

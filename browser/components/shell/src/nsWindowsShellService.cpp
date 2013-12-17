@@ -752,10 +752,9 @@ WriteBitmap(nsIFile* aFile, imgIContainer* aImage)
 {
   nsresult rv;
 
-  nsRefPtr<gfxASurface> surface;
-  aImage->GetFrame(imgIContainer::FRAME_FIRST,
-                   imgIContainer::FLAG_SYNC_DECODE,
-                   getter_AddRefs(surface));
+  nsRefPtr<gfxASurface> surface =
+    aImage->GetFrame(imgIContainer::FRAME_FIRST,
+                     imgIContainer::FLAG_SYNC_DECODE);
   NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
   nsRefPtr<gfxImageSurface> image(surface->GetAsReadableARGB32ImageSurface());
@@ -868,7 +867,7 @@ nsWindowsShellService::SetDesktopBackground(nsIDOMElement* aElement,
   // e.g. "Desktop Background.bmp"
   nsString fileLeafName;
   rv = shellBundle->GetStringFromName
-                      (NS_LITERAL_STRING("desktopBackgroundLeafNameWin").get(),
+                      (MOZ_UTF16("desktopBackgroundLeafNameWin"),
                        getter_Copies(fileLeafName));
   NS_ENSURE_SUCCESS(rv, rv);
 

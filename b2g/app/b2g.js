@@ -7,6 +7,9 @@
 pref("toolkit.defaultChromeURI", "chrome://browser/content/shell.html");
 pref("browser.chromeURL", "chrome://browser/content/");
 
+// Bug 945235: Prevent all bars to be considered visible:
+pref("toolkit.defaultChromeFeatures", "chrome,dialog=no,close,resizable,scrollbars,extrachrome");
+
 // Device pixel to CSS px ratio, in percent. Set to -1 to calculate based on display density.
 pref("browser.viewport.scaleRatio", -1);
 
@@ -741,6 +744,9 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
 
+// Enable the Linux-specific, system-wide memory reporter.
+pref("memory.system_memory_reporter", true);
+
 pref("layout.imagevisibility.enabled", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
@@ -853,3 +859,9 @@ pref("osfile.reset_worker_delay", 5000);
 
 // The URL of the Firefox Accounts auth server backend
 pref("identity.fxaccounts.auth.uri", "https://api-accounts.dev.lcip.org/v1");
+
+// APZC preferences.
+//
+// Gaia relies heavily on scroll events for now, so lets fire them
+// more often than the default value (100).
+pref("apz.asyncscroll.throttle", 40);

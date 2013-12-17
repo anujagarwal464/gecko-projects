@@ -360,7 +360,7 @@ js::IsInNonStrictPropertySet(JSContext *cx)
 {
     jsbytecode *pc;
     JSScript *script = cx->currentScript(&pc, JSContext::ALLOW_CROSS_COMPARTMENT);
-    return script && !script->strict && (js_CodeSpec[*pc].format & JOF_SET);
+    return script && !script->strict() && (js_CodeSpec[*pc].format & JOF_SET);
 }
 
 JS_FRIEND_API(bool)
@@ -933,22 +933,33 @@ JS::DisableIncrementalGC(JSRuntime *rt)
 extern JS_FRIEND_API(void)
 JS::DisableGenerationalGC(JSRuntime *rt)
 {
-    rt->gcGenerationalEnabled = false;
 #ifdef JSGC_GENERATIONAL
-    MinorGC(rt, JS::gcreason::API);
-    rt->gcNursery.disable();
-    rt->gcStoreBuffer.disable();
+    if (IsGenerationalGCEnabled(rt)) {
+        MinorGC(rt, JS::gcreason::API);
+        rt->gcNursery.disable();
+        rt->gcStoreBuffer.disable();
+    }
 #endif
+    ++rt->gcGenerationalDisabled;
 }
 
 extern JS_FRIEND_API(void)
 JS::EnableGenerationalGC(JSRuntime *rt)
 {
-    rt->gcGenerationalEnabled = true;
+    JS_ASSERT(rt->gcGenerationalDisabled > 0);
+    --rt->gcGenerationalDisabled;
 #ifdef JSGC_GENERATIONAL
-    rt->gcNursery.enable();
-    rt->gcStoreBuffer.enable();
+    if (IsGenerationalGCEnabled(rt)) {
+        rt->gcNursery.enable();
+        rt->gcStoreBuffer.enable();
+    }
 #endif
+}
+
+extern JS_FRIEND_API(bool)
+JS::IsGenerationalGCEnabled(JSRuntime *rt)
+{
+    return rt->gcGenerationalDisabled == 0;
 }
 
 JS_FRIEND_API(bool)
@@ -1163,6 +1174,14 @@ JS_FRIEND_API(JSObject *)
 js::GetObjectMetadata(JSObject *obj)
 {
     return obj->getMetadata();
+}
+
+JS_FRIEND_API(void)
+js::UnsafeDefineElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::HandleValue value)
+{
+    JS_ASSERT(obj->isNative());
+    JS_ASSERT(index < obj->getDenseInitializedLength());
+    obj->setDenseElementWithType(cx, index, value);
 }
 
 JS_FRIEND_API(bool)

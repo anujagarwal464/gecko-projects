@@ -396,7 +396,11 @@ NewPropertyIteratorObject(JSContext *cx, unsigned flags)
         return &obj->as<PropertyIteratorObject>();
     }
 
-    return &NewBuiltinClassInstance(cx, &PropertyIteratorObject::class_)->as<PropertyIteratorObject>();
+    JSObject *obj = NewBuiltinClassInstance(cx, &PropertyIteratorObject::class_);
+    if (!obj)
+        return nullptr;
+
+    return &obj->as<PropertyIteratorObject>();
 }
 
 NativeIterator *
@@ -1562,7 +1566,7 @@ js_NewGenerator(JSContext *cx, const FrameRegs &stackRegs)
                    (-1 + /* one Value included in JSGenerator */
                     vplen +
                     VALUES_PER_STACK_FRAME +
-                    stackfp->script()->nslots) * sizeof(HeapValue);
+                    stackfp->script()->nslots()) * sizeof(HeapValue);
 
     JS_ASSERT(nbytes % sizeof(Value) == 0);
     JS_STATIC_ASSERT(sizeof(StackFrame) % sizeof(HeapValue) == 0);
@@ -1933,6 +1937,7 @@ GlobalObject::initIteratorClasses(JSContext *cx, Handle<GlobalObject *> global)
         if (!LinkConstructorAndPrototype(cx, genFunction, genFunctionProto))
             return false;
 
+        AutoLockForCompilation lock(cx);
         global->setSlot(STAR_GENERATOR_OBJECT_PROTO, ObjectValue(*genObjectProto));
         global->setConstructor(JSProto_GeneratorFunction, ObjectValue(*genFunction));
         global->setPrototype(JSProto_GeneratorFunction, ObjectValue(*genFunctionProto));

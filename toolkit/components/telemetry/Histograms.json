@@ -23,6 +23,24 @@
     "extended_statistics_ok": true,
     "description": "time spent updating accessibility (ms)"
   },
+  "APPLICATION_REPUTATION_SHOULD_BLOCK": {
+    "kind": "boolean",
+    "description": "Application reputation verdict (shouldBlock=false is OK)"
+  },
+  "APPLICATION_REPUTATION_LOCAL": {
+    "kind": "enumerated",
+    "n_values": 3,
+    "description": "Application reputation local results (0=ALLOW, 1=BLOCK, 2=NONE)"
+  },
+  "APPLICATION_REPUTATION_SERVER": {
+    "kind": "enumerated",
+    "n_values": 3,
+    "description": "Application reputation remote status (0 = OK, 1 = FAIL, 2 = INVALID)"
+  },
+  "APPLICATION_REPUTATION_COUNT": {
+    "kind": "flag",
+    "description": "Application reputation query count (both local and remote)"
+  },
   "BACKGROUNDFILESAVER_THREAD_COUNT": {
     "kind": "enumerated",
     "n_values": 21,
@@ -4675,5 +4693,10 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "Type of handshake (1=resumption, 2=false started, 3=chose not to false start, 4=not allowed to false start)"
+  },
+  "SSL_OCSP_STAPLING": {
+    "kind": "enumerated",
+    "n_values": 8,
+    "description": "Status of OCSP stapling on this handshake (1=present, good; 2=none; 3=present, expired; 4=present, other error)"
   }
 }

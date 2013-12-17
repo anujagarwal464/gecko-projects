@@ -49,8 +49,7 @@ CodeGeneratorShared::CodeGeneratorShared(MIRGenerator *gen, LIRGraph *graph, Mac
     sps_(&GetIonContext()->runtime->spsProfiler(), &lastPC_),
     osrEntryOffset_(0),
     skipArgCheckEntryOffset_(0),
-    frameDepth_(graph->localSlotCount() * sizeof(STACK_SLOT_SIZE) +
-                graph->argumentSlotCount() * sizeof(Value))
+    frameDepth_(graph->paddedLocalSlotsSize() + graph->argumentsSize())
 {
     if (!gen->compilingAsmJS())
         masm.setInstrumentation(&sps_);
@@ -115,6 +114,7 @@ CodeGeneratorShared::addOutOfLineCode(OutOfLineCode *code)
         code->setSource(oolIns->script(), oolIns->pc());
     else
         code->setSource(current ? current->mir()->info().script() : nullptr, lastPC_);
+    JS_ASSERT_IF(code->script(), code->script()->containsPC(code->pc()));
     return outOfLineCode_.append(code);
 }
 
@@ -280,7 +280,11 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
 #ifdef DEBUG
         if (GetIonContext()->cx) {
             uint32_t stackDepth;
-            if (ReconstructStackDepth(GetIonContext()->cx, script, bailPC, &stackDepth)) {
+            bool reachablePC;
+            if (!ReconstructStackDepth(GetIonContext()->cx, script, bailPC, &stackDepth, &reachablePC))
+                return false;
+
+            if (reachablePC) {
                 if (JSOp(*bailPC) == JSOP_FUNCALL) {
                     // For fun.call(this, ...); the reconstructStackDepth will
                     // include the this. When inlining that is not included.
@@ -390,7 +394,7 @@ CodeGeneratorShared::markSafepoint(LInstruction *ins)
 bool
 CodeGeneratorShared::markSafepointAt(uint32_t offset, LInstruction *ins)
 {
-    JS_ASSERT_IF(safepointIndices_.length(),
+    JS_ASSERT_IF(!safepointIndices_.empty(),
                  offset - safepointIndices_.back().displacement() >= sizeof(uint32_t));
     return safepointIndices_.append(SafepointIndex(offset, ins->safepoint()));
 }
@@ -800,8 +804,7 @@ CodeGeneratorShared::emitPreBarrier(Address address, MIRType type)
 void
 CodeGeneratorShared::dropArguments(unsigned argc)
 {
-    for (unsigned i = 0; i < argc; i++)
-        pushedArgumentSlots_.popBack();
+    pushedArgumentSlots_.shrinkBy(argc);
 }
 
 bool
@@ -974,8 +977,7 @@ CodeGeneratorShared::jumpToBlock(MBasicBlock *mir)
         CodeOffsetJump backedge = masm.jumpWithPatch(&rejoin);
         masm.bind(&rejoin);
 
-        if (!patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)))
-            MOZ_CRASH();
+        masm.propagateOOM(patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)));
     } else {
         masm.jump(mir->lir()->label());
     }
@@ -991,8 +993,7 @@ CodeGeneratorShared::jumpToBlock(MBasicBlock *mir, Assembler::Condition cond)
         CodeOffsetJump backedge = masm.jumpWithPatch(&rejoin, cond);
         masm.bind(&rejoin);
 
-        if (!patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)))
-            MOZ_CRASH();
+        masm.propagateOOM(patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)));
     } else {
         masm.j(cond, mir->lir()->label());
     }

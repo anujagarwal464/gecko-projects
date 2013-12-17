@@ -185,7 +185,7 @@ PerfSpewer::endBasicBlock(MacroAssembler &masm)
     if (!PerfBlockEnabled())
         return true;
 
-    masm.bind(&basicBlocks_[basicBlocks_.length() - 1].end);
+    masm.bind(&basicBlocks_.back().end);
     return true;
 }
 
@@ -216,7 +216,7 @@ PerfSpewer::writeProfile(JSScript *script,
                     reinterpret_cast<uintptr_t>(code->raw()),
                     size,
                     script->filename(),
-                    script->lineno,
+                    script->lineno(),
                     thisFunctionIndex);
         }
         unlockPerfMap();
@@ -237,7 +237,7 @@ PerfSpewer::writeProfile(JSScript *script,
 
         if (prologueSize > 0) {
             fprintf(PerfFilePtr, "%zx %zx %s:%d: Func%02d-Prologue\n",
-                    funcStart, prologueSize, script->filename(), script->lineno, thisFunctionIndex);
+                    funcStart, prologueSize, script->filename(), script->lineno(), thisFunctionIndex);
         }
 
         uintptr_t cur = funcStart + prologueSize;
@@ -252,7 +252,7 @@ PerfSpewer::writeProfile(JSScript *script,
                 fprintf(PerfFilePtr, "%zx %zx %s:%d: Func%02d-Block?\n",
                         static_cast<uintptr_t>(cur),
                         static_cast<uintptr_t>(blockStart - cur),
-                        script->filename(), script->lineno,
+                        script->filename(), script->lineno(),
                         thisFunctionIndex);
             }
             cur = blockEnd;
@@ -271,7 +271,7 @@ PerfSpewer::writeProfile(JSScript *script,
         if (cur < funcEndInlineCode) {
             fprintf(PerfFilePtr, "%zx %zx %s:%d: Func%02d-Epilogue\n",
                     cur, funcEndInlineCode - cur,
-                    script->filename(), script->lineno,
+                    script->filename(), script->lineno(),
                     thisFunctionIndex);
         }
 
@@ -279,7 +279,7 @@ PerfSpewer::writeProfile(JSScript *script,
         if (funcEndInlineCode < funcEnd) {
             fprintf(PerfFilePtr, "%zx %zx %s:%d: Func%02d-OOL\n",
                     funcEndInlineCode, funcEnd - funcEndInlineCode,
-                    script->filename(), script->lineno,
+                    script->filename(), script->lineno(),
                     thisFunctionIndex);
         }
 
@@ -301,7 +301,7 @@ js::jit::writePerfSpewerBaselineProfile(JSScript *script, IonCode *code)
     if (size > 0) {
         fprintf(PerfFilePtr, "%zx %zx %s:%d: Baseline\n",
                 reinterpret_cast<uintptr_t>(code->raw()),
-                size, script->filename(), script->lineno);
+                size, script->filename(), script->lineno());
     }
 
     unlockPerfMap();
@@ -372,7 +372,7 @@ js::jit::writePerfSpewerAsmJSBlocksMap(uintptr_t baseAddress, size_t funcStartOf
                                        const char *filename, const char *funcName,
                                        const js::jit::BasicBlocksVector &basicBlocks)
 {
-    if (!PerfBlockEnabled() || basicBlocks.length() == 0)
+    if (!PerfBlockEnabled() || basicBlocks.empty())
         return;
 
     if (!lockPerfMap())

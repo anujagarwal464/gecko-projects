@@ -12,7 +12,6 @@ Cu.import('resource://gre/modules/ActivitiesService.jsm');
 Cu.import('resource://gre/modules/PermissionPromptHelper.jsm');
 Cu.import('resource://gre/modules/ObjectWrapper.jsm');
 Cu.import('resource://gre/modules/NotificationDB.jsm');
-Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
 Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
@@ -22,9 +21,10 @@ Cu.import('resource://gre/modules/ErrorPage.jsm');
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
 
-// identity
+// Identity
 Cu.import('resource://gre/modules/SignInToWebsite.jsm');
 SignInToWebsiteController.init();
+Cu.import('resource://gre/modules/FxAccountsMgmtService.jsm');
 
 Cu.import('resource://gre/modules/DownloadsAPI.jsm');
 
@@ -310,7 +310,6 @@ var shell = {
 
     CustomEventManager.init();
     WebappsHelper.init();
-    AccessFu.attach(window);
     UserAgentOverrides.init();
     IndexedDBPromptHelper.init();
     CaptivePortalLoginHelper.init();
@@ -615,6 +614,8 @@ var shell = {
     DOMApplicationRegistry.allAppsLaunchable = true;
 
     this.sendEvent(window, 'ContentStart');
+
+    Services.obs.notifyObservers(null, 'content-start', null);
 
 #ifdef MOZ_WIDGET_GONK
     Cu.import('resource://gre/modules/OperatorApps.jsm');

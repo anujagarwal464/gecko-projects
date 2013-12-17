@@ -516,7 +516,7 @@ class ICStubIterator
         return currentStub_ == (ICStub *) fallbackStub_;
     }
 
-    void unlink(Zone *zone);
+    void unlink(JSContext *cx);
 };
 
 //
@@ -687,6 +687,8 @@ class ICStub
     }
 
     inline void setNext(ICStub *stub) {
+        // Note: next_ only needs to be changed under the compilation lock for
+        // non-type-monitor/update ICs.
         next_ = stub;
     }
 
@@ -833,7 +835,8 @@ class ICFallbackStub : public ICStub
     }
 
     // Add a new stub to the IC chain terminated by this fallback stub.
-    void addNewStub(ICStub *stub) {
+    void addNewStub(JSContext *cx, ICStub *stub) {
+        AutoLockForCompilation lock(cx);
         JS_ASSERT(*lastStubPtrAddr_ == this);
         JS_ASSERT(stub->next() == nullptr);
         stub->setNext(this);
@@ -998,9 +1001,11 @@ class ICStubCompiler
 
 
   protected:
-    mozilla::DebugOnly<bool> entersStubFrame_;
     JSContext *cx;
     ICStub::Kind kind;
+#ifdef DEBUG
+    bool entersStubFrame_;
+#endif
 
     // By default the stubcode key is just the kind.
     virtual int32_t getKey() const {
@@ -1014,7 +1019,10 @@ class ICStubCompiler
     IonCode *getStubCode();
 
     ICStubCompiler(JSContext *cx, ICStub::Kind kind)
-      : suppressGC(cx), entersStubFrame_(false), cx(cx), kind(kind)
+      : suppressGC(cx), cx(cx), kind(kind)
+#ifdef DEBUG
+      , entersStubFrame_(false)
+#endif
     {}
 
     // Emits a tail call to a VMFunction wrapper.
@@ -2434,13 +2442,15 @@ class ICBinaryArith_Fallback : public ICFallbackStub
     bool sawDoubleResult() const {
         return extra_ & SAW_DOUBLE_RESULT_BIT;
     }
-    void setSawDoubleResult() {
+    void setSawDoubleResult(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= SAW_DOUBLE_RESULT_BIT;
     }
     bool hadUnoptimizableOperands() const {
         return extra_ & UNOPTIMIZABLE_OPERANDS_BIT;
     }
-    void noteUnoptimizableOperands() {
+    void noteUnoptimizableOperands(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= UNOPTIMIZABLE_OPERANDS_BIT;
     }
 
@@ -2841,14 +2851,16 @@ class ICGetElem_Fallback : public ICMonitoredFallbackStub
         return space->allocate<ICGetElem_Fallback>(code);
     }
 
-    void noteNonNativeAccess() {
+    void noteNonNativeAccess(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= EXTRA_NON_NATIVE;
     }
     bool hasNonNativeAccess() const {
         return extra_ & EXTRA_NON_NATIVE;
     }
 
-    void noteNegativeIndex() {
+    void noteNegativeIndex(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= EXTRA_NEGATIVE_INDEX;
     }
     bool hasNegativeIndex() const {
@@ -3436,7 +3448,8 @@ class ICSetElem_Fallback : public ICFallbackStub
         return space->allocate<ICSetElem_Fallback>(code);
     }
 
-    void noteArrayWriteHole() {
+    void noteArrayWriteHole(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ = 1;
     }
     bool hasArrayWriteHole() const {
@@ -3560,7 +3573,7 @@ class ICSetElem_DenseAddImpl : public ICSetElem_DenseAdd
     friend class ICStubSpace;
 
     static const size_t NumShapes = ProtoChainDepth + 1;
-    HeapPtrShape shapes_[NumShapes];
+    mozilla::Array<HeapPtrShape, NumShapes> shapes_;
 
     ICSetElem_DenseAddImpl(IonCode *stubCode, types::TypeObject *type,
                            const AutoShapeVector *shapes)
@@ -3817,7 +3830,7 @@ class ICGetName_Scope : public ICMonitoredStub
 
     static const size_t MAX_HOPS = 6;
 
-    HeapPtrShape shapes_[NumHops + 1];
+    mozilla::Array<HeapPtrShape, NumHops + 1> shapes_;
     uint32_t offset_;
 
     ICGetName_Scope(IonCode *stubCode, ICStub *firstMonitorStub,
@@ -4011,14 +4024,16 @@ class ICGetProp_Fallback : public ICMonitoredFallbackStub
     static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
     static const size_t ACCESSED_GETTER_BIT = 1;
 
-    void noteUnoptimizableAccess() {
+    void noteUnoptimizableAccess(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
     }
     bool hadUnoptimizableAccess() const {
         return extra_ & (1u << UNOPTIMIZABLE_ACCESS_BIT);
     }
 
-    void noteAccessedGetter() {
+    void noteAccessedGetter(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= (1u << ACCESSED_GETTER_BIT);
     }
     bool hasAccessedGetter() const {
@@ -4825,7 +4840,8 @@ class ICSetProp_Fallback : public ICFallbackStub
     }
 
     static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
-    void noteUnoptimizableAccess() {
+    void noteUnoptimizableAccess(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
     }
     bool hadUnoptimizableAccess() const {
@@ -4959,7 +4975,7 @@ class ICSetProp_NativeAddImpl : public ICSetProp_NativeAdd
     friend class ICStubSpace;
 
     static const size_t NumShapes = ProtoChainDepth + 1;
-    HeapPtrShape shapes_[NumShapes];
+    mozilla::Array<HeapPtrShape, NumShapes> shapes_;
 
     ICSetProp_NativeAddImpl(IonCode *stubCode, HandleTypeObject type,
                             const AutoShapeVector *shapes,
@@ -5716,7 +5732,8 @@ class ICIteratorNext_Fallback : public ICFallbackStub
         return space->allocate<ICIteratorNext_Fallback>(code);
     }
 
-    void setHasNonStringResult() {
+    void setHasNonStringResult(JSContext *cx) {
+        AutoLockForCompilation lock(cx);
         JS_ASSERT(extra_ == 0);
         extra_ = 1;
     }

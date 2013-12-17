@@ -1213,14 +1213,15 @@ IsCompilingAsmJS()
     IonContext *ictx = MaybeGetIonContext();
     return ictx && ictx->compartment == nullptr;
 }
-#endif
 
-static void assume_unreachable_(const char *output) {
+static void
+AssumeUnreachable_(const char *output) {
     MOZ_ReportAssertionFailure(output, __FILE__, __LINE__);
 }
+#endif
 
 void
-MacroAssembler::assume_unreachable(const char *output)
+MacroAssembler::assumeUnreachable(const char *output)
 {
 #ifdef DEBUG
     // AsmJS forbids use of ImmPtr.
@@ -1233,7 +1234,7 @@ MacroAssembler::assume_unreachable(const char *output)
         setupUnalignedABICall(1, temp);
         movePtr(ImmPtr(output), temp);
         passABIArg(temp);
-        callWithABI(JS_FUNC_TO_DATA_PTR(void *, assume_unreachable_));
+        callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, AssumeUnreachable_));
 
         PopRegsInMask(RegisterSet::Volatile());
     }
@@ -1242,7 +1243,8 @@ MacroAssembler::assume_unreachable(const char *output)
     breakpoint();
 }
 
-static void printf0_(const char *output) {
+static void
+Printf0_(const char *output) {
     printf("%s", output);
 }
 
@@ -1257,12 +1259,13 @@ MacroAssembler::printf(const char *output)
     setupUnalignedABICall(1, temp);
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf0_));
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf0_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
 
-static void printf1_(const char *output, uintptr_t value) {
+static void
+Printf1_(const char *output, uintptr_t value) {
     char *line = JS_sprintf_append(nullptr, output, value);
     printf("%s", line);
     js_free(line);
@@ -1282,7 +1285,7 @@ MacroAssembler::printf(const char *output, Register value)
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
     passABIArg(value);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf1_));
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf1_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1777,8 +1780,8 @@ MacroAssembler::branchIfNotInterpretedConstructor(Register fun, Register scratch
 {
     // 16-bit loads are slow and unaligned 32-bit loads may be too so
     // perform an aligned 32-bit load and adjust the bitmask accordingly.
-    JS_STATIC_ASSERT(offsetof(JSFunction, nargs) % sizeof(uint32_t) == 0);
-    JS_STATIC_ASSERT(offsetof(JSFunction, flags) == offsetof(JSFunction, nargs) + 2);
+    JS_ASSERT(JSFunction::offsetOfNargs() % sizeof(uint32_t) == 0);
+    JS_ASSERT(JSFunction::offsetOfFlags() == JSFunction::offsetOfNargs() + 2);
     JS_STATIC_ASSERT(IS_LITTLE_ENDIAN);
 
     // Emit code for the following test:
@@ -1789,7 +1792,7 @@ MacroAssembler::branchIfNotInterpretedConstructor(Register fun, Register scratch
     // }
 
     // First, ensure it's a scripted function.
-    load32(Address(fun, offsetof(JSFunction, nargs)), scratch);
+    load32(Address(fun, JSFunction::offsetOfNargs()), scratch);
     branchTest32(Assembler::Zero, scratch, Imm32(JSFunction::INTERPRETED << 16), label);
 
     // Common case: if both IS_FUN_PROTO and SELF_HOSTED are not set,

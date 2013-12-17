@@ -14,7 +14,6 @@
 #include "States.h"
 
 #include "nsContentList.h"
-#include "nsCxPusher.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "nsIAccessibleRelation.h"
 #include "nsIDOMNSEditableElement.h"
@@ -26,6 +25,7 @@
 #include "nsISelectionController.h"
 #include "nsIServiceManager.h"
 #include "nsITextControlFrame.h"
+#include "mozilla/dom/ScriptSettings.h"
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Preferences.h"
@@ -302,7 +302,7 @@ HTMLTextFieldAccessible::NativeRole()
                             nsGkAtoms::password, eIgnoreCase)) {
     return roles::PASSWORD_TEXT;
   }
-  
+
   return roles::ENTRY;
 }
 
@@ -468,8 +468,7 @@ HTMLTextFieldAccessible::GetEditor() const
   // nsGenericHTMLElement::GetEditor has a security check.
   // Make sure we're not restricted by the permissions of
   // whatever script is currently running.
-  nsCxPusher pusher;
-  pusher.PushNull();
+  mozilla::dom::AutoSystemCaller asc;
 
   nsCOMPtr<nsIEditor> editor;
   editableElt->GetEditor(getter_AddRefs(editor));
@@ -541,6 +540,76 @@ HTMLFileInputAccessible::HandleAccEvent(AccEvent* aEvent)
 
 
 ////////////////////////////////////////////////////////////////////////////////
+// HTMLSpinnerAccessible
+////////////////////////////////////////////////////////////////////////////////
+
+role
+HTMLSpinnerAccessible::NativeRole()
+{
+  return roles::SPINBUTTON;
+}
+
+void
+HTMLSpinnerAccessible::Value(nsString& aValue)
+{
+  AccessibleWrap::Value(aValue);
+  if (!aValue.IsEmpty())
+    return;
+
+  HTMLInputElement::FromContent(mContent)->GetValue(aValue);
+}
+
+double
+HTMLSpinnerAccessible::MaxValue() const
+{
+  double value = AccessibleWrap::MaxValue();
+  if (!IsNaN(value))
+    return value;
+
+  return HTMLInputElement::FromContent(mContent)->GetMaximum().toDouble();
+}
+
+
+double
+HTMLSpinnerAccessible::MinValue() const
+{
+  double value = AccessibleWrap::MinValue();
+  if (!IsNaN(value))
+    return value;
+
+  return HTMLInputElement::FromContent(mContent)->GetMinimum().toDouble();
+}
+
+double
+HTMLSpinnerAccessible::Step() const
+{
+  double value = AccessibleWrap::Step();
+  if (!IsNaN(value))
+    return value;
+
+  return HTMLInputElement::FromContent(mContent)->GetStep().toDouble();
+}
+
+double
+HTMLSpinnerAccessible::CurValue() const
+{
+  double value = AccessibleWrap::CurValue();
+  if (!IsNaN(value))
+    return value;
+
+  return HTMLInputElement::FromContent(mContent)->GetValueAsDecimal().toDouble();
+}
+
+bool
+HTMLSpinnerAccessible::SetCurValue(double aValue)
+{
+  ErrorResult er;
+  HTMLInputElement::FromContent(mContent)->SetValueAsNumber(aValue, er);
+  return !er.Failed();
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 // HTMLRangeAccessible
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -575,7 +644,6 @@ HTMLRangeAccessible::MaxValue() const
 
   return HTMLInputElement::FromContent(mContent)->GetMaximum().toDouble();
 }
-
 
 double
 HTMLRangeAccessible::MinValue() const

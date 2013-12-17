@@ -35,7 +35,7 @@ endif
 # responsibility between Makefile.in and mozbuild files.
 _MOZBUILD_EXTERNAL_VARIABLES := \
   ANDROID_GENERATED_RESFILES \
-  ANDROID_RESFILES \
+  ANDROID_RES_DIRS \
   CMSRCS \
   CMMSRCS \
   CPP_UNIT_TESTS \
@@ -70,6 +70,7 @@ _MOZBUILD_EXTERNAL_VARIABLES := \
   $(NULL)
 
 _DEPRECATED_VARIABLES := \
+  ANDROID_RESFILES \
   MOCHITEST_FILES_PARTS \
   MOCHITEST_BROWSER_FILES_PARTS \
   SHORT_LIBNAME \
@@ -440,10 +441,6 @@ ifdef USE_EXTENSION_MANIFEST
 MAKE_JARS_FLAGS += -e
 endif
 
-ifdef BOTH_MANIFESTS
-MAKE_JARS_FLAGS += --both-manifests
-endif
-
 TAR_CREATE_FLAGS = -chf
 
 ifeq ($(OS_ARCH),OS2)
@@ -466,7 +463,7 @@ JAVA_GEN_DIR  = _javagen
 JAVA_DIST_DIR = $(DEPTH)/$(JAVA_GEN_DIR)
 JAVA_IFACES_PKG_NAME = org/mozilla/interfaces
 
-OS_INCLUDES += $(MOZ_JPEG_CFLAGS) $(MOZ_PNG_CFLAGS) $(MOZ_ZLIB_CFLAGS)
+OS_INCLUDES += $(MOZ_JPEG_CFLAGS) $(MOZ_PNG_CFLAGS) $(MOZ_ZLIB_CFLAGS) $(MOZ_PIXMAN_CFLAGS)
 
 # NSPR_CFLAGS and NSS_CFLAGS must appear ahead of OS_INCLUDES to avoid Linux
 # builds wrongly picking up system NSPR/NSS header files.
@@ -560,20 +557,20 @@ ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
 #//------------------------------------------------------------------------
 ifdef USE_STATIC_LIBS
 RTL_FLAGS=-MT          # Statically linked multithreaded RTL
-ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC)$(MOZ_DMD))
+ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
 ifndef MOZ_NO_DEBUG_RTL
 RTL_FLAGS=-MTd         # Statically linked multithreaded MSVC4.0 debug RTL
 endif
-endif # MOZ_DEBUG || NS_TRACE_MALLOC || MOZ_DMD
+endif # MOZ_DEBUG || NS_TRACE_MALLOC
 
 else # !USE_STATIC_LIBS
 
 RTL_FLAGS=-MD          # Dynamically linked, multithreaded RTL
-ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC)$(MOZ_DMD))
+ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
 ifndef MOZ_NO_DEBUG_RTL
 RTL_FLAGS=-MDd         # Dynamically linked, multithreaded MSVC4.0 debug RTL
 endif
-endif # MOZ_DEBUG || NS_TRACE_MALLOC || MOZ_DMD
+endif # MOZ_DEBUG || NS_TRACE_MALLOC
 endif # USE_STATIC_LIBS
 endif # WINNT && !GNU_CC
 
@@ -590,10 +587,11 @@ OS_COMPILE_CMMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
 endif
 endif
 
-COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS)
-COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS)
-COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS)
-COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS)
+COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
+ASFLAGS += $(EXTRA_ASSEMBLER_FLAGS)
 
 ifndef CROSS_COMPILE
 HOST_CFLAGS += $(RTL_FLAGS)
@@ -887,3 +885,21 @@ MOZ_GTK2_CFLAGS := -I$(topsrcdir)/widget/gtk/compat $(MOZ_GTK2_CFLAGS)
 endif
 
 DEFINES += -DNO_NSPR_10_SUPPORT
+
+ifdef IS_GYP_DIR
+LOCAL_INCLUDES += \
+  -I$(topsrcdir)/ipc/chromium/src \
+  -I$(topsrcdir)/ipc/glue \
+  -I$(DEPTH)/ipc/ipdl/_ipdlheaders \
+  $(NULL)
+
+ifeq (WINNT,$(OS_TARGET))
+# These get set via VC project file settings for normal GYP builds.
+DEFINES += -DUNICODE -D_UNICODE
+LOCAL_INCLUDES += -I'$(MOZ_DIRECTX_SDK_PATH)/include'
+endif
+
+STL_FLAGS=
+# Skip most Mozilla-specific include locations.
+INCLUDES = -I. $(LOCAL_INCLUDES) -I$(DEPTH)/dist/include
+endif

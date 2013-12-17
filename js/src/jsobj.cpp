@@ -1273,7 +1273,7 @@ NewObject(ExclusiveContext *cx, const Class *clasp, types::TypeObject *type_, JS
     if (!NewObjectMetadata(cx, &metadata))
         return nullptr;
 
-    RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, TaggedProto(type->proto),
+    RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, type->proto(),
                                                       parent, metadata, kind));
     if (!shape)
         return nullptr;
@@ -1448,7 +1448,6 @@ JSObject *
 js::NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc::AllocKind allocKind,
                       NewObjectKind newKind)
 {
-    JS_ASSERT(type->proto->hasNewType(&JSObject::class_, type));
     JS_ASSERT(parent);
 
     JS_ASSERT(allocKind <= gc::FINALIZE_OBJECT_LAST);
@@ -1458,7 +1457,7 @@ js::NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc
     NewObjectCache &cache = cx->runtime()->newObjectCache;
 
     NewObjectCache::EntryIndex entry = -1;
-    if (parent == type->proto->getParent() &&
+    if (parent == type->proto().toObject()->getParent() &&
         newKind == GenericObject &&
         !cx->compartment()->hasObjectMetadataCallback())
     {
@@ -1889,9 +1888,10 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *aArg, JSObject *bArg,
     const Class *bClass = b->getClass();
     Rooted<TaggedProto> aProto(cx, a->getTaggedProto());
     Rooted<TaggedProto> bProto(cx, b->getTaggedProto());
-    if (!SetClassAndProto(cx, a, bClass, bProto, false))
+    bool success;
+    if (!SetClassAndProto(cx, a, bClass, bProto, &success) || !success)
         return false;
-    if (!SetClassAndProto(cx, b, aClass, aProto, false))
+    if (!SetClassAndProto(cx, b, aClass, aProto, &success) || !success)
         return false;
 
     if (a->tenuredSizeOfThis() == b->tenuredSizeOfThis())
@@ -1985,9 +1985,12 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
      * Swap the object's types, to restore their initial type information.
      * The prototypes and classes of the objects were swapped in ReserveForTradeGuts.
      */
-    TypeObject *tmp = a->type_;
-    a->type_ = b->type_;
-    b->type_ = tmp;
+    {
+        AutoLockForCompilation lock(cx);
+        TypeObject *tmp = a->type_;
+        a->type_ = b->type_;
+        b->type_ = tmp;
+    }
 
     /* Don't try to swap a JSFunction for a plain function JSObject. */
     JS_ASSERT_IF(a->is<JSFunction>(), a->tenuredSizeOfThis() == b->tenuredSizeOfThis());
@@ -2019,9 +2022,12 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
         char tmp[mozilla::tl::Max<sizeof(JSFunction), sizeof(JSObject_Slots16)>::value];
         JS_ASSERT(size <= sizeof(tmp));
 
-        js_memcpy(tmp, a, size);
-        js_memcpy(a, b, size);
-        js_memcpy(b, tmp, size);
+        {
+            AutoLockForCompilation lock(cx);
+            js_memcpy(tmp, a, size);
+            js_memcpy(a, b, size);
+            js_memcpy(b, tmp, size);
+        }
 
 #ifdef JSGC_GENERATIONAL
         /*
@@ -2059,9 +2065,12 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
         void *bpriv = b->hasPrivate() ? b->getPrivate() : nullptr;
 
         char tmp[sizeof(JSObject)];
-        js_memcpy(&tmp, a, sizeof tmp);
-        js_memcpy(a, b, sizeof tmp);
-        js_memcpy(b, &tmp, sizeof tmp);
+        {
+            AutoLockForCompilation lock(cx);
+            js_memcpy(&tmp, a, sizeof tmp);
+            js_memcpy(a, b, sizeof tmp);
+            js_memcpy(b, &tmp, sizeof tmp);
+        }
 
         if (a->isNative())
             a->shape_->setNumFixedSlots(reserved.newafixed);
@@ -2899,10 +2908,9 @@ static const ClassInitializerOp lazy_prototype_init[JSProto_LIMIT] = {
 
 bool
 js::SetClassAndProto(JSContext *cx, HandleObject obj,
-                     const Class *clasp, Handle<js::TaggedProto> proto, bool checkForCycles)
+                     const Class *clasp, Handle<js::TaggedProto> proto,
+                     bool *succeeded)
 {
-    JS_ASSERT_IF(!checkForCycles, obj.get() != proto.raw());
-
     /*
      * Regenerate shapes for all of the scopes along the old prototype chain,
      * in case any entries were filled by looking up through obj. Stop when a
@@ -2922,6 +2930,7 @@ js::SetClassAndProto(JSContext *cx, HandleObject obj,
      *
      * :XXX: bug 707717 make this code less brittle.
      */
+    *succeeded = false;
     RootedObject oldproto(cx, obj);
     while (oldproto && oldproto->isNative()) {
         if (oldproto->hasSingletonType()) {
@@ -2934,21 +2943,6 @@ js::SetClassAndProto(JSContext *cx, HandleObject obj,
         oldproto = oldproto->getProto();
     }
 
-    if (checkForCycles) {
-        JS_ASSERT(!proto.isLazy());
-        RootedObject obj2(cx);
-        for (obj2 = proto.toObjectOrNull(); obj2; ) {
-            if (obj2 == obj) {
-                JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CYCLIC_VALUE,
-                                     js_proto_str);
-                return false;
-            }
-
-            if (!JSObject::getProto(cx, obj2, &obj2))
-                return false;
-        }
-    }
-
     if (obj->hasSingletonType()) {
         /*
          * Just splice the prototype, but mark the properties as unknown for
@@ -2957,6 +2951,7 @@ js::SetClassAndProto(JSContext *cx, HandleObject obj,
         if (!obj->splicePrototype(cx, clasp, proto))
             return false;
         MarkTypeObjectUnknownProperties(cx, obj->type());
+        *succeeded = true;
         return true;
     }
 
@@ -2981,7 +2976,12 @@ js::SetClassAndProto(JSContext *cx, HandleObject obj,
     MarkTypeObjectUnknownProperties(cx, obj->type(), true);
     MarkTypeObjectUnknownProperties(cx, type, true);
 
-    obj->setType(type);
+    {
+        AutoLockForCompilation lock(cx);
+        obj->setType(type);
+    }
+
+    *succeeded = true;
     return true;
 }
 
@@ -3223,31 +3223,6 @@ PurgeScopeChain(ExclusiveContext *cx, JS::HandleObject obj, JS::HandleId id)
     if (obj->isDelegate())
         return PurgeScopeChainHelper(cx, obj, id);
     return true;
-}
-
-Shape *
-js_AddNativeProperty(JSContext *cx, HandleObject obj, HandleId id,
-                     PropertyOp getter, StrictPropertyOp setter, uint32_t slot,
-                     unsigned attrs, unsigned flags, int shortid)
-{
-    /*
-     * Purge the property cache of now-shadowed id in obj's scope chain. Do
-     * this optimistically (assuming no failure below) before locking obj, so
-     * we can lock the shadowed scope.
-     */
-    if (!PurgeScopeChain(cx, obj, id))
-        return nullptr;
-
-    Shape *shape =
-        JSObject::putProperty<SequentialExecution>(cx, obj, id, getter, setter, slot,
-                                                   attrs, flags, shortid);
-    if (!shape)
-        return shape;
-
-    if (JSID_IS_INT(id))
-        JSObject::removeDenseElementForSparseIndex(cx, obj, JSID_TO_INT(id));
-
-    return shape;
 }
 
 bool
@@ -4068,7 +4043,7 @@ NativeGetInline(JSContext *cx,
               case JSOP_GETPROP:
               case JSOP_CALLPROP:
               case JSOP_LENGTH:
-                script->baselineScript()->noteAccessedGetter(script->pcToOffset(pc));
+                script->baselineScript()->noteAccessedGetter(cx, script->pcToOffset(pc));
                 break;
               default:
                 break;
@@ -4222,7 +4197,7 @@ GetPropertyHelperInline(JSContext *cx,
                 return true;
 
             /* Don't warn repeatedly for the same script. */
-            if (!script || script->warnedAboutUndefinedProp)
+            if (!script || script->warnedAboutUndefinedProp())
                 return true;
 
             /* We may just be checking if that object has an iterator. */
@@ -4237,7 +4212,7 @@ GetPropertyHelperInline(JSContext *cx,
             }
 
             unsigned flags = JSREPORT_WARNING | JSREPORT_STRICT;
-            script->warnedAboutUndefinedProp = true;
+            script->setWarnedAboutUndefinedProp();
 
             /* Ok, bad undefined property reference: whine about it. */
             RootedValue val(cx, IdToValue(id));
@@ -4484,7 +4459,7 @@ MaybeReportUndeclaredVarAssignment(JSContext *cx, JSString *propname)
 
         // If the code is not strict and extra warnings aren't enabled, then no
         // check is needed.
-        if (!script->strict && !cx->options().extraWarnings())
+        if (!script->strict() && !cx->options().extraWarnings())
             return true;
     }
 
@@ -4508,7 +4483,7 @@ js::ReportIfUndeclaredVarAssignment(JSContext *cx, HandleString propname)
 
         // If the code is not strict and extra warnings aren't enabled, then no
         // check is needed.
-        if (!script->strict && !cx->options().extraWarnings())
+        if (!script->strict() && !cx->options().extraWarnings())
             return true;
 
         /*
@@ -5442,8 +5417,8 @@ dumpValue(const Value &v)
         }
         if (fun->hasScript()) {
             JSScript *script = fun->nonLazyScript();
-            fprintf(stderr, " (%s:%u)",
-                    script->filename() ? script->filename() : "", script->lineno);
+            fprintf(stderr, " (%s:%d)",
+                    script->filename() ? script->filename() : "", (int) script->lineno());
         }
         fprintf(stderr, " at %p>", (void *) fun);
     } else if (v.isObject()) {
@@ -5669,14 +5644,13 @@ js_DumpStackFrame(JSContext *cx, StackFrame *start)
         fputc('\n', stderr);
 
         fprintf(stderr, "file %s line %u\n",
-                i.script()->filename(), (unsigned) i.script()->lineno);
+                i.script()->filename(), (unsigned) i.script()->lineno());
 
         if (jsbytecode *pc = i.pc()) {
             fprintf(stderr, "  pc = %p\n", pc);
             fprintf(stderr, "  current op: %s\n", js_CodeName[*pc]);
+            MaybeDumpObject("blockChain", i.script()->getBlockScope(pc));
         }
-        if (!i.isJit())
-            MaybeDumpObject("blockChain", i.interpFrame()->maybeBlockChain());
         MaybeDumpValue("this", i.thisv());
         if (!i.isJit()) {
             fprintf(stderr, "  rval: ");

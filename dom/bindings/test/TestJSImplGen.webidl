@@ -43,6 +43,10 @@ interface TestJSImplInterface {
   void passVariadicByte(byte... arg);
   [Cached, Pure]
   readonly attribute byte cachedByte;
+  [Cached, Constant]
+  readonly attribute byte cachedConstantByte;
+  [Cached, Pure]
+  attribute byte cachedWritableByte;
 
   readonly attribute short readonlyShort;
   attribute short writableShort;
@@ -216,6 +220,12 @@ interface TestJSImplInterface {
   readonly attribute sequence<long> readonlySequence;
   [Cached, Pure]
   readonly attribute sequence<Dict> readonlySequenceOfDictionaries;
+  [Cached, Pure]
+  readonly attribute sequence<Dict>? readonlyNullableSequenceOfDictionaries;
+  [Cached, Pure, Frozen]
+  readonly attribute sequence<long> readonlyFrozenSequence;
+  [Cached, Pure, Frozen]
+  readonly attribute sequence<long>? readonlyFrozenNullableSequence;
   sequence<long> receiveSequence();
   sequence<long>? receiveNullableSequence();
   sequence<long?> receiveSequenceOfNullableInts();
@@ -380,12 +390,10 @@ interface TestJSImplInterface {
   void passUnion14(optional (object or long?) arg = 5);
 #endif
   void passUnionWithNullable((object? or long) arg);
-  // FIXME: Bug 863948 Nullable unions not supported yet
-  //   void passNullableUnion((object or long)? arg);
+  void passNullableUnion((object or long)? arg);
   void passOptionalUnion(optional (object or long) arg);
-  // FIXME: Bug 863948 Nullable unions not supported yet
-  //  void passOptionalNullableUnion(optional (object or long)? arg);
-  //  void passOptionalNullableUnionWithDefaultValue(optional (object or long)? arg = null);
+  void passOptionalNullableUnion(optional (object or long)? arg);
+  void passOptionalNullableUnionWithDefaultValue(optional (object or long)? arg = null);
   //void passUnionWithInterfaces((TestJSImplInterface or TestExternalInterface) arg);
   //void passUnionWithInterfacesAndNullable((TestJSImplInterface? or TestExternalInterface) arg);
   //void passUnionWithSequence((sequence<object> or long) arg);
@@ -424,6 +432,9 @@ interface TestJSImplInterface {
   void passNullableUnionWithDefaultValue10(optional (unrestricted float or DOMString)? arg = "");
   void passNullableUnionWithDefaultValue11(optional (unrestricted float or DOMString)? arg = 1);
   void passNullableUnionWithDefaultValue12(optional (unrestricted float or DOMString)? arg = null);
+
+  void passSequenceOfUnions(sequence<(CanvasPattern or CanvasGradient)> arg);
+  void passVariadicUnion((CanvasPattern or CanvasGradient)... arg);
 
   //(CanvasPattern or CanvasGradient) receiveUnion();
   //(object or long) receiveUnion2();

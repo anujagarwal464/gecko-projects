@@ -31,6 +31,7 @@
 
 class nsAttrAndChildArray;
 class nsChildContentList;
+class nsCSSSelectorList;
 class nsDOMAttributeMap;
 class nsIContent;
 class nsIDocument;
@@ -311,11 +312,6 @@ public:
   friend class nsAttrAndChildArray;
 
 #ifdef MOZILLA_INTERNAL_API
-#ifdef _MSC_VER
-#pragma warning(push)
-// Disable annoying warning about 'this' in initializers.
-#pragma warning(disable:4355)
-#endif
   nsINode(already_AddRefed<nsINodeInfo> aNodeInfo)
   : mNodeInfo(aNodeInfo),
     mParent(nullptr),
@@ -323,15 +319,11 @@ public:
     mNextSibling(nullptr),
     mPreviousSibling(nullptr),
     mFirstChild(nullptr),
-    mSubtreeRoot(this),
+    mSubtreeRoot(MOZ_THIS_IN_INITIALIZER_LIST()),
     mSlots(nullptr)
   {
     SetIsDOMBinding();
   }
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 #endif
 
   virtual ~nsINode();
@@ -1706,6 +1698,17 @@ protected:
    */
   nsresult doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
                            bool aNotify, nsAttrAndChildArray& aChildArray);
+
+  /**
+   * Parse the given selector string into an nsCSSSelectorList.
+   *
+   * A null return value with a non-failing aRv means the string only
+   * contained pseudo-element selectors.
+   *
+   * A failing aRv means the string was not a valid selector.
+   */
+  nsCSSSelectorList* ParseSelectorList(const nsAString& aSelectorString,
+                                       mozilla::ErrorResult& aRv);
 
 public:
   /* Event stuff that documents and elements share.  This needs to be

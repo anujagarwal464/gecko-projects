@@ -73,7 +73,7 @@ js::StartOffThreadAsmJSCompile(ExclusiveContext *cx, AsmJSParallelTask *asmData)
     if (!state.asmJSWorklist.append(asmData))
         return false;
 
-    state.notifyAll(WorkerThreadState::PRODUCER);
+    state.notifyOne(WorkerThreadState::PRODUCER);
     return true;
 }
 
@@ -90,6 +90,8 @@ js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
 
     if (!state.ionWorklist.append(builder))
         return false;
+
+    cx->runtime()->addCompilationThread();
 
     state.notifyAll(WorkerThreadState::PRODUCER);
     return true;
@@ -501,6 +503,13 @@ WorkerThreadState::notifyAll(CondVar which)
     PR_NotifyAllCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
 }
 
+void
+WorkerThreadState::notifyOne(CondVar which)
+{
+    JS_ASSERT(isLocked());
+    PR_NotifyCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
+}
+
 bool
 WorkerThreadState::canStartAsmJSCompile()
 {
@@ -608,7 +617,7 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
          iter.next())
     {
         types::TypeObject *object = iter.get<types::TypeObject>();
-        TaggedProto proto(object->proto);
+        TaggedProto proto(object->proto());
         if (!proto.isObject())
             continue;
 
@@ -619,7 +628,9 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
         JSObject *newProto = GetClassPrototypePure(&parseTask->scopeChain->global(), key);
         JS_ASSERT(newProto);
 
-        object->proto = newProto;
+        // Note: this is safe to do without requiring the compilation lock, as
+        // the new type is not yet available to compilation threads.
+        object->setProtoUnchecked(newProto);
     }
 
     // Move the parsed script and all its contents into the desired compartment.
@@ -639,7 +650,7 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
         if (script) {
             // The Debugger only needs to be told about the topmost script that was compiled.
             GlobalObject *compileAndGoGlobal = nullptr;
-            if (script->compileAndGo)
+            if (script->compileAndGo())
                 compileAndGoGlobal = &script->global();
             Debugger::onNewScript(maybecx, script, compileAndGoGlobal);
 
@@ -753,21 +764,25 @@ WorkerThread::handleIonWorkload(WorkerThreadState &state)
         jit::IonContext ictx(jit::CompileRuntime::get(runtime),
                              jit::CompileCompartment::get(ionBuilder->script()->compartment()),
                              &ionBuilder->alloc());
-        ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
+        AutoEnterIonCompilation ionCompiling;
+        bool succeeded = ionBuilder->build();
+        ionBuilder->clearForBackEnd();
+        if (succeeded)
+            ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
     }
     state.lock();
 
     FinishOffThreadIonCompile(ionBuilder);
     ionBuilder = nullptr;
 
-    // Notify the main thread in case it is waiting for the compilation to finish.
-    state.notifyAll(WorkerThreadState::CONSUMER);
-
     // Ping the main thread so that the compiled code can be incorporated
     // at the next operation callback. Don't interrupt Ion code for this, as
     // this incorporation can be delayed indefinitely without affecting
     // performance as long as the main thread is actually executing Ion code.
     runtime->triggerOperationCallback(JSRuntime::TriggerCallbackAnyThreadDontStopIon);
+
+    // Notify the main thread in case it is waiting for the compilation to finish.
+    state.notifyAll(WorkerThreadState::CONSUMER);
 }
 
 void
