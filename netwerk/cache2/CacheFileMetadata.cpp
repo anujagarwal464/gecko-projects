@@ -6,7 +6,6 @@
 #include "CacheFileMetadata.h"
 
 #include "CacheFileIOManager.h"
-#include "nsICacheEntry.h"
 #include "CacheHashUtils.h"
 #include "CacheFileChunk.h"
 #include "../cache/nsCacheUtils.h"
@@ -19,6 +18,8 @@ namespace net {
 
 #define kMinMetadataRead 1024  // TODO find optimal value from telemetry
 #define kAlignSize       4096
+
+#define NO_EXPIRATION_TIME 0xFFFFFFFF
 
 NS_IMPL_ISUPPORTS1(CacheFileMetadata, CacheFileIOListener)
 
@@ -40,7 +41,7 @@ CacheFileMetadata::CacheFileMetadata(CacheFileHandle *aHandle, const nsACString 
 
   MOZ_COUNT_CTOR(CacheFileMetadata);
   memset(&mMetaHdr, 0, sizeof(CacheFileMetadataHeader));
-  mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
+  mMetaHdr.mExpirationTime = NO_EXPIRATION_TIME;
   mKey = aKey;
 }
 
@@ -84,7 +85,7 @@ CacheFileMetadata::CacheFileMetadata(const nsACString &aKey)
 
   MOZ_COUNT_CTOR(CacheFileMetadata);
   memset(&mMetaHdr, 0, sizeof(CacheFileMetadataHeader));
-  mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
+  mMetaHdr.mExpirationTime = NO_EXPIRATION_TIME;
   mMetaHdr.mFetchCount++;
   mKey = aKey;
   mMetaHdr.mKeySize = mKey.Length();
@@ -98,19 +99,6 @@ CacheFileMetadata::SetHandle(CacheFileHandle *aHandle)
   MOZ_ASSERT(!mHandle);
 
   mHandle = aHandle;
-}
-
-nsresult
-CacheFileMetadata::GetKey(nsACString &_retval)
-{
-  _retval = mKey;
-  return NS_OK;
-}
-
-bool
-CacheFileMetadata::KeyIsHash()
-{
-  return mKeyIsHash;
 }
 
 nsresult
@@ -129,14 +117,6 @@ CacheFileMetadata::ReadMetadata(CacheFileMetadataListener *aListener)
   MOZ_ASSERT(size != -1);
 
   if (size == 0) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::ReadMetadata() - Filesize == 0, cannot create "
-           "empty metadata since key is a hash. [this=%p]", this));
-
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      return NS_ERROR_NOT_AVAILABLE;
-    }
-
     // this is a new entry
     LOG(("CacheFileMetadata::ReadMetadata() - Filesize == 0, creating empty "
          "metadata. [this=%p]", this));
@@ -147,15 +127,6 @@ CacheFileMetadata::ReadMetadata(CacheFileMetadataListener *aListener)
   }
 
   if (size < int64_t(sizeof(CacheFileMetadataHeader) + 2*sizeof(uint32_t))) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::ReadMetadata() - File is corrupted, cannot "
-           "create empty metadata since key is a hash. [this=%p, "
-           "filesize=%lld]", this, size));
-
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      return NS_ERROR_FILE_CORRUPTED;
-    }
-
     // there must be at least checksum, header and offset
     LOG(("CacheFileMetadata::ReadMetadata() - File is corrupted, creating "
          "empty metadata. [this=%p, filesize=%lld]", this, size));
@@ -182,15 +153,6 @@ CacheFileMetadata::ReadMetadata(CacheFileMetadataListener *aListener)
   mListener = aListener;
   rv = CacheFileIOManager::Read(mHandle, offset, mBuf, mBufSize, this);
   if (NS_FAILED(rv)) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::ReadMetadata() - CacheFileIOManager::Read() "
-           "failed synchronously, cannot create empty metadata since key is "
-           "a hash. [this=%p, rv=0x%08x]", this, rv));
-
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      return rv;
-    }
-
     LOG(("CacheFileMetadata::ReadMetadata() - CacheFileIOManager::Read() failed"
          " synchronously, creating empty metadata. [this=%p, rv=0x%08x]",
          this, rv));
@@ -213,20 +175,19 @@ CacheFileMetadata::WriteMetadata(uint32_t aOffset,
 
   MOZ_ASSERT(!mListener);
   MOZ_ASSERT(!mWriteBuf);
-  MOZ_ASSERT(!mKeyIsHash);
 
   nsresult rv;
 
   mIsDirty = false;
 
   mWriteBuf = static_cast<char *>(moz_xmalloc(sizeof(uint32_t) +
-                mHashCount * sizeof(CacheHash::Hash16_t) +
+                mHashCount * sizeof(CacheHashUtils::Hash16_t) +
                 sizeof(CacheFileMetadataHeader) + mKey.Length() + 1 +
                 mElementsSize + sizeof(uint32_t)));
 
   char *p = mWriteBuf + sizeof(uint32_t);
-  memcpy(p, mHashArray, mHashCount * sizeof(CacheHash::Hash16_t));
-  p += mHashCount * sizeof(CacheHash::Hash16_t);
+  memcpy(p, mHashArray, mHashCount * sizeof(CacheHashUtils::Hash16_t));
+  p += mHashCount * sizeof(CacheHashUtils::Hash16_t);
   memcpy(p, &mMetaHdr, sizeof(CacheFileMetadataHeader));
   p += sizeof(CacheFileMetadataHeader);
   memcpy(p, mKey.get(), mKey.Length());
@@ -236,9 +197,9 @@ CacheFileMetadata::WriteMetadata(uint32_t aOffset,
   memcpy(p, mBuf, mElementsSize);
   p += mElementsSize;
 
-  CacheHash::Hash32_t hash;
-  hash = CacheHash::Hash(mWriteBuf + sizeof(uint32_t),
-                         p - mWriteBuf - sizeof(uint32_t));
+  CacheHashUtils::Hash32_t hash;
+  hash = CacheHashUtils::Hash(mWriteBuf + sizeof(uint32_t),
+                              p - mWriteBuf - sizeof(uint32_t));
   *reinterpret_cast<uint32_t *>(mWriteBuf) = PR_htonl(hash);
 
   *reinterpret_cast<uint32_t *>(p) = PR_htonl(aOffset);
@@ -343,7 +304,7 @@ CacheFileMetadata::SetElement(const char *aKey, const char *aValue)
   return NS_OK;
 }
 
-CacheHash::Hash16_t
+CacheHashUtils::Hash16_t
 CacheFileMetadata::GetHash(uint32_t aIndex)
 {
   MOZ_ASSERT(aIndex < mHashCount);
@@ -351,7 +312,7 @@ CacheFileMetadata::GetHash(uint32_t aIndex)
 }
 
 nsresult
-CacheFileMetadata::SetHash(uint32_t aIndex, CacheHash::Hash16_t aHash)
+CacheFileMetadata::SetHash(uint32_t aIndex, CacheHashUtils::Hash16_t aHash)
 {
   LOG(("CacheFileMetadata::SetHash() [this=%p, idx=%d, hash=%x]",
        this, aIndex, aHash));
@@ -363,13 +324,13 @@ CacheFileMetadata::SetHash(uint32_t aIndex, CacheHash::Hash16_t aHash)
   if (aIndex > mHashCount) {
     return NS_ERROR_INVALID_ARG;
   } else if (aIndex == mHashCount) {
-    if ((aIndex + 1) * sizeof(CacheHash::Hash16_t) > mHashArraySize) {
+    if ((aIndex + 1) * sizeof(CacheHashUtils::Hash16_t) > mHashArraySize) {
       // reallocate hash array buffer
       if (mHashArraySize == 0)
-        mHashArraySize = 32 * sizeof(CacheHash::Hash16_t);
+        mHashArraySize = 32 * sizeof(CacheHashUtils::Hash16_t);
       else
         mHashArraySize *= 2;
-      mHashArray = static_cast<CacheHash::Hash16_t *>(
+      mHashArray = static_cast<CacheHashUtils::Hash16_t *>(
                      moz_xrealloc(mHashArray, mHashArraySize));
     }
 
@@ -416,24 +377,6 @@ nsresult
 CacheFileMetadata::GetLastModified(uint32_t *_retval)
 {
   *_retval = mMetaHdr.mLastModified;
-  return NS_OK;
-}
-
-nsresult
-CacheFileMetadata::SetFrecency(uint32_t aFrecency)
-{
-  LOG(("CacheFileMetadata::SetFrecency() [this=%p, frecency=%f]",
-       this, (double)aFrecency));
-
-  MarkDirty();
-  mMetaHdr.mFrecency = aFrecency;
-  return NS_OK;
-}
-
-nsresult
-CacheFileMetadata::GetFrecency(uint32_t *_retval)
-{
-  *_retval = mMetaHdr.mFrecency;
   return NS_OK;
 }
 
@@ -490,28 +433,16 @@ CacheFileMetadata::OnDataRead(CacheFileHandle *aHandle, char *aBuf,
 
   MOZ_ASSERT(mListener);
 
-  nsresult rv, retval;
+  nsresult rv;
   nsCOMPtr<CacheFileMetadataListener> listener;
 
   if (NS_FAILED(aResult)) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() "
-           "failed, cannot create empty metadata since key is a hash. [this=%p,"
-           " rv=0x%08x]", this, aResult));
+    LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() failed, "
+         "creating empty metadata. [this=%p, rv=0x%08x]", this, aResult));
 
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      retval = aResult;
-    }
-    else {
-      LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() failed"
-           ", creating empty metadata. [this=%p, rv=0x%08x]", this, aResult));
-
-      InitEmptyMetadata();
-      retval = NS_OK;
-    }
-
+    InitEmptyMetadata();
     mListener.swap(listener);
-    listener->OnMetadataRead(retval);
+    listener->OnMetadataRead(NS_OK);
     return NS_OK;
   }
 
@@ -523,25 +454,13 @@ CacheFileMetadata::OnDataRead(CacheFileHandle *aHandle, char *aBuf,
   MOZ_ASSERT(size != -1);
 
   if (realOffset >= size) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::OnDataRead() - Invalid realOffset, cannot create"
-           "empty metadata since key is a hash. [this=%p, realOffset=%d, "
-           "size=%lld]", this, realOffset, size));
+    LOG(("CacheFileMetadata::OnDataRead() - Invalid realOffset, creating empty "
+         "metadata. [this=%p, realOffset=%d, size=%lld]", this, realOffset,
+         size));
 
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      retval = NS_ERROR_FILE_CORRUPTED;
-    }
-    else {
-      LOG(("CacheFileMetadata::OnDataRead() - Invalid realOffset, creating "
-           "empty metadata. [this=%p, realOffset=%d, size=%lld]", this,
-           realOffset, size));
-
-      InitEmptyMetadata();
-      retval = NS_OK;
-    }
-
+    InitEmptyMetadata();
     mListener.swap(listener);
-    listener->OnMetadataRead(retval);
+    listener->OnMetadataRead(NS_OK);
     return NS_OK;
   }
 
@@ -561,25 +480,13 @@ CacheFileMetadata::OnDataRead(CacheFileHandle *aHandle, char *aBuf,
 
     rv = CacheFileIOManager::Read(mHandle, realOffset, mBuf, missing, this);
     if (NS_FAILED(rv)) {
-      if (mKeyIsHash) {
-        LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() "
-             "failed synchronously, cannot create empty metadata since key is "
-             "a hash. [this=%p, rv=0x%08x]", this, rv));
+      LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() failed"
+           " synchronously, creating empty metadata. [this=%p, rv=0x%08x]",
+           this, rv));
 
-        CacheFileIOManager::DoomFile(mHandle, nullptr);
-        retval = rv;
-      }
-      else {
-        LOG(("CacheFileMetadata::OnDataRead() - CacheFileIOManager::Read() "
-             "failed synchronously, creating empty metadata. [this=%p, "
-             "rv=0x%08x]", this, rv));
-
-        InitEmptyMetadata();
-        retval = NS_OK;
-      }
-
+      InitEmptyMetadata();
       mListener.swap(listener);
-      listener->OnMetadataRead(retval);
+      listener->OnMetadataRead(rv);
       return NS_OK;
     }
 
@@ -590,26 +497,13 @@ CacheFileMetadata::OnDataRead(CacheFileHandle *aHandle, char *aBuf,
   // Try to parse it.
   rv = ParseMetadata(realOffset, realOffset - usedOffset);
   if (NS_FAILED(rv)) {
-    if (mKeyIsHash) {
-      LOG(("CacheFileMetadata::OnDataRead() - Error parsing metadata, cannot "
-           "create empty metadata since key is a hash. [this=%p]", this));
-
-      CacheFileIOManager::DoomFile(mHandle, nullptr);
-      retval = rv;
-    }
-    else {
-      LOG(("CacheFileMetadata::OnDataRead() - Error parsing metadata, creating "
-           "empty metadata. [this=%p]", this));
-      InitEmptyMetadata();
-      retval = NS_OK;
-    }
-  }
-  else {
-    retval = NS_OK;
+    LOG(("CacheFileMetadata::OnDataRead() - Error parsing metadata, creating "
+         "empty metadata. [this=%p]", this));
+    InitEmptyMetadata();
   }
 
   mListener.swap(listener);
-  listener->OnMetadataRead(retval);
+  listener->OnMetadataRead(NS_OK);
 
   return NS_OK;
 }
@@ -628,13 +522,6 @@ CacheFileMetadata::OnEOFSet(CacheFileHandle *aHandle, nsresult aResult)
   return NS_ERROR_UNEXPECTED;
 }
 
-nsresult
-CacheFileMetadata::OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
-{
-  MOZ_CRASH("CacheFileMetadata::OnFileRenamed should not be called!");
-  return NS_ERROR_UNEXPECTED;
-}
-
 void
 CacheFileMetadata::InitEmptyMetadata()
 {
@@ -645,7 +532,7 @@ CacheFileMetadata::InitEmptyMetadata()
   }
   mOffset = 0;
   mMetaHdr.mFetchCount = 1;
-  mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
+  mMetaHdr.mExpirationTime = NO_EXPIRATION_TIME;
   mMetaHdr.mKeySize = mKey.Length();
 
   DoMemoryReport(MemoryUsage());
@@ -664,7 +551,7 @@ CacheFileMetadata::ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset)
   uint32_t hashCount = aMetaOffset / kChunkSize;
   if (aMetaOffset % kChunkSize)
     hashCount++;
-  uint32_t hashesLen = hashCount * sizeof(CacheHash::Hash16_t);
+  uint32_t hashesLen = hashCount * sizeof(CacheHashUtils::Hash16_t);
   uint32_t hdrOffset = hashesOffset + hashesLen;
   uint32_t keyOffset = hdrOffset + sizeof(CacheFileMetadataHeader);
 
@@ -695,32 +582,27 @@ CacheFileMetadata::ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset)
     return NS_ERROR_FILE_CORRUPTED;
   }
 
-  nsAutoCString origKey;
+  if (!mKeyIsHash) {
+    uint32_t keySize = reinterpret_cast<CacheFileMetadataHeader *>(
+                         mBuf + hdrOffset)->mKeySize;
 
-  uint32_t keySize = reinterpret_cast<CacheFileMetadataHeader *>(
-                       mBuf + hdrOffset)->mKeySize;
-
-  if (mKeyIsHash) {
-    // get the original key
-    origKey.Assign(mBuf + keyOffset, keySize);
-  }
-  else {
     if (keySize != mKey.Length()) {
-      LOG(("CacheFileMetadata::ParseMetadata() - Key collision (1), key=%s "
-           "[this=%p]", nsCString(mBuf + keyOffset, keySize).get(), this));
+      LOG(("CacheFileMetadata::ParseMetadata() - Key collision (1), key=%s [this=%p]",
+           nsCString(mBuf + keyOffset, keySize).get(), this));
       return NS_ERROR_FILE_CORRUPTED;
     }
 
     if (memcmp(mKey.get(), mBuf + keyOffset, mKey.Length()) != 0) {
-      LOG(("CacheFileMetadata::ParseMetadata() - Key collision (2), key=%s "
-           "[this=%p]", nsCString(mBuf + keyOffset, keySize).get(), this));
+      LOG(("CacheFileMetadata::ParseMetadata() - Key collision (2), key=%s [this=%p]",
+           nsCString(mBuf + keyOffset, keySize).get(), this));
       return NS_ERROR_FILE_CORRUPTED;
     }
   }
 
   // check metadata hash (data from hashesOffset to metaposOffset)
-  CacheHash::Hash32_t hash;
-  hash = CacheHash::Hash(mBuf + hashesOffset, metaposOffset - hashesOffset);
+  CacheHashUtils::Hash32_t hash;
+  hash = CacheHashUtils::Hash(mBuf + hashesOffset,
+                              metaposOffset - hashesOffset);
 
   if (hash != PR_ntohl(*(reinterpret_cast<uint32_t *>(mBuf + aBufOffset)))) {
     LOG(("CacheFileMetadata::ParseMetadata() - Metadata hash mismatch! Hash of "
@@ -737,7 +619,7 @@ CacheFileMetadata::ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset)
   mHashArraySize = hashesLen;
   mHashCount = hashCount;
   if (mHashArraySize) {
-    mHashArray = static_cast<CacheHash::Hash16_t *>(
+    mHashArray = static_cast<CacheHashUtils::Hash16_t *>(
                    moz_xmalloc(mHashArraySize));
     memcpy(mHashArray, mBuf + hashesOffset, mHashArraySize);
   }
@@ -749,11 +631,6 @@ CacheFileMetadata::ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset)
   mElementsSize = metaposOffset - elementsOffset;
   memmove(mBuf, mBuf + elementsOffset, mElementsSize);
   mOffset = aMetaOffset;
-
-  if (mKeyIsHash) {
-    mKey = origKey;
-    mKeyIsHash = false;
-  }
 
   // TODO: shrink memory if buffer is too big
 
