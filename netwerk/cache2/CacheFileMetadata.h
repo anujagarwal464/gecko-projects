@@ -8,19 +8,22 @@
 #include "CacheFileIOManager.h"
 #include "CacheStorageService.h"
 #include "CacheHashUtils.h"
+#include "CacheObserver.h"
 #include "nsAutoPtr.h"
 #include "nsString.h"
 
 namespace mozilla {
 namespace net {
 
-// The FRECENCY_PRECISION_FACTOR value affects persistence, when it's modified
-// the entry version must be changed!
-#define FRECENCY_PRECISION_FACTOR 20000.0
+// By multiplying with the current half-life we convert the frecency
+// to time independent of half-life value.  The range fits 32bits.
+// When decay time changes on next run of the browser, we convert
+// the frecency value to a correct internal representation again.
+// It might not be 100% accurate, but for the purpose it suffice.
 #define FRECENCY2INT(aFrecency) \
-  ((uint32_t)(aFrecency * FRECENCY_PRECISION_FACTOR))
+  ((uint32_t)(aFrecency * CacheObserver::HalfLifeSeconds()))
 #define INT2FRECENCY(aInt) \
-  ((double)(aInt) / FRECENCY_PRECISION_FACTOR)
+  ((double)(aInt) / (double)CacheObserver::HalfLifeSeconds())
 
 typedef struct {
   uint32_t        mFetchCount;
