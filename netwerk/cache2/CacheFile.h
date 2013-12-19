@@ -6,11 +6,11 @@
 #define CacheFile__h__
 
 #include "CacheFileChunk.h"
-#include "nsWeakReference.h"
 #include "CacheFileIOManager.h"
 #include "CacheFileMetadata.h"
 #include "nsRefPtrHashtable.h"
 #include "nsClassHashtable.h"
+#include "nsITimer.h"
 #include "mozilla/Mutex.h"
 
 class nsIInputStream;
@@ -47,7 +47,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(CacheFileListener, CACHEFILELISTENER_IID)
 class CacheFile : public CacheFileChunkListener
                 , public CacheFileIOListener
                 , public CacheFileMetadataListener
-                , public nsSupportsWeakReference
+                , public nsITimerCallback
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -82,6 +82,8 @@ public:
   NS_IMETHOD OpenOutputStream(CacheOutputCloseListener *aCloseListener, nsIOutputStream **_retval);
   NS_IMETHOD SetMemoryOnly();
   NS_IMETHOD Doom(CacheFileListener *aCallback);
+
+  NS_DECL_NSITIMERCALLBACK
 
   nsresult   ThrowMemoryCachedData();
 
@@ -174,7 +176,22 @@ private:
   nsRefPtr<CacheFileHandle>    mHandle;
   nsRefPtr<CacheFileMetadata>  mMetadata;
   nsCOMPtr<CacheFileListener>  mListener;
-  nsRefPtr<MetadataWriteTimer> mTimer;
+
+  class MetadataWriteTimer {
+  public:
+    nsCOMPtr<nsITimer>         mTimer;
+    nsCOMPtr<nsIEventTarget>   mTarget;
+    PRIntervalTime             mFireTime;
+
+    MetadataWriteTimer();
+    ~MetadataWriteTimer();
+
+    bool IsActive() { return !!mTimer; }
+    nsresult Fire(CacheFile * aFile);
+    nsresult Cancel();
+    void Release();
+    bool ShouldFireNew();
+  } mTimer;
 
   nsRefPtrHashtable<nsUint32HashKey, CacheFileChunk> mChunks;
   nsClassHashtable<nsUint32HashKey, ChunkListeners> mChunkListeners;

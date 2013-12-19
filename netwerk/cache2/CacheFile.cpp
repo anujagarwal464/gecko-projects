@@ -9,7 +9,6 @@
 #include "CacheFileInputStream.h"
 #include "CacheFileOutputStream.h"
 #include "nsILoadContextInfo.h"
-#include "nsITimer.h"
 #include "nsThreadUtils.h"
 #include "mozilla/DebugOnly.h"
 #include <algorithm>
@@ -94,99 +93,50 @@ protected:
   nsRefPtr<CacheFileChunk>         mChunk;
 };
 
-class MetadataWriteTimer : public nsITimerCallback
-{
-public:
-  NS_DECL_THREADSAFE_ISUPPORTS
-  NS_DECL_NSITIMERCALLBACK
 
-  MetadataWriteTimer(CacheFile *aFile);
-  nsresult Fire();
-  nsresult Cancel();
-  bool     ShouldFireNew();
-
-protected:
-  virtual ~MetadataWriteTimer();
-
-  nsCOMPtr<nsIWeakReference> mFile;
-  nsCOMPtr<nsITimer>         mTimer;
-  nsCOMPtr<nsIEventTarget>   mTarget;
-  PRIntervalTime             mFireTime;
-};
-
-NS_IMPL_ADDREF(MetadataWriteTimer)
-NS_IMPL_RELEASE(MetadataWriteTimer)
-
-NS_INTERFACE_MAP_BEGIN(MetadataWriteTimer)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITimerCallback)
-  NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
-NS_INTERFACE_MAP_END_THREADSAFE
-
-MetadataWriteTimer::MetadataWriteTimer(CacheFile *aFile)
+CacheFile::MetadataWriteTimer::MetadataWriteTimer()
   : mFireTime(0)
 {
-  LOG(("MetadataWriteTimer::MetadataWriteTimer() [this=%p, file=%p]",
-       this, aFile));
-  MOZ_COUNT_CTOR(MetadataWriteTimer);
-
-  mFile = do_GetWeakReference(static_cast<CacheFileChunkListener *>(aFile));
-  mTarget = NS_GetCurrentThread();
 }
 
-MetadataWriteTimer::~MetadataWriteTimer()
+CacheFile::MetadataWriteTimer::~MetadataWriteTimer()
 {
-  LOG(("MetadataWriteTimer::~MetadataWriteTimer() [this=%p]", this));
-  MOZ_COUNT_DTOR(MetadataWriteTimer);
-
-  NS_ProxyRelease(mTarget, mTimer.forget().get());
-  NS_ProxyRelease(mTarget, mFile.forget().get());
+  Cancel();
 }
 
 NS_IMETHODIMP
-MetadataWriteTimer::Notify(nsITimer *aTimer)
+CacheFile::Notify(nsITimer *aTimer)
 {
-  LOG(("MetadataWriteTimer::Notify() [this=%p, timer=%p]", this, aTimer));
+  LOG(("CacheFile::Notify() [this=%p, timer=%p]", this, aTimer));
 
-  MOZ_ASSERT(aTimer == mTimer);
+  MOZ_ASSERT(aTimer == mTimer.mTimer);
 
-  nsCOMPtr<nsISupports> supp = do_QueryReferent(mFile);
-  if (!supp)
-    return NS_OK;
+  CacheFileAutoLock lock(this);
 
-  CacheFile *file = static_cast<CacheFile *>(
-                      static_cast<CacheFileChunkListener *>(supp.get()));
+  mTimer.Release();
 
-  CacheFileAutoLock lock(file);
-
-  if (file->mTimer != this)
-    return NS_OK;
-
-  if (file->mMemoryOnly)
-    return NS_OK;
-
-  file->WriteMetadataIfNeeded();
-  file->mTimer = nullptr;
+  if (!mMemoryOnly)
+    WriteMetadataIfNeeded();
 
   return NS_OK;
 }
 
 nsresult
-MetadataWriteTimer::Fire()
+CacheFile::MetadataWriteTimer::Fire(CacheFile * aFile)
 {
   LOG(("MetadataWriteTimer::Fire() [this=%p]", this));
 
   nsresult rv;
 
-#ifdef DEBUG
-  bool onCurrentThread = false;
-  rv = mTarget->IsOnCurrentThread(&onCurrentThread);
-  MOZ_ASSERT(NS_SUCCEEDED(rv) && onCurrentThread);
-#endif
+  rv = Cancel();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   mTimer = do_CreateInstance("@mozilla.org/timer;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = mTimer->InitWithCallback(this, kMetadataWriteDelay,
+  mTarget = NS_GetCurrentThread();
+
+  rv = mTimer->InitWithCallback(aFile, kMetadataWriteDelay,
                                 nsITimer::TYPE_ONE_SHOT);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -196,14 +146,31 @@ MetadataWriteTimer::Fire()
 }
 
 nsresult
-MetadataWriteTimer::Cancel()
+CacheFile::MetadataWriteTimer::Cancel()
 {
+  if (!mTimer)
+    return NS_OK;
+
   LOG(("MetadataWriteTimer::Cancel() [this=%p]", this));
-  return mTimer->Cancel();
+  nsresult rv = mTimer->Cancel();
+  Release();
+  return rv;
+}
+
+void
+CacheFile::MetadataWriteTimer::Release()
+{
+  if (mTimer && mTarget) {
+    NS_ProxyRelease(mTarget, mTimer.forget().get());
+    mTarget = nullptr;
+  }
+  else {
+    mTimer = nullptr;
+  }
 }
 
 bool
-MetadataWriteTimer::ShouldFireNew()
+CacheFile::MetadataWriteTimer::ShouldFireNew()
 {
   uint32_t delta = PR_IntervalToMilliseconds(PR_IntervalNow() - mFireTime);
 
@@ -372,7 +339,7 @@ NS_INTERFACE_MAP_BEGIN(CacheFile)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileChunkListener)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileIOListener)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileMetadataListener)
-  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports,
                                    mozilla::net::CacheFileChunkListener)
 NS_INTERFACE_MAP_END_THREADSAFE
@@ -1530,10 +1497,7 @@ CacheFile::WriteMetadataIfNeeded()
   AssertOwnsLock();
   MOZ_ASSERT(!mMemoryOnly);
 
-  if (mTimer) {
-    mTimer->Cancel();
-    mTimer = nullptr;
-  }
+  mTimer.Cancel();
 
   if (NS_FAILED(mStatus))
     return;
@@ -1570,12 +1534,11 @@ CacheFile::PostWriteTimer()
 
   AssertOwnsLock();
 
-  if (mTimer) {
-    if (mTimer->ShouldFireNew()) {
+  if (mTimer.IsActive()) {
+    if (mTimer.ShouldFireNew()) {
       LOG(("CacheFile::PostWriteTimer() - Canceling old timer [this=%p]",
            this));
-      mTimer->Cancel();
-      mTimer = nullptr;
+      mTimer.Cancel();
     }
     else {
       LOG(("CacheFile::PostWriteTimer() - Keeping old timer [this=%p]", this));
@@ -1583,9 +1546,7 @@ CacheFile::PostWriteTimer()
     }
   }
 
-  mTimer = new MetadataWriteTimer(this);
-
-  rv = mTimer->Fire();
+  rv = mTimer.Fire(this);
   if (NS_FAILED(rv)) {
     LOG(("CacheFile::PostWriteTimer() - Firing timer failed with error 0x%08x "
          "[this=%p]", rv, this));
