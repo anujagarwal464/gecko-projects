@@ -73,7 +73,6 @@ public:
   NS_IMETHOD OnDataRead(CacheFileHandle *aHandle, char *aBuf, nsresult aResult);
   NS_IMETHOD OnFileDoomed(CacheFileHandle *aHandle, nsresult aResult);
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult);
-  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult);
 
   NS_IMETHOD OnMetadataRead(nsresult aResult);
   NS_IMETHOD OnMetadataWritten(nsresult aResult);
@@ -93,8 +92,6 @@ public:
   nsresult GetExpirationTime(uint32_t *_retval);
   nsresult SetLastModified(uint32_t aLastModified);
   nsresult GetLastModified(uint32_t *_retval);
-  nsresult SetFrecency(uint32_t aFrecency);
-  nsresult GetFrecency(uint32_t *_retval);
   nsresult GetLastFetched(uint32_t *_retval);
   nsresult GetFetchCount(uint32_t *_retval);
 
@@ -156,8 +153,6 @@ private:
                                              void* aClosure);
 
   nsresult PadChunkWithZeroes(uint32_t aChunkIdx);
-
-  nsresult InitIndexEntry();
 
   mozilla::Mutex mLock;
   bool           mOpeningFile;
