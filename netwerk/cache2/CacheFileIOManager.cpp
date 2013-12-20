@@ -61,16 +61,17 @@ NS_IMPL_ADDREF(CacheFileHandle)
 NS_IMETHODIMP_(nsrefcnt)
 CacheFileHandle::Release()
 {
+  nsrefcnt count = mRefCnt - 1;
   if (DispatchRelease()) {
     // Redispatched to the IO thread.
-    return mRefCnt;
+    return count;
   }
 
   MOZ_ASSERT(CacheFileIOManager::IsOnIOThread());
 
   LOG(("CacheFileHandle::Release() [this=%p, refcnt=%d]", this, mRefCnt.get()));
   NS_PRECONDITION(0 != mRefCnt, "dup release");
-  nsrefcnt count = --mRefCnt;
+  count = --mRefCnt;
   NS_LOG_RELEASE(this, count, "CacheFileHandle");
 
   if (0 == count) {
