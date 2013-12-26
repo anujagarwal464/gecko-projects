@@ -1044,6 +1044,8 @@ CacheFileIOManager::Shutdown()
 
   Telemetry::AutoTimer<Telemetry::NETWORK_DISK_CACHE_SHUTDOWN_V2> shutdownTimer;
 
+  CacheIndex::PreShutdown();
+
   {
     mozilla::Mutex lock("CacheFileIOManager::Shutdown() lock");
     mozilla::CondVar condVar(lock, "CacheFileIOManager::Shutdown() condVar");
@@ -2008,13 +2010,13 @@ CacheFileIOManager::EnumerateEntryFiles(EEnumerateMode aMode,
 
   switch (aMode) {
   case ENTRIES:
-    rv = file->AppendNative(NS_LITERAL_CSTRING("entries"));
+    rv = file->AppendNative(NS_LITERAL_CSTRING(kEntriesDir));
     NS_ENSURE_SUCCESS(rv, rv);
 
     break;
 
   case DOOMED:
-    rv = file->AppendNative(NS_LITERAL_CSTRING("doomed"));
+    rv = file->AppendNative(NS_LITERAL_CSTRING(kDoomedDir));
     NS_ENSURE_SUCCESS(rv, rv);
 
     break;
@@ -2063,7 +2065,7 @@ CacheFileIOManager::CreateFile(CacheFileHandle *aHandle)
 }
 
 void
-CacheFileIOManager::GetHashStr(const SHA1Sum::Hash *aHash, nsACString &_retval)
+CacheFileIOManager::HashToStr(const SHA1Sum::Hash *aHash, nsACString &_retval)
 {
   _retval.Assign("");
   const char hexChars[] = {'0', '1', '2', '3', '4', '5', '6', '7',
@@ -2075,6 +2077,33 @@ CacheFileIOManager::GetHashStr(const SHA1Sum::Hash *aHash, nsACString &_retval)
 }
 
 nsresult
+CacheFileIOManager::StrToHash(const nsACString &aHash, SHA1Sum::Hash *_retval)
+{
+  if (aHash.Length() != 2*sizeof(SHA1Sum::Hash))
+    return NS_ERROR_INVALID_ARG;
+
+  for (uint32_t i=0 ; i<aHash.Length() ; i++) {
+    uint8_t value;
+
+    if (aHash[i] >= '0' && aHash[i] <= '9')
+      value = aHash[i] - '0';
+    else if (aHash[i] >= 'A' && aHash[i] <= 'F')
+      value = aHash[i] - 'A' + 10;
+    else if (aHash[i] >= 'a' && aHash[i] <= 'f')
+      value = aHash[i] - 'a' + 10;
+    else
+      return NS_ERROR_INVALID_ARG;
+
+    if (i%2 == 0)
+      (reinterpret_cast<uint8_t *>(_retval))[i/2] = value << 4;
+    else
+      (reinterpret_cast<uint8_t *>(_retval))[i/2] += value;
+  }
+
+  return NS_OK;
+}
+
+nsresult
 CacheFileIOManager::GetFile(const SHA1Sum::Hash *aHash, nsIFile **_retval)
 {
   nsresult rv;
@@ -2082,11 +2111,11 @@ CacheFileIOManager::GetFile(const SHA1Sum::Hash *aHash, nsIFile **_retval)
   rv = mCacheDirectory->Clone(getter_AddRefs(file));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = file->AppendNative(NS_LITERAL_CSTRING("entries"));
+  rv = file->AppendNative(NS_LITERAL_CSTRING(kEntriesDir));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString leafName;
-  GetHashStr(aHash, leafName);
+  HashToStr(aHash, leafName);
 
   rv = file->AppendNative(leafName);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2118,7 +2147,7 @@ CacheFileIOManager::GetDoomedFile(nsIFile **_retval)
   rv = mCacheDirectory->Clone(getter_AddRefs(file));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = file->AppendNative(NS_LITERAL_CSTRING("doomed"));
+  rv = file->AppendNative(NS_LITERAL_CSTRING(kDoomedDir));
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = file->AppendNative(NS_LITERAL_CSTRING("dummyleaf"));
@@ -2196,11 +2225,11 @@ CacheFileIOManager::CreateCacheTree()
   NS_ENSURE_SUCCESS(rv, rv);
 
   // ensure entries directory exists
-  rv = CheckAndCreateDir(mCacheDirectory, "entries");
+  rv = CheckAndCreateDir(mCacheDirectory, kEntriesDir);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // ensure doomed directory exists
-  rv = CheckAndCreateDir(mCacheDirectory, "doomed");
+  rv = CheckAndCreateDir(mCacheDirectory, kDoomedDir);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mTreeCreated = true;

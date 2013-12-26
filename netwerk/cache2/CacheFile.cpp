@@ -8,7 +8,6 @@
 #include "CacheFileChunk.h"
 #include "CacheFileInputStream.h"
 #include "CacheFileOutputStream.h"
-#include "nsILoadContextInfo.h"
 #include "nsThreadUtils.h"
 #include "mozilla/DebugOnly.h"
 #include <algorithm>
@@ -1660,45 +1659,11 @@ CacheFile::InitIndexEntry()
     return NS_OK;
 
   nsresult rv;
-  bool anonymous;
-  bool inBrowser;
-  uint32_t appId;
 
-  // parse mKey
-  MOZ_ASSERT(!mKeyIsHash);
-  MOZ_ASSERT(mKey.Length() >= 4);
-
-  if (mKey[1] == '-') {
-    anonymous = false;
-  } else {
-    MOZ_ASSERT(mKey[1] == 'A');
-    anonymous = true;
-  }
-
-  MOZ_ASSERT(mKey[2] == ':');
-  int32_t appIdEndIdx = mKey.FindChar(':', 3);
-  MOZ_ASSERT(appIdEndIdx != kNotFound);
-
-  if (mKey[appIdEndIdx - 1] == 'B') {
-    inBrowser = true;
-    appIdEndIdx--;
-  } else {
-    inBrowser = false;
-  }
-
-  MOZ_ASSERT(appIdEndIdx > 2);
-  if (appIdEndIdx == 3) {
-    appId = nsILoadContextInfo::NO_APP_ID;
-  }
-  else {
-    nsAutoCString appIdStr(Substring(mKey, 3, appIdEndIdx - 3));
-    int64_t appId64 = appIdStr.ToInteger64(&rv);
-    MOZ_ASSERT(NS_SUCCEEDED(rv));
-    MOZ_ASSERT(appId64 <= PR_UINT32_MAX);
-    appId = appId64;;
-  }
-
-  rv = CacheFileIOManager::InitIndexEntry(mHandle, appId, anonymous, inBrowser);
+  rv = CacheFileIOManager::InitIndexEntry(mHandle,
+                                          mMetadata->AppId(),
+                                          mMetadata->IsAnonymous(),
+                                          mMetadata->IsInBrowser());
   NS_ENSURE_SUCCESS(rv, rv);
 
   uint32_t expirationTime;
