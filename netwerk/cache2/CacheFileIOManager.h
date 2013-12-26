@@ -26,10 +26,6 @@ namespace net {
 class CacheFileHandlesEntry;
 #endif
 
-const char kEntriesDir[] = "entries";
-const char kDoomedDir[]  = "doomed";
-
-
 class CacheFileHandle : public nsISupports
 {
 public:
@@ -258,7 +254,6 @@ private:
   friend class ReleaseNSPRHandleEvent;
   friend class TruncateSeekSetEOFEvent;
   friend class RenameFileEvent;
-  friend class CacheIndex;
 
   virtual ~CacheFileIOManager();
 
@@ -285,8 +280,7 @@ private:
                               const nsACString &aNewName);
 
   nsresult CreateFile(CacheFileHandle *aHandle);
-  static void HashToStr(const SHA1Sum::Hash *aHash, nsACString &_retval);
-  static nsresult StrToHash(const nsACString &aHash, SHA1Sum::Hash *_retval);
+  static void GetHashStr(const SHA1Sum::Hash *aHash, nsACString &_retval);
   nsresult GetFile(const SHA1Sum::Hash *aHash, nsIFile **_retval);
   nsresult GetSpecialFile(const nsACString &aKey, nsIFile **_retval);
   nsresult GetDoomedFile(nsIFile **_retval);
