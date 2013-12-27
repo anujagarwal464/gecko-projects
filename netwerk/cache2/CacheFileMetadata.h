@@ -65,6 +65,7 @@ public:
                     const nsACString &aKey,
                     bool aKeyIsHash);
   CacheFileMetadata(const nsACString &aKey);
+  CacheFileMetadata();
 
   void SetHandle(CacheFileHandle *aHandle);
 
@@ -74,6 +75,11 @@ public:
   nsresult ReadMetadata(CacheFileMetadataListener *aListener);
   nsresult WriteMetadata(uint32_t aOffset,
                          CacheFileMetadataListener *aListener);
+  nsresult SyncReadMetadata(nsIFile *aFile);
+
+  bool     IsAnonymous() { return mAnonymous; }
+  bool     IsInBrowser() { return mInBrowser; }
+  uint32_t AppId()       { return mAppId; }
 
   const char * GetElement(const char *aKey);
   nsresult     SetElement(const char *aKey, const char *aValue);
@@ -111,6 +117,7 @@ private:
   nsresult ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset);
   nsresult CheckElements(const char *aBuf, uint32_t aSize);
   void     EnsureBuffer(uint32_t aSize);
+  nsresult ParseKey(const nsACString &aKey);
 
   nsRefPtr<CacheFileHandle>           mHandle;
   nsCString                           mKey;
@@ -126,6 +133,9 @@ private:
   CacheFileMetadataHeader             mMetaHdr;
   uint32_t                            mElementsSize;
   bool                                mIsDirty;
+  bool                                mAnonymous;
+  bool                                mInBrowser;
+  uint32_t                            mAppId;
   nsCOMPtr<CacheFileMetadataListener> mListener;
 };
 
