@@ -14,10 +14,13 @@
 #include "nsTHashtable.h"
 #include "mozilla/SHA1.h"
 #include "mozilla/Mutex.h"
-#include "prnetdb.h"
+#include "mozilla/Endian.h"
+#include "mozilla/TimeStamp.h"
 
 class nsIFile;
 class nsIDirectoryEnumerator;
+class nsITimer;
+
 
 #ifdef DEBUG
 #define DEBUG_STATS 1
@@ -29,9 +32,9 @@ namespace net {
 class CacheFileMetadata;
 
 typedef struct {
-  uint32_t            mVersion;
-  uint32_t            mTimeStamp; // for quick entry file validation
-  uint32_t            mIsDirty;
+  uint32_t mVersion;
+  uint32_t mTimeStamp; // for quick entry file validation
+  uint32_t mIsDirty;
 } CacheIndexHeader;
 
 struct CacheIndexRecord {
@@ -185,10 +188,10 @@ public:
     dst->mFlags &= ~eFreshMask;
 
 #if defined(IS_LITTLE_ENDIAN)
-    dst->mFrecency = PR_htonl(dst->mFrecency);
-    dst->mExpirationTime = PR_htonl(dst->mExpirationTime);
-    dst->mAppId = PR_htonl(dst->mAppId);
-    dst->mFlags = PR_htonl(dst->mFlags);
+    NetworkEndian::writeUint32(&dst->mFrecency, dst->mFrecency);
+    NetworkEndian::writeUint32(&dst->mExpirationTime, dst->mExpirationTime);
+    NetworkEndian::writeUint32(&dst->mAppId, dst->mAppId);
+    NetworkEndian::writeUint32(&dst->mFlags, dst->mFlags);
 #endif
   }
 
@@ -198,10 +201,10 @@ public:
     MOZ_ASSERT(memcmp(&mRec->mHash, &src->mHash,
                sizeof(SHA1Sum::Hash)) == 0);
 
-    mRec->mFrecency = PR_ntohl(src->mFrecency);
-    mRec->mExpirationTime = PR_ntohl(src->mExpirationTime);
-    mRec->mAppId = PR_ntohl(src->mAppId);
-    mRec->mFlags = PR_ntohl(src->mFlags);
+    mRec->mFrecency = NetworkEndian::readUint32(&src->mFrecency);
+    mRec->mExpirationTime = NetworkEndian::readUint32(&src->mExpirationTime);
+    mRec->mAppId = NetworkEndian::readUint32(&src->mAppId);
+    mRec->mFlags = NetworkEndian::readUint32(&src->mFlags);
   }
 
   void Log() {
@@ -407,6 +410,14 @@ public:
                               const uint32_t      *aExpirationTime,
                               const uint32_t      *aSize);
 
+  enum EntryStatus {
+    EXISTS         = 0,
+    DOES_NOT_EXIST = 1,
+    DOES_NOT_KNOW  = 2
+  };
+
+  static nsresult HasEntry(const nsACString &aKey, EntryStatus *_retval);
+
   NS_IMETHOD OnFileOpened(CacheFileHandle *aHandle, nsresult aResult);
   NS_IMETHOD OnDataWritten(CacheFileHandle *aHandle, const char *aBuf,
                            nsresult aResult);
@@ -478,6 +489,8 @@ private:
   static PLDHashOperator ProcessJournalEntry(CacheIndexEntry *aEntry,
                                              void* aClosure);
 
+  static void DelayedBuildUpdate(nsITimer *aTimer, void *aClosure);
+  nsresult PostBuildUpdateTimer(uint32_t aDelay);
   nsresult SetupDirectoryEnumerator();
   void BuildUpdateInitEntry(CacheIndexEntry *aEntry,
                             CacheFileMetadata *aMetaData,
@@ -526,12 +539,13 @@ private:
 
   mozilla::Mutex mLock;
   EState         mState;
+  TimeStamp      mStartTime;
   bool           mShuttingDown;
   bool           mIndexNeedsUpdate;
   bool           mIndexOnDiskIsValid;
   bool           mDontMarkIndexClean;
   uint32_t       mIndexTimeStamp;
-  PRIntervalTime mLastDumpTime;
+  TimeStamp      mLastDumpTime;
 
   uint32_t                  mSkipEntries;
   uint32_t                  mProcessEntries;

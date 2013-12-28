@@ -14,13 +14,18 @@
 #include "mozilla/DebugOnly.h"
 #include "prinrval.h"
 #include "nsIFile.h"
+#include "nsITimer.h"
 #include <algorithm>
 
 
-#define kMinUnwrittenChanges 30 // 300
-#define kMinDumpInterval     3000 // 20000  // in milliseconds
-#define kMaxBufSize          16384
-#define kIndexVersion        0x00000001
+#define kMinUnwrittenChanges   30 // 300
+#define kMinDumpInterval       3000 // 20000  // in milliseconds
+#define kMaxBufSize            16384
+#define kIndexVersion          0x00000001
+#define kBuildIndexStartDelay  10000 // in milliseconds
+#define kUpdateIndexStartDelay 10000 // in milliseconds
+#define kBuildIndexLoopLimit   40    // in milliseconds
+#define kUpdateIndexLoopLimit  40    // in milliseconds
 
 const char kIndexName[]     = "index";
 const char kTempIndexName[] = "index.tmp";
@@ -49,7 +54,6 @@ CacheIndex::CacheIndex()
   , mIndexOnDiskIsValid(false)
   , mDontMarkIndexClean(false)
   , mIndexTimeStamp(0)
-  , mLastDumpTime(0)
   , mSkipEntries(0)
   , mProcessEntries(0)
   , mRWBuf(nullptr)
@@ -123,6 +127,8 @@ CacheIndex::InitInternal(nsIFile *aCacheDirectory)
   NS_ENSURE_SUCCESS(rv, rv);
 
   ChangeState(READING);
+
+  mStartTime = TimeStamp::NowLoRes();
 
   // dispatch an event since IO manager's path is not initialized yet
   nsCOMPtr<nsIRunnable> event;
@@ -305,6 +311,8 @@ CacheIndex::AddEntry(const SHA1Sum::Hash *aHash)
       MOZ_ASSERT(index->mPendingUpdates.Count() == 0);
 
       if (entry && !entryRemoved) {
+        // Found entry in index that shouldn't exist.
+
         if (entry->IsFresh()) {
           // Someone removed the file on disk while FF is running. Update
           // process can fix only non-fresh entries (i.e. entries that were not
@@ -321,9 +329,15 @@ CacheIndex::AddEntry(const SHA1Sum::Hash *aHash)
           updateIfNonFreshEntriesExist = true;
         }
         else if (index->mState == READY) {
+          // Index is outdated, update it.
           LOG(("CacheIndex::AddEntry() - Found entry that shouldn't exist, "
                "update is needed"));
           index->mIndexNeedsUpdate = true;
+        }
+        else {
+          // We cannot be here when building index since all entries are fresh
+          // during building.
+          MOZ_ASSERT(index->mState == UPDATING);
         }
       }
 
@@ -749,6 +763,67 @@ CacheIndex::UpdateEntry(const SHA1Sum::Hash *aHash,
 }
 
 nsresult
+CacheIndex::HasEntry(const nsACString &aKey, EntryStatus *_retval)
+{
+  LOG(("CacheIndex::HasEntry() [key=%s]", PromiseFlatCString(aKey).get()));
+
+  nsresult rv;
+  nsRefPtr<CacheIndex> index = gInstance;
+
+  if (!index)
+    return NS_ERROR_NOT_INITIALIZED;
+
+  CacheIndexAutoLock lock(index);
+
+  rv = index->EnsureIndexUsable();
+  if (NS_FAILED(rv)) return rv;
+
+  SHA1Sum sum;
+  SHA1Sum::Hash hash;
+  sum.update(aKey.BeginReading(), aKey.Length());
+  sum.finish(hash);
+
+  CacheIndexEntry *entry = nullptr;
+
+  switch (index->mState) {
+    case READING:
+    case WRITING:
+      entry = index->mPendingUpdates.GetEntry(hash);
+      // no break
+    case BUILDING:
+    case UPDATING:
+    case READY:
+      if (!entry)
+        entry = index->mIndex.GetEntry(hash);
+      break;
+    case INITIAL:
+    case SHUTDOWN:
+      MOZ_ASSERT(false, "Unexpected state!");
+  }
+
+  if (!entry) {
+    if (index->mState == READY || index->mState == WRITING)
+      *_retval = DOES_NOT_EXIST;
+    else
+      *_retval = DOES_NOT_KNOW;
+  }
+  else {
+    if (entry->IsRemoved()) {
+      if (entry->IsFresh())
+        *_retval = DOES_NOT_EXIST;
+      else
+        *_retval = DOES_NOT_KNOW;
+    }
+    else {
+      *_retval = EXISTS;
+    }
+  }
+
+  LOG(("CacheIndex::HasEntry() - result is %u", *_retval));
+  return NS_OK;
+}
+
+nsresult
 CacheIndex::EnsureIndexUsable()
 {
   MOZ_ASSERT(mState != INITIAL);
@@ -873,8 +948,9 @@ CacheIndex::WriteIndexToDiskIfNeeded()
   if (mState != READY || mShuttingDown)
     return false;
 
-  if (!((PR_IntervalNow() - mLastDumpTime) >
-      PR_MillisecondsToInterval(kMinDumpInterval)))
+  if (!mLastDumpTime.IsNull() &&
+      (TimeStamp::NowLoRes() - mLastDumpTime).ToMilliseconds() <
+      kMinDumpInterval)
     return false;
 
   if (mIndexStats.Dirty() < kMinUnwrittenChanges)
@@ -942,9 +1018,10 @@ CacheIndex::WriteIndexHeader(CacheFileHandle *aHandle, nsresult aResult)
   mHash = new CacheHash();
 
   CacheIndexHeader *hdr = reinterpret_cast<CacheIndexHeader *>(mRWBuf);
-  hdr->mVersion = PR_htonl(kIndexVersion);
-  hdr->mTimeStamp = PR_htonl(static_cast<uint32_t>(PR_Now() / PR_USEC_PER_SEC));
-  hdr->mIsDirty = PR_htonl(1);
+  NetworkEndian::writeUint32(&hdr->mVersion, kIndexVersion);
+  NetworkEndian::writeUint32(&hdr->mTimeStamp,
+                             static_cast<uint32_t>(PR_Now() / PR_USEC_PER_SEC));
+  NetworkEndian::writeUint32(&hdr->mIsDirty, 1);
 
   mRWBufPos = sizeof(CacheIndexHeader);
   mSkipEntries = 0;
@@ -1002,9 +1079,7 @@ CacheIndex::WriteRecords()
       mRWBuf = static_cast<char *>(moz_xrealloc(mRWBuf, mRWBufSize));
     }
 
-    *(reinterpret_cast<uint32_t *>(mRWBuf + mRWBufPos)) =
-      PR_htonl(mHash->GetHash());
-
+    NetworkEndian::writeUint32(mRWBuf + mRWBufPos, mHash->GetHash());
     mRWBufPos += sizeof(CacheHash::Hash32_t);
     mSkipEntries = 0;
   }
@@ -1046,7 +1121,7 @@ CacheIndex::FinishWrite(bool aSucceeded)
 
   if (mState == WRITING) {
     ChangeState(READY);
-    mLastDumpTime = PR_IntervalNow();
+    mLastDumpTime = TimeStamp::NowLoRes();
   }
 }
 
@@ -1229,7 +1304,7 @@ WriteLogHelper::Finish()
     MOZ_ASSERT(mBufPos + sizeof(CacheHash::Hash32_t) <= mBufSize);
   }
 
-  *(reinterpret_cast<uint32_t *>(mBuf + mBufPos)) = PR_htonl(mHash->GetHash());
+  NetworkEndian::writeUint32(mBuf + mBufPos, mHash->GetHash());
   mBufPos += sizeof(CacheHash::Hash32_t);
 
   rv = FlushBuffer();
@@ -1296,7 +1371,7 @@ CacheIndex::WriteLogToDisk()
     return NS_ERROR_FAILURE;
   }
 
-  header.mIsDirty = PR_htonl(0);
+  NetworkEndian::writeUint32(&header.mIsDirty, 0);
 
   int64_t offset = PR_Seek64(fd, 0, PR_SEEK_SET);
   if (offset == -1) {
@@ -1436,15 +1511,15 @@ CacheIndex::ParseRecords()
                               moz_xmalloc(sizeof(CacheIndexHeader)));
     memcpy(hdr, mRWBuf, sizeof(CacheIndexHeader));
 
-    if (PR_ntohl(hdr->mVersion) != kIndexVersion) {
+    if (NetworkEndian::readUint32(&hdr->mVersion) != kIndexVersion) {
       free(hdr);
       FinishRead(false);
       return;
     }
 
-    mIndexTimeStamp = PR_ntohl(hdr->mTimeStamp);
+    mIndexTimeStamp = NetworkEndian::readUint32(&hdr->mTimeStamp);
 
-    if (PR_ntohl(hdr->mIsDirty)) {
+    if (NetworkEndian::readUint32(&hdr->mIsDirty)) {
       if (mHandle2) {
         CacheFileIOManager::DoomFile(mHandle2, nullptr);
         mHandle2 = nullptr;
@@ -1452,7 +1527,8 @@ CacheIndex::ParseRecords()
       free(hdr);
     }
     else {
-      hdr->mIsDirty = PR_htonl(1);
+      NetworkEndian::writeUint32(&hdr->mIsDirty, 1);
+
       // Mark index dirty
       rv = CacheFileIOManager::Write(mHandle, 0, reinterpret_cast<char *>(hdr),
                                      sizeof(CacheIndexHeader), true, nullptr);
@@ -1505,10 +1581,10 @@ CacheIndex::ParseRecords()
 
   MOZ_ASSERT(fileOffset <= mHandle->FileSize());
   if (fileOffset == mHandle->FileSize()) {
-    if (mHash->GetHash() != PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
+    if (mHash->GetHash() != NetworkEndian::readUint32(mRWBuf)) {
       LOG(("CacheIndex::ParseRecords() - Hash mismatch, [is %x, should be %x]",
            mHash->GetHash(),
-           PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
+           NetworkEndian::readUint32(mRWBuf)));
       FinishRead(false);
       return;
     }
@@ -1622,10 +1698,10 @@ CacheIndex::ParseJournal()
 
   MOZ_ASSERT(fileOffset <= mHandle2->FileSize());
   if (fileOffset == mHandle2->FileSize()) {
-    if (mHash->GetHash() != PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))) {
+    if (mHash->GetHash() != NetworkEndian::readUint32(mRWBuf)) {
       LOG(("CacheIndex::ParseJournal() - Hash mismatch, [is %x, should be %x]",
            mHash->GetHash(),
-           PR_ntohl(*(reinterpret_cast<uint32_t *>(mRWBuf)))));
+           NetworkEndian::readUint32(mRWBuf)));
       FinishRead(false);
       return;
     }
@@ -1763,7 +1839,7 @@ CacheIndex::FinishRead(bool aSucceeded)
     MOZ_ASSERT(mTmpJournal.Count() == 0);
     EnsureNoFreshEntry();
     ProcessPendingOperations();
-    // Remove all entres that we haven't seen during this session
+    // Remove all entries that we haven't seen during this session
     mIndex.EnumerateEntries(&CacheIndex::RemoveNonFreshEntries, this);
     StartBuildingIndex();
     return;
@@ -1783,7 +1859,64 @@ CacheIndex::FinishRead(bool aSucceeded)
   mIndexStats.Log();
 
   ChangeState(READY);
-  mLastDumpTime = PR_IntervalNow(); // Do not dump new index immediately
+  mLastDumpTime = TimeStamp::NowLoRes(); // Do not dump new index immediately
+}
+
+void
+CacheIndex::DelayedBuildUpdate(nsITimer *aTimer, void *aClosure)
+{
+  LOG(("CacheIndex::DelayedBuildUpdate()"));
+
+  nsresult rv;
+  nsRefPtr<CacheIndex> index = gInstance;
+
+  if (!index)
+    return;
+
+  CacheIndexAutoLock lock(index);
+
+  rv = index->EnsureIndexUsable();
+  if (NS_FAILED(rv)) return;
+
+  if (index->mState == READY && index->mShuttingDown)
+    return;
+
+  MOZ_ASSERT(index->mState == BUILDING || index->mState == UPDATING);
+
+  // We need to redispatch to run with lower priority
+  nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
+  MOZ_ASSERT(ioThread);
+
+  rv = ioThread->Dispatch(index, CacheIOThread::BUILD_OR_UPDATE_INDEX);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("CacheIndex::DelayedBuildUpdate() - Can't dispatch event");
+    LOG(("CacheIndex::DelayedBuildUpdate() - Can't dispatch event" ));
+    if (index->mState == BUILDING)
+      index->FinishBuild(false);
+    else
+      index->FinishUpdate(false);
+  }
+}
+
+nsresult
+CacheIndex::PostBuildUpdateTimer(uint32_t aDelay)
+{
+  nsresult rv;
+
+  nsCOMPtr<nsITimer> timer = do_CreateInstance("@mozilla.org/timer;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIEventTarget> ioTarget = CacheFileIOManager::IOTarget();
+  MOZ_ASSERT(ioTarget);
+
+  rv = timer->SetTarget(ioTarget);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = timer->InitWithFuncCallback(CacheIndex::DelayedBuildUpdate, nullptr,
+                                   aDelay, nsITimer::TYPE_ONE_SHOT);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
 }
 
 nsresult
@@ -1892,6 +2025,16 @@ CacheIndex::StartBuildingIndex()
     return;
   }
 
+  uint32_t elapsed = (TimeStamp::NowLoRes() - mStartTime).ToMilliseconds();
+  if (elapsed < kBuildIndexStartDelay) {
+    rv = PostBuildUpdateTimer(kBuildIndexStartDelay - elapsed);
+    if (NS_SUCCEEDED(rv))
+      return;
+
+    LOG(("CacheIndex::StartBuildingIndex() - PostBuildUpdateTimer() failed. "
+         "Starting build immediately."));
+  }
+
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
   MOZ_ASSERT(ioThread);
 
@@ -1911,6 +2054,8 @@ CacheIndex::StartBuildingIndex()
 void
 CacheIndex::BuildIndex()
 {
+  LOG(("CacheIndex::BuildIndex()"));
+
   AssertOwnsLock();
 
   MOZ_ASSERT(mPendingUpdates.Count() == 0);
@@ -1925,7 +2070,20 @@ CacheIndex::BuildIndex()
     }
   }
 
+  TimeStamp start;
+
   while (true) {
+    if (start.IsNull()) {
+      start = TimeStamp::Now();
+    } else {
+      TimeDuration elapsed = TimeStamp::Now() - start;
+      if (elapsed.ToMilliseconds() >= kBuildIndexLoopLimit) {
+        LOG(("CacheIndex::BuildIndex() - Breaking loop after %u ms.",
+             static_cast<uint32_t>(elapsed.ToMilliseconds())));
+        break;
+      }
+    }
+
     nsCOMPtr<nsIFile> file;
     rv = mDirEnumerator->GetNextFile(getter_AddRefs(file));
     if (!file) {
@@ -2002,8 +2160,6 @@ CacheIndex::BuildIndex()
            leaf.get()));
       entry->Log();
     }
-
-    break;
   }
 
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
@@ -2045,7 +2201,7 @@ CacheIndex::FinishBuild(bool aSucceeded)
 
   if (mState == BUILDING) {
     ChangeState(READY);
-    mLastDumpTime = PR_IntervalNow(); // Do not dump new index immediately
+    mLastDumpTime = TimeStamp::NowLoRes(); // Do not dump new index immediately
   }
 }
 
@@ -2084,6 +2240,16 @@ CacheIndex::StartUpdatingIndex()
     return;
   }
 
+  uint32_t elapsed = (TimeStamp::NowLoRes() - mStartTime).ToMilliseconds();
+  if (elapsed < kUpdateIndexStartDelay) {
+    rv = PostBuildUpdateTimer(kUpdateIndexStartDelay - elapsed);
+    if (NS_SUCCEEDED(rv))
+      return;
+
+    LOG(("CacheIndex::StartUpdatingIndex() - PostBuildUpdateTimer() failed. "
+         "Starting update immediately."));
+  }
+
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
   MOZ_ASSERT(ioThread);
 
@@ -2103,6 +2269,8 @@ CacheIndex::StartUpdatingIndex()
 void
 CacheIndex::UpdateIndex()
 {
+  LOG(("CacheIndex::UpdateIndex()"));
+
   AssertOwnsLock();
 
   MOZ_ASSERT(mPendingUpdates.Count() == 0);
@@ -2117,7 +2285,20 @@ CacheIndex::UpdateIndex()
     }
   }
 
+  TimeStamp start;
+
   while (true) {
+    if (start.IsNull()) {
+      start = TimeStamp::Now();
+    } else {
+      TimeDuration elapsed = TimeStamp::Now() - start;
+      if (elapsed.ToMilliseconds() >= kUpdateIndexLoopLimit) {
+        LOG(("CacheIndex::UpdateIndex() - Breaking loop after %u ms.",
+             static_cast<uint32_t>(elapsed.ToMilliseconds())));
+        break;
+      }
+    }
+
     nsCOMPtr<nsIFile> file;
     rv = mDirEnumerator->GetNextFile(getter_AddRefs(file));
     if (!file) {
@@ -2222,8 +2403,6 @@ CacheIndex::UpdateIndex()
            "[hash=%s]", leaf.get()));
       entry->Log();
     }
-
-    break;
   }
 
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
@@ -2271,7 +2450,7 @@ CacheIndex::FinishUpdate(bool aSucceeded)
     }
 
     ChangeState(READY);
-    mLastDumpTime = PR_IntervalNow(); // Do not dump new index immediately
+    mLastDumpTime = TimeStamp::NowLoRes(); // Do not dump new index immediately
   }
 }
 
