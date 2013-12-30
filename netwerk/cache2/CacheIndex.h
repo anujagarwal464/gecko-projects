@@ -413,7 +413,7 @@ public:
   enum EntryStatus {
     EXISTS         = 0,
     DOES_NOT_EXIST = 1,
-    DOES_NOT_KNOW  = 2
+    DO_NOT_KNOW    = 2
   };
 
   static nsresult HasEntry(const nsACString &aKey, EntryStatus *_retval);

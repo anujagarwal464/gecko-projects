@@ -805,14 +805,14 @@ CacheIndex::HasEntry(const nsACString &aKey, EntryStatus *_retval)
     if (index->mState == READY || index->mState == WRITING)
       *_retval = DOES_NOT_EXIST;
     else
-      *_retval = DOES_NOT_KNOW;
+      *_retval = DO_NOT_KNOW;
   }
   else {
     if (entry->IsRemoved()) {
       if (entry->IsFresh())
         *_retval = DOES_NOT_EXIST;
       else
-        *_retval = DOES_NOT_KNOW;
+        *_retval = DO_NOT_KNOW;
     }
     else {
       *_retval = EXISTS;

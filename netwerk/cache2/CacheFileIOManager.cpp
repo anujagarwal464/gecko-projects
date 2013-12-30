@@ -1273,7 +1273,8 @@ CacheFileIOManager::OpenFileInternal(const SHA1Sum::Hash *aHash,
       rv = file->Remove(false);
       if (NS_FAILED(rv)) {
         NS_WARNING("Cannot remove old entry from the disk");
-        // TODO log
+        LOG(("CacheFileIOManager::OpenFileInternal() - Removing old file failed"
+             ". [rv=0x%08x]", rv));
       }
     }
 
@@ -1368,7 +1369,8 @@ CacheFileIOManager::OpenSpecialFileInternal(const nsACString &aKey,
       rv = file->Remove(false);
       if (NS_FAILED(rv)) {
         NS_WARNING("Cannot remove old entry from the disk");
-        // TODO log
+        LOG(("CacheFileIOManager::OpenSpecialFileInternal() - Removing file "
+             "failed. [rv=0x%08x]", rv));
       }
     }
 
@@ -1718,8 +1720,11 @@ CacheFileIOManager::DoomFileByKeyInternal(const SHA1Sum::Hash *aHash)
   rv = file->Remove(false);
   if (NS_FAILED(rv)) {
     NS_WARNING("Cannot remove old entry from the disk");
-    // TODO log
+    LOG(("CacheFileIOManager::DoomFileByKeyInternal() - Removing file failed. "
+         "[rv=0x%08x]", rv));
   }
+
+  CacheIndex::RemoveEntry(aHash);
 
   return NS_OK;
 }
@@ -1915,7 +1920,8 @@ CacheFileIOManager::RenameFileInternal(CacheFileHandle *aHandle,
     rv = file->Remove(false);
     if (NS_FAILED(rv)) {
       NS_WARNING("Cannot remove file from the disk");
-      // TODO log
+      LOG(("CacheFileIOManager::RenameFileInternal() - Removing old file failed"
+           ". [rv=0x%08x]", rv));
     }
   }
 
@@ -2243,6 +2249,8 @@ CacheFileIOManager::OpenNSPRHandle(CacheFileHandle *aHandle, bool aCreate)
   MOZ_ASSERT(!aHandle->mFD);
   MOZ_ASSERT(mHandlesByLastUsed.IndexOf(aHandle) == mHandlesByLastUsed.NoIndex);
   MOZ_ASSERT(mHandlesByLastUsed.Length() <= kOpenHandlesLimit);
+  MOZ_ASSERT((aCreate && !aHandle->mFileExists) ||
+             (!aCreate && aHandle->mFileExists));
 
   nsresult rv;
 
@@ -2264,8 +2272,7 @@ CacheFileIOManager::OpenNSPRHandle(CacheFileHandle *aHandle, bool aCreate)
     if (NS_ERROR_FILE_NOT_FOUND == rv) {
       LOG(("  file doesn't exists"));
       aHandle->mFileExists = false;
-      aHandle->mIsDoomed = true;
-      return NS_OK;
+      return DoomFileInternal(aHandle);
     }
     NS_ENSURE_SUCCESS(rv, rv);
   }
