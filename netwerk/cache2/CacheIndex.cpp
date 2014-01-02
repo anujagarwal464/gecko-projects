@@ -197,6 +197,9 @@ CacheIndex::PreShutdownInternal()
 
   MOZ_ASSERT(mShuttingDown);
 
+  if (mTimer)
+    mTimer = nullptr;
+
   switch (mState) {
     case WRITING:
       FinishWrite(false);
@@ -1875,6 +1878,8 @@ CacheIndex::DelayedBuildUpdate(nsITimer *aTimer, void *aClosure)
 
   CacheIndexAutoLock lock(index);
 
+  index->mTimer = nullptr;
+
   rv = index->EnsureIndexUsable();
   if (NS_FAILED(rv)) return;
 
@@ -1901,6 +1906,10 @@ CacheIndex::DelayedBuildUpdate(nsITimer *aTimer, void *aClosure)
 nsresult
 CacheIndex::PostBuildUpdateTimer(uint32_t aDelay)
 {
+  LOG(("CacheIndex::PostBuildUpdateTimer() [delay=%u]", aDelay));
+
+  MOZ_ASSERT(!mTimer);
+
   nsresult rv;
 
   nsCOMPtr<nsITimer> timer = do_CreateInstance("@mozilla.org/timer;1", &rv);
@@ -1916,6 +1925,7 @@ CacheIndex::PostBuildUpdateTimer(uint32_t aDelay)
                                    aDelay, nsITimer::TYPE_ONE_SHOT);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  mTimer.swap(timer);
   return NS_OK;
 }
 
@@ -2038,16 +2048,13 @@ CacheIndex::StartBuildingIndex()
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
   MOZ_ASSERT(ioThread);
 
-  if (ioThread->IsCurrentThread()) {
-    BuildIndex();
-  }
-  else {
-    rv = ioThread->Dispatch(this, CacheIOThread::BUILD_OR_UPDATE_INDEX);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("CacheIndex::StartBuildingIndex() - Can't dispatch event");
-      LOG(("CacheIndex::StartBuildingIndex() - Can't dispatch event" ));
-      FinishBuild(false);
-    }
+  // We need to dispatch an event even if we are on IO thread since we need to
+  // build the inde with the correct priority.
+  rv = ioThread->Dispatch(this, CacheIOThread::BUILD_OR_UPDATE_INDEX);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("CacheIndex::StartBuildingIndex() - Can't dispatch event");
+    LOG(("CacheIndex::StartBuildingIndex() - Can't dispatch event" ));
+    FinishBuild(false);
   }
 }
 
@@ -2253,16 +2260,13 @@ CacheIndex::StartUpdatingIndex()
   nsRefPtr<CacheIOThread> ioThread = CacheFileIOManager::IOThread();
   MOZ_ASSERT(ioThread);
 
-  if (ioThread->IsCurrentThread()) {
-    UpdateIndex();
-  }
-  else {
-    rv = ioThread->Dispatch(this, CacheIOThread::BUILD_OR_UPDATE_INDEX);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("CacheIndex::StartUpdatingIndex() - Can't dispatch event");
-      LOG(("CacheIndex::StartUpdatingIndex() - Can't dispatch event" ));
-      FinishUpdate(false);
-    }
+  // We need to dispatch an event even if we are on IO thread since we need to
+  // update the index with the correct priority.
+  rv = ioThread->Dispatch(this, CacheIOThread::BUILD_OR_UPDATE_INDEX);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("CacheIndex::StartUpdatingIndex() - Can't dispatch event");
+    LOG(("CacheIndex::StartUpdatingIndex() - Can't dispatch event" ));
+    FinishUpdate(false);
   }
 }
 

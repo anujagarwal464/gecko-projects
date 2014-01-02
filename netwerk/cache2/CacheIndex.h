@@ -547,6 +547,8 @@ private:
   uint32_t       mIndexTimeStamp;
   TimeStamp      mLastDumpTime;
 
+  nsCOMPtr<nsITimer> mTimer;
+
   uint32_t                  mSkipEntries;
   uint32_t                  mProcessEntries;
   char                     *mRWBuf;
