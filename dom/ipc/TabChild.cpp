@@ -72,6 +72,7 @@
 #include "APZCCallbackHelper.h"
 #include "nsILoadContext.h"
 #include "ipc/nsGUIEventIPC.h"
+#include "mozilla/gfx/Matrix.h"
 
 #ifdef DEBUG
 #include "PCOMContentPermissionRequestChild.h"
@@ -288,6 +289,7 @@ TabChild::TabChild(ContentChild* aManager, const TabContext& aContext, uint32_t 
   , mOrientation(eScreenOrientation_PortraitPrimary)
   , mUpdateHitRegion(false)
   , mContextMenuHandled(false)
+  , mWaitingTouchListeners(false)
 {
 }
 
@@ -308,7 +310,7 @@ TabChild::HandleEvent(nsIDOMEvent* aEvent)
 NS_IMETHODIMP
 TabChild::Observe(nsISupports *aSubject,
                   const char *aTopic,
-                  const PRUnichar *aData)
+                  const char16_t *aData)
 {
   if (!strcmp(aTopic, BROWSER_ZOOM_TO_RECT)) {
     nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aSubject));
@@ -450,7 +452,7 @@ NS_IMETHODIMP
 TabChild::OnStatusChange(nsIWebProgress* aWebProgress,
                          nsIRequest* aRequest,
                          nsresult aStatus,
-                         const PRUnichar* aMessage)
+                         const char16_t* aMessage)
 {
   NS_NOTREACHED("not implemented in TabChild");
   return NS_OK;
@@ -738,7 +740,7 @@ NS_IMPL_ADDREF(TabChild)
 NS_IMPL_RELEASE(TabChild)
 
 NS_IMETHODIMP
-TabChild::SetStatus(uint32_t aStatusType, const PRUnichar* aStatus)
+TabChild::SetStatus(uint32_t aStatusType, const char16_t* aStatus)
 {
   return SetStatusWithContext(aStatusType,
       aStatus ? static_cast<const nsString &>(nsDependentString(aStatus))
@@ -880,7 +882,7 @@ TabChild::SetVisibility(bool aVisibility)
 }
 
 NS_IMETHODIMP
-TabChild::GetTitle(PRUnichar** aTitle)
+TabChild::GetTitle(char16_t** aTitle)
 {
   NS_NOTREACHED("TabChild::GetTitle not supported in TabChild");
 
@@ -888,7 +890,7 @@ TabChild::GetTitle(PRUnichar** aTitle)
 }
 
 NS_IMETHODIMP
-TabChild::SetTitle(const PRUnichar* aTitle)
+TabChild::SetTitle(const char16_t* aTitle)
 {
   // JavaScript sends the "DOMTitleChanged" event to the parent
   // via the message manager.
@@ -1868,16 +1870,43 @@ TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
   WidgetTouchEvent localEvent(aEvent);
   nsEventStatus status = DispatchWidgetEvent(localEvent);
 
-  if (IsAsyncPanZoomEnabled()) {
-    nsCOMPtr<nsPIDOMWindow> outerWindow = do_GetInterface(mWebNav);
-    nsCOMPtr<nsPIDOMWindow> innerWindow = outerWindow->GetCurrentInnerWindow();
-
-    if (innerWindow && innerWindow->HasTouchEventListeners()) {
-      SendContentReceivedTouch(aGuid, nsIPresShell::gPreventMouseEvents ||
-                               localEvent.mFlags.mMultipleActionsPrevented);
-    }
-  } else {
+  if (!IsAsyncPanZoomEnabled()) {
     UpdateTapState(localEvent, status);
+    return true;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> outerWindow = do_GetInterface(mWebNav);
+  nsCOMPtr<nsPIDOMWindow> innerWindow = outerWindow->GetCurrentInnerWindow();
+
+  if (!innerWindow || !innerWindow->HasTouchEventListeners()) {
+    SendContentReceivedTouch(aGuid, false);
+    return true;
+  }
+
+  bool isTouchPrevented = nsIPresShell::gPreventMouseEvents ||
+                          localEvent.mFlags.mMultipleActionsPrevented;
+  switch (aEvent.message) {
+  case NS_TOUCH_START: {
+    if (isTouchPrevented) {
+      SendContentReceivedTouch(aGuid, isTouchPrevented);
+    } else {
+      mWaitingTouchListeners = true;
+    }
+    break;
+  }
+
+  case NS_TOUCH_MOVE:
+  case NS_TOUCH_END:
+  case NS_TOUCH_CANCEL: {
+    if (mWaitingTouchListeners) {
+      SendContentReceivedTouch(aGuid, isTouchPrevented);
+      mWaitingTouchListeners = false;
+    }
+    break;
+  }
+
+  default:
+    NS_WARNING("Unknown touch event type");
   }
 
   return true;
@@ -1953,7 +1982,7 @@ TabChild::DispatchWidgetEvent(WidgetGUIEvent& event)
 
 PDocumentRendererChild*
 TabChild::AllocPDocumentRendererChild(const nsRect& documentRect,
-                                      const gfxMatrix& transform,
+                                      const mozilla::gfx::Matrix& transform,
                                       const nsString& bgcolor,
                                       const uint32_t& renderFlags,
                                       const bool& flushLayout,
@@ -1972,7 +2001,7 @@ TabChild::DeallocPDocumentRendererChild(PDocumentRendererChild* actor)
 bool
 TabChild::RecvPDocumentRendererConstructor(PDocumentRendererChild* actor,
                                            const nsRect& documentRect,
-                                           const gfxMatrix& transform,
+                                           const mozilla::gfx::Matrix& transform,
                                            const nsString& bgcolor,
                                            const uint32_t& renderFlags,
                                            const bool& flushLayout,

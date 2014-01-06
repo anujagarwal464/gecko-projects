@@ -69,6 +69,7 @@ using namespace js::types;
 using js::frontend::IsIdentifier;
 using mozilla::ArrayLength;
 using mozilla::DebugOnly;
+using mozilla::Maybe;
 using mozilla::RoundUpPow2;
 
 JS_STATIC_ASSERT(int32_t((JSObject::NELEMENTS_LIMIT - 1) * sizeof(Value)) == int64_t((JSObject::NELEMENTS_LIMIT - 1) * sizeof(Value)));
@@ -1259,9 +1260,11 @@ NewObjectGCKind(const js::Class *clasp)
 }
 
 static inline JSObject *
-NewObject(ExclusiveContext *cx, const Class *clasp, types::TypeObject *type_, JSObject *parent,
-          gc::AllocKind kind, NewObjectKind newKind)
+NewObject(ExclusiveContext *cx, types::TypeObject *type_, JSObject *parent, gc::AllocKind kind,
+          NewObjectKind newKind)
 {
+    const Class *clasp = type_->clasp();
+
     JS_ASSERT(clasp != &ArrayObject::class_);
     JS_ASSERT_IF(clasp == &JSFunction::class_,
                  kind == JSFunction::FinalizeKind || kind == JSFunction::ExtendedFinalizeKind);
@@ -1364,7 +1367,7 @@ js::NewObjectWithGivenProto(ExclusiveContext *cxArg, const js::Class *clasp,
     if (!parent && proto.isObject())
         parent = proto.toObject()->getParent();
 
-    RootedObject obj(cxArg, NewObject(cxArg, clasp, type, parent, allocKind, newKind));
+    RootedObject obj(cxArg, NewObject(cxArg, type, parent, allocKind, newKind));
     if (!obj)
         return nullptr;
 
@@ -1427,7 +1430,7 @@ js::NewObjectWithClassProtoCommon(ExclusiveContext *cxArg,
     if (!type)
         return nullptr;
 
-    JSObject *obj = NewObject(cxArg, clasp, type, parent, allocKind, newKind);
+    JSObject *obj = NewObject(cxArg, type, parent, allocKind, newKind);
     if (!obj)
         return nullptr;
 
@@ -1451,7 +1454,7 @@ js::NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc
     JS_ASSERT(parent);
 
     JS_ASSERT(allocKind <= gc::FINALIZE_OBJECT_LAST);
-    if (CanBeFinalizedInBackground(allocKind, &JSObject::class_))
+    if (CanBeFinalizedInBackground(allocKind, type->clasp()))
         allocKind = GetBackgroundAllocKind(allocKind);
 
     NewObjectCache &cache = cx->runtime()->newObjectCache;
@@ -1461,19 +1464,19 @@ js::NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc
         newKind == GenericObject &&
         !cx->compartment()->hasObjectMetadataCallback())
     {
-        if (cache.lookupType(&JSObject::class_, type, allocKind, &entry)) {
-            JSObject *obj = cache.newObjectFromHit(cx, entry, GetInitialHeap(newKind, &JSObject::class_));
+        if (cache.lookupType(type, allocKind, &entry)) {
+            JSObject *obj = cache.newObjectFromHit(cx, entry, GetInitialHeap(newKind, type->clasp()));
             if (obj)
                 return obj;
         }
     }
 
-    JSObject *obj = NewObject(cx, &JSObject::class_, type, parent, allocKind, newKind);
+    JSObject *obj = NewObject(cx, type, parent, allocKind, newKind);
     if (!obj)
         return nullptr;
 
     if (entry != -1 && !obj->hasDynamicSlots())
-        cache.fillType(entry, &JSObject::class_, type, allocKind, obj);
+        cache.fillType(entry, type, allocKind, obj);
 
     return obj;
 }
@@ -2528,6 +2531,12 @@ JSObject::growSlots(ThreadSafeContext *cx, HandleObject obj, uint32_t oldCount, 
         }
     }
 
+    // Global slots may be read during off thread compilation, and updates to
+    // their slot pointers need to be synchronized.
+    Maybe<AutoLockForCompilation> lock;
+    if (obj->is<GlobalObject>())
+        lock.construct(cx->asExclusiveContext());
+
     if (!oldCount) {
         obj->slots = AllocateSlots(cx, obj, newCount);
         if (!obj->slots)
@@ -2571,6 +2580,12 @@ JSObject::shrinkSlots(ThreadSafeContext *cx, HandleObject obj, uint32_t oldCount
     }
 
     JS_ASSERT(newCount >= SLOT_CAPACITY_MIN);
+
+    // Global slots may be read during off thread compilation, and updates to
+    // their slot pointers need to be synchronized.
+    Maybe<AutoLockForCompilation> lock;
+    if (obj->is<GlobalObject>())
+        lock.construct(cx->asExclusiveContext());
 
     HeapSlot *newslots = ReallocateSlots(cx, obj, obj->slots, oldCount, newCount);
     if (!newslots)
@@ -4200,6 +4215,14 @@ GetPropertyHelperInline(JSContext *cx,
             if (!script || script->warnedAboutUndefinedProp())
                 return true;
 
+            /*
+             * Don't warn in self-hosted code (where the further presence of
+             * JS::ContextOptions::werror() would result in impossible-to-avoid
+             * errors to entirely-innocent client code).
+             */
+            if (script->selfHosted())
+                return true;
+
             /* We may just be checking if that object has an iterator. */
             if (JSID_IS_ATOM(id, cx->names().iteratorIntrinsic))
                 return true;
@@ -5506,6 +5529,8 @@ DumpProperty(JSObject *obj, Shape &shape)
 bool
 JSObject::uninlinedIsProxy() const
 {
+    AutoThreadSafeAccess ts0(this);
+    AutoThreadSafeAccess ts1(type_);
     return is<ProxyObject>();
 }
 
@@ -5521,6 +5546,13 @@ JSObject::dump()
     if (obj->isDelegate()) fprintf(stderr, " delegate");
     if (!obj->is<ProxyObject>() && !obj->nonProxyIsExtensible()) fprintf(stderr, " not_extensible");
     if (obj->isIndexed()) fprintf(stderr, " indexed");
+    if (obj->isBoundFunction()) fprintf(stderr, " bound_function");
+    if (obj->isVarObj()) fprintf(stderr, " varobj");
+    if (obj->watched()) fprintf(stderr, " watched");
+    if (obj->isIteratedSingleton()) fprintf(stderr, " iterated_singleton");
+    if (obj->isNewTypeUnknown()) fprintf(stderr, " new_type_unknown");
+    if (obj->hasUncacheableProto()) fprintf(stderr, " has_uncacheable_proto");
+    if (obj->hadElementsAccess()) fprintf(stderr, " had_elements_access");
 
     if (obj->isNative()) {
         if (obj->inDictionaryMode())

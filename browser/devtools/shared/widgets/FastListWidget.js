@@ -1,3 +1,10 @@
+/* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+"use strict";
+
 const EventEmitter = require("devtools/shared/event-emitter");
 const { Cu, Ci } = require("chrome");
 const { ViewHelpers } = Cu.import("resource:///modules/devtools/ViewHelpers.jsm", {});
@@ -7,8 +14,6 @@ const { ViewHelpers } = Cu.import("resource:///modules/devtools/ViewHelpers.jsm"
  *
  * Note: this widget should be used in tandem with the WidgetMethods in
  * ViewHelpers.jsm.
- *
- * Note: this widget also reuses SideMenuWidget CSS class names.
  *
  * @param nsIDOMNode aNode
  *        The element associated with the widget.
@@ -21,14 +26,12 @@ const FastListWidget = module.exports = function FastListWidget(aNode) {
 
   // This is a prototype element that each item added to the list clones.
   this._templateElement = this.document.createElement("hbox");
-  this._templateElement.className = "side-menu-widget-item side-menu-widget-item-contents";
 
   // Create an internal scrollbox container.
   this._list = this.document.createElement("scrollbox");
-  this._list.className = "side-menu-widget-container";
+  this._list.className = "fast-list-widget-container theme-body";
   this._list.setAttribute("flex", "1");
   this._list.setAttribute("orient", "vertical");
-  this._list.setAttribute("theme", "dark");
   this._list.setAttribute("tabindex", "0");
   this._list.addEventListener("keypress", e => this.emit("keyPress", e), false);
   this._list.addEventListener("mousedown", e => this.emit("mousePress", e), false);
@@ -111,7 +114,9 @@ FastListWidget.prototype = {
    * Gets the currently selected child node in this container.
    * @return nsIDOMNode
    */
-  get selectedItem() this._selectedItem,
+  get selectedItem() {
+    return this._selectedItem;
+  },
 
   /**
    * Sets the currently selected child node in this container.
@@ -126,11 +131,9 @@ FastListWidget.prototype = {
     for (let node of menuArray) {
       if (node == child) {
         node.classList.add("selected");
-        node.parentNode.classList.add("selected");
         this._selectedItem = node;
       } else {
         node.classList.remove("selected");
-        node.parentNode.classList.remove("selected");
       }
     }
 
@@ -197,7 +200,7 @@ FastListWidget.prototype = {
     // Ensure the element is visible but not scrolled horizontally.
     let boxObject = this._list.boxObject.QueryInterface(Ci.nsIScrollBoxObject);
     boxObject.ensureElementIsVisible(element);
-    boxObject.scrollBy(-element.clientWidth, 0);
+    boxObject.scrollBy(-this._list.clientWidth, 0);
   },
 
   window: null,

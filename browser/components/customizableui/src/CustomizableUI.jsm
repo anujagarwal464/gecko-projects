@@ -150,7 +150,8 @@ let CustomizableUIInternal = {
       "fullscreen-button",
       "find-button",
       "preferences-button",
-      "add-ons-button"
+      "add-ons-button",
+      "developer-button",
     ];
 
     if (gPalette.has("switch-to-metro-button")) {
@@ -1694,7 +1695,10 @@ let CustomizableUIInternal = {
 
       // If the widget doesn't have an existing placement, and it hasn't been
       // seen before, then add it to its default area so it can be used.
-      if (autoAdd && !widget.currentArea && !gSeenWidgets.has(widget.id)) {
+      // If the widget is not removable, we *have* to add it to its default
+      // area here.
+      let canBeAutoAdded = autoAdd && !gSeenWidgets.has(widget.id);
+      if (!widget.currentArea && (!widget.removable || canBeAutoAdded)) {
         this.beginBatchUpdate();
         try {
           gSeenWidgets.add(widget.id);
@@ -2885,7 +2889,8 @@ function WidgetGroupWrapper(aWidget) {
   });
 
   this.__defineGetter__("areaType", function() {
-    return gAreas.get(aWidget.currentArea).get("type");
+    let areaProps = gAreas.get(aWidget.currentArea);
+    return areaProps && areaProps.get("type");
   });
 
   Object.freeze(this);
@@ -2986,7 +2991,8 @@ function XULWidgetGroupWrapper(aWidgetId) {
       return null;
     }
 
-    return gAreas.get(placement.area).get("type");
+    let areaProps = gAreas.get(placement.area);
+    return areaProps && areaProps.get("type");
   });
 
   this.__defineGetter__("instances", function() {

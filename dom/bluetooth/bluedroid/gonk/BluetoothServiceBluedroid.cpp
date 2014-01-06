@@ -50,6 +50,7 @@ static InfallibleTArray<nsString> sAdapterBondedAddressArray;
 static InfallibleTArray<BluetoothNamedValue> sRemoteDevicesPack;
 static nsTArray<nsRefPtr<BluetoothProfileController> > sControllerArray;
 static nsTArray<nsRefPtr<BluetoothReplyRunnable> > sBondingRunnableArray;
+static nsTArray<nsRefPtr<BluetoothReplyRunnable> > sChangeDiscoveryRunnableArray;
 static nsTArray<nsRefPtr<BluetoothReplyRunnable> > sGetDeviceRunnableArray;
 static nsTArray<nsRefPtr<BluetoothReplyRunnable> > sSetPropertyRunnableArray;
 static nsTArray<nsRefPtr<BluetoothReplyRunnable> > sUnbondingRunnableArray;
@@ -234,38 +235,6 @@ IsReady()
     return false;
   }
   return true;
-}
-
-const bt_interface_t*
-GetBluetoothInterface()
-{
-  return sBtInterface;
-}
-
-void
-StringToBdAddressType(const nsAString& aBdAddress,
-                      bt_bdaddr_t *aRetBdAddressType)
-{
-  NS_ConvertUTF16toUTF8 bdAddressUTF8(aBdAddress);
-  const char* str = bdAddressUTF8.get();
-
-  for (int i = 0; i < 6; i++) {
-    aRetBdAddressType->address[i] = (uint8_t) strtoul(str, (char **)&str, 16);
-    str++;
-  }
-}
-
-void
-BdAddressTypeToString(bt_bdaddr_t* aBdAddressType, nsAString& aRetBdAddress)
-{
-  uint8_t* addr = aBdAddressType->address;
-  bdstr_t bdstr;
-
-  sprintf((char*)bdstr, "%02x:%02x:%02x:%02x:%02x:%02x",
-          (int)addr[0],(int)addr[1],(int)addr[2],
-          (int)addr[3],(int)addr[4],(int)addr[5]);
-
-  aRetBdAddress = NS_ConvertUTF8toUTF16((char*)bdstr);
 }
 
 static void
@@ -510,16 +479,12 @@ DiscoveryStateChangedCallback(bt_discovery_state_t aState)
 {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  bool isDiscovering = (aState == BT_DISCOVERY_STARTED);
+  if (!sChangeDiscoveryRunnableArray.IsEmpty()) {
+    BluetoothValue values(true);
+    DispatchBluetoothReply(sChangeDiscoveryRunnableArray[0],
+                           values, EmptyString());
 
-  BluetoothSignal signal(NS_LITERAL_STRING(DISCOVERY_STATE_CHANGED_ID),
-                         NS_LITERAL_STRING(KEY_ADAPTER),
-                         isDiscovering);
-
-  nsRefPtr<DistributeBluetoothSignalTask>
-    t = new DistributeBluetoothSignalTask(signal);
-  if (NS_FAILED(NS_DispatchToMainThread(t))) {
-    BT_WARNING("Failed to dispatch to main thread!");
+    sChangeDiscoveryRunnableArray.RemoveElementAt(0);
   }
 }
 
@@ -936,17 +901,17 @@ BluetoothServiceBluedroid::StartDiscoveryInternal(
   if (!IsReady()) {
     NS_NAMED_LITERAL_STRING(errorStr, "Bluetooth service is not ready yet!");
     DispatchBluetoothReply(aRunnable, BluetoothValue(), errorStr);
+
     return NS_OK;
   }
-
   int ret = sBtInterface->start_discovery();
   if (ret != BT_STATUS_SUCCESS) {
     ReplyStatusError(aRunnable, ret, NS_LITERAL_STRING("StartDiscovery"));
-    return NS_ERROR_FAILURE;
+
+    return NS_OK;
   }
 
-  DispatchBluetoothReply(aRunnable, true, EmptyString());
-
+  sChangeDiscoveryRunnableArray.AppendElement(aRunnable);
   return NS_OK;
 }
 
@@ -965,10 +930,10 @@ BluetoothServiceBluedroid::StopDiscoveryInternal(
   int ret = sBtInterface->cancel_discovery();
   if (ret != BT_STATUS_SUCCESS) {
     ReplyStatusError(aRunnable, ret, NS_LITERAL_STRING("StopDiscovery"));
-    return NS_ERROR_FAILURE;
+    return NS_OK;
   }
 
-  DispatchBluetoothReply(aRunnable, true, EmptyString());
+  sChangeDiscoveryRunnableArray.AppendElement(aRunnable);
 
   return NS_OK;
 }
@@ -1217,6 +1182,12 @@ ConnectDisconnect(bool aConnect, const nsAString& aDeviceAddress,
   if (sControllerArray.Length() == 1) {
     sControllerArray[0]->Start();
   }
+}
+
+const bt_interface_t*
+BluetoothServiceBluedroid::GetBluetoothInterface()
+{
+  return sBtInterface;
 }
 
 void

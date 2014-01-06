@@ -109,7 +109,6 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
             for (MUseDefIterator uses(*ins); uses; uses++) {
                 if (uses.def()->block() != *block ||
                     uses.def()->isBox() ||
-                    uses.def()->isPassArg() ||
                     uses.def()->isPhi())
                 {
                     maxDefinition = UINT32_MAX;
@@ -972,8 +971,6 @@ TypeAnalyzer::checkFloatCoherency()
 
         for (MDefinitionIterator def(*block); def; def++) {
             if (def->type() != MIRType_Float32)
-                continue;
-            if (def->isPassArg()) // no check for PassArg as it is broken, see bug 915479
                 continue;
 
             for (MUseDefIterator use(*def); use; use++) {
@@ -2044,14 +2041,14 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
         if (!definitelyExecuted)
             return true;
 
-        if (!types::AddClearDefiniteGetterSetterForPrototypeChain(cx, type, NameToId(setprop->name()))) {
+        RootedId id(cx, NameToId(setprop->name()));
+        if (!types::AddClearDefiniteGetterSetterForPrototypeChain(cx, type, id)) {
             // The prototype chain already contains a getter/setter for this
             // property, or type information is too imprecise.
             return true;
         }
 
         DebugOnly<unsigned> slotSpan = baseobj->slotSpan();
-        RootedId id(cx, NameToId(setprop->name()));
         RootedValue value(cx, UndefinedValue());
         if (!DefineNativeProperty(cx, baseobj, id, value, nullptr, nullptr,
                                   JSPROP_ENUMERATE, 0, 0))
@@ -2194,6 +2191,8 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
             return false;
         return true;
     }
+
+    types::FinishDefinitePropertiesAnalysis(cx, constraints);
 
     if (!SplitCriticalEdges(graph))
         return false;

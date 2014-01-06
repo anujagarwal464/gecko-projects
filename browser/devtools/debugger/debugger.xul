@@ -74,6 +74,8 @@
              oncommand="DebuggerView.WatchExpressions._onCmdAddExpression()"/>
     <command id="removeAllWatchExpressionsCommand"
              oncommand="DebuggerView.WatchExpressions._onCmdRemoveAllExpressions()"/>
+    <command id="toggleAutoPrettyPrint"
+             oncommand="DebuggerView.Options._toggleAutoPrettyPrint()"/>
     <command id="togglePauseOnExceptions"
              oncommand="DebuggerView.Options._togglePauseOnExceptions()"/>
     <command id="toggleIgnoreCaughtExceptions"
@@ -172,6 +174,11 @@
                onpopupshowing="DebuggerView.Options._onPopupShowing()"
                onpopuphiding="DebuggerView.Options._onPopupHiding()"
                onpopuphidden="DebuggerView.Options._onPopupHidden()">
+      <menuitem id="auto-pretty-print"
+                type="checkbox"
+                label="&debuggerUI.autoPrettyPrint;"
+                accesskey="&debuggerUI.autoPrettyPrint.key;"
+                command="toggleAutoPrettyPrint"/>
       <menuitem id="pause-on-exceptions"
                 type="checkbox"
                 label="&debuggerUI.pauseExceptions;"
@@ -317,9 +324,6 @@
                        tabindex="0"
                        hidden="true"/>
       </hbox>
-      <menulist id="chrome-globals"
-                class="devtools-menulist"
-                sizetopopup="none" hidden="true"/>
       <vbox id="stackframes" flex="1"/>
       <textbox id="searchbox"
                class="devtools-searchinput" type="search"/>
@@ -333,7 +337,7 @@
                      popup="debuggerPrefsContextMenu"
                      tabindex="0"/>
     </toolbar>
-    <scrollbox id="globalsearch" orient="vertical" hidden="true"/>
+    <vbox id="globalsearch" orient="vertical" hidden="true"/>
     <splitter class="devtools-horizontal-splitter" hidden="true"/>
     <hbox id="debugger-widgets" flex="1">
       <tabbox id="sources-pane"

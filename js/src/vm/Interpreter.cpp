@@ -501,13 +501,19 @@ js::Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, 
         /*
          * We must call the thisObject hook in case we are not called from the
          * interpreter, where a prior bytecode has computed an appropriate
-         * |this| already.
+         * |this| already.  But don't do that if fval is a DOM function.
          */
-        RootedObject thisObj(cx, &args.thisv().toObject());
-        JSObject *thisp = JSObject::thisObject(cx, thisObj);
-        if (!thisp)
-             return false;
-        args.setThis(ObjectValue(*thisp));
+        if (!fval.isObject() || !fval.toObject().is<JSFunction>() ||
+            !fval.toObject().as<JSFunction>().isNative() ||
+            !fval.toObject().as<JSFunction>().jitInfo() ||
+            !fval.toObject().as<JSFunction>().jitInfo()->isDOMJitInfo())
+        {
+            RootedObject thisObj(cx, &args.thisv().toObject());
+            JSObject *thisp = JSObject::thisObject(cx, thisObj);
+            if (!thisp)
+                return false;
+            args.setThis(ObjectValue(*thisp));
+        }
     }
 
     if (!Invoke(cx, args))
@@ -1704,9 +1710,6 @@ CASE(JSOP_LOOPENTRY)
 
 END_CASE(JSOP_LOOPENTRY)
 
-CASE(JSOP_NOTEARG)
-END_CASE(JSOP_NOTEARG)
-
 CASE(JSOP_LINENO)
 END_CASE(JSOP_LINENO)
 
@@ -2776,11 +2779,7 @@ CASE(JSOP_REGEXP)
      * Push a regexp object cloned from the regexp literal object mapped by the
      * bytecode at pc.
      */
-    uint32_t index = GET_UINT32_INDEX(REGS.pc);
-    JSObject *proto = REGS.fp()->global().getOrCreateRegExpPrototype(cx);
-    if (!proto)
-        goto error;
-    JSObject *obj = CloneRegExpObject(cx, script->getRegExp(index), proto);
+    JSObject *obj = CloneRegExpObject(cx, script->getRegExp(REGS.pc));
     if (!obj)
         goto error;
     PUSH_OBJECT(*obj);

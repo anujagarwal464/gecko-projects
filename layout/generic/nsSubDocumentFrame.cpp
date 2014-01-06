@@ -401,6 +401,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
 
     if (subdocRootFrame) {
+      aBuilder->SetAncestorHasTouchEventHandler(false);
       subdocRootFrame->
         BuildDisplayListForStackingContext(aBuilder, dirty, &childItems);
     }
@@ -510,7 +511,7 @@ nsSubDocumentFrame::GetIntrinsicHeight()
   return nsPresContext::CSSPixelsToAppUnits(150);
 }
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
 void
 nsSubDocumentFrame::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
 {
@@ -634,10 +635,10 @@ nsSubDocumentFrame::Reflow(nsPresContext*           aPresContext,
 {
   DO_GLOBAL_REFLOW_COUNT("nsSubDocumentFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
-  // printf("OuterFrame::Reflow %X (%d,%d) \n", this, aReflowState.availableWidth, aReflowState.availableHeight);
+  // printf("OuterFrame::Reflow %X (%d,%d) \n", this, aReflowState.AvailableWidth(), aReflowState.AvailableHeight());
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
      ("enter nsSubDocumentFrame::Reflow: maxSize=%d,%d",
-      aReflowState.availableWidth, aReflowState.availableHeight));
+      aReflowState.AvailableWidth(), aReflowState.AvailableHeight()));
 
   aStatus = NS_FRAME_COMPLETE;
 
@@ -651,12 +652,12 @@ nsSubDocumentFrame::Reflow(nsPresContext*           aPresContext,
 
   // "offset" is the offset of our content area from our frame's
   // top-left corner.
-  nsPoint offset = nsPoint(aReflowState.mComputedBorderPadding.left,
-                           aReflowState.mComputedBorderPadding.top);
+  nsPoint offset = nsPoint(aReflowState.ComputedPhysicalBorderPadding().left,
+                           aReflowState.ComputedPhysicalBorderPadding().top);
 
-  nsSize innerSize(aDesiredSize.width, aDesiredSize.height);
-  innerSize.width  -= aReflowState.mComputedBorderPadding.LeftRight();
-  innerSize.height -= aReflowState.mComputedBorderPadding.TopBottom();
+  nsSize innerSize(aDesiredSize.Width(), aDesiredSize.Height());
+  innerSize.width  -= aReflowState.ComputedPhysicalBorderPadding().LeftRight();
+  innerSize.height -= aReflowState.ComputedPhysicalBorderPadding().TopBottom();
 
   if (mInnerView) {
     nsViewManager* vm = mInnerView->GetViewManager();
@@ -680,11 +681,11 @@ nsSubDocumentFrame::Reflow(nsPresContext*           aPresContext,
   }
 
   // printf("OuterFrame::Reflow DONE %X (%d,%d)\n", this,
-  //        aDesiredSize.width, aDesiredSize.height);
+  //        aDesiredSize.Width(), aDesiredSize.Height());
 
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
      ("exit nsSubDocumentFrame::Reflow: size=%d,%d status=%x",
-      aDesiredSize.width, aDesiredSize.height, aStatus));
+      aDesiredSize.Width(), aDesiredSize.Height(), aStatus));
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return NS_OK;

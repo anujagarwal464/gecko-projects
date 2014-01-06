@@ -30,6 +30,7 @@
 #include "gfxPlatform.h"
 #include "GLContext.h"
 #include "gfxUtils.h"
+#include "gfx2DGlue.h"
 
 #include "gfxCrashReporterUtils.h"
 
@@ -1232,7 +1233,7 @@ GLContextProviderGLX::CreateOffscreen(const gfxIntSize& size,
     if (!glContext)
         return nullptr;
 
-    if (!glContext->InitOffscreen(size, caps))
+    if (!glContext->InitOffscreen(ToIntSize(size), caps))
         return nullptr;
 
     return glContext.forget();
@@ -1257,8 +1258,6 @@ GLContextProviderGLX::GetGlobalContext(const ContextFlags aFlag)
 
         gfxIntSize dummySize = gfxIntSize(16, 16);
         gGlobalContext[libType] = CreateOffscreenPixmapContext(dummySize, libType);
-        if (gGlobalContext[libType])
-            gGlobalContext[libType]->SetIsGlobalSharedContext(true);
     }
 
     return gGlobalContext[libType];

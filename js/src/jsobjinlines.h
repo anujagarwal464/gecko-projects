@@ -943,6 +943,14 @@ JSObject *
 NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc::AllocKind allocKind,
                   NewObjectKind newKind = GenericObject);
 
+inline JSObject *
+NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent,
+                  NewObjectKind newKind = GenericObject)
+{
+    gc::AllocKind allocKind = gc::GetGCObjectKind(type->clasp());
+    return NewObjectWithType(cx, type, parent, allocKind, newKind);
+}
+
 JSObject *
 NewReshapedObject(JSContext *cx, HandleTypeObject type, JSObject *parent,
                   gc::AllocKind allocKind, HandleShape shape,
@@ -1058,15 +1066,12 @@ NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
         if (JS_UNLIKELY((size_t)cx->compartment()->hasObjectMetadataCallback()) &&
             !cx->compartment()->activeAnalysis)
         {
-            JS::DisableGenerationalGC(cx->runtime());
-
             // Use AutoEnterAnalysis to prohibit both any GC activity under the
             // callback, and any reentering of JS via Invoke() etc.
             types::AutoEnterAnalysis enter(cx);
 
-            bool status = cx->compartment()->callObjectMetadataCallback(cx, pmetadata);
-            JS::EnableGenerationalGC(cx->runtime());
-            return status;
+            if (!cx->compartment()->callObjectMetadataCallback(cx, pmetadata))
+                return false;
         }
     }
     return true;

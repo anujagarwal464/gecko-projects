@@ -1639,7 +1639,8 @@ nsDocument::Release()
   NS_PRECONDITION(0 != mRefCnt, "dup release");
   NS_ASSERT_OWNINGTHREAD(nsDocument);
   nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(nsDocument)::Upcast(this);
-  nsrefcnt count = mRefCnt.decr(base);
+  bool shouldDelete = false;
+  nsrefcnt count = mRefCnt.decr(base, &shouldDelete);
   NS_LOG_RELEASE(this, count, "nsDocument");
   if (count == 0) {
     if (mStackRefCnt && !mNeedsReleaseAfterStackRefCntRelease) {
@@ -1647,8 +1648,13 @@ nsDocument::Release()
       NS_ADDREF_THIS();
       return mRefCnt.get();
     }
-    NS_ASSERT_OWNINGTHREAD(nsDocument);
+    mRefCnt.incr(base);
     nsNodeUtils::LastRelease(this);
+    mRefCnt.decr(base);
+    if (shouldDelete) {
+      mRefCnt.stabilizeForDeletion();
+      DeleteCycleCollectable();
+    }
   }
   return count;
 }
@@ -4956,7 +4962,7 @@ bool IsLowercaseASCII(const nsAString& aValue)
 {
   int32_t len = aValue.Length();
   for (int32_t i = 0; i < len; ++i) {
-    PRUnichar c = aValue[i];
+    char16_t c = aValue[i];
     if (!(0x0061 <= (c) && ((c) <= 0x007a))) {
       return false;
     }
@@ -7223,8 +7229,8 @@ nsDocument::FlushExternalResources(mozFlushType aType)
 }
 
 void
-nsDocument::SetXMLDeclaration(const PRUnichar *aVersion,
-                              const PRUnichar *aEncoding,
+nsDocument::SetXMLDeclaration(const char16_t *aVersion,
+                              const char16_t *aEncoding,
                               const int32_t aStandalone)
 {
   if (!aVersion || *aVersion == '\0') {
@@ -10864,7 +10870,7 @@ nsDocument::SetApprovedForFullscreen(bool aIsApproved)
 nsresult
 nsDocument::Observe(nsISupports *aSubject,
                     const char *aTopic,
-                    const PRUnichar *aData)
+                    const char16_t *aData)
 {
   if (strcmp("fullscreen-approved", aTopic) == 0) {
     nsCOMPtr<nsIDocument> subject(do_QueryInterface(aSubject));

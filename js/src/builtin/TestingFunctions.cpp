@@ -116,14 +116,6 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
     if (!JS_SetProperty(cx, info, "threadsafe", value))
         return false;
 
-#ifdef JS_WORKER_THREADS
-    value = BooleanValue(true);
-#else
-    value = BooleanValue(false);
-#endif
-    if (!JS_SetProperty(cx, info, "worker-threads", value))
-        return false;
-
 #ifdef JS_MORE_DETERMINISTIC
     value = BooleanValue(true);
 #else
@@ -1131,7 +1123,7 @@ SetJitCompilerOption(JSContext *cx, unsigned argc, jsval *vp)
 
     JS_SetGlobalJitCompilerOption(cx, opt, uint32_t(number));
 
-    args.rval().setBoolean(true);
+    args.rval().setUndefined();
     return true;
 }
 
@@ -1560,7 +1552,7 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  validated according to the asm.js spec."),
 
     JS_FN_HELP("isAsmJSModuleLoadedFromCache", IsAsmJSModuleLoadedFromCache, 1, 0,
-"isAsmJSModule(fn)",
+"isAsmJSModuleLoadedFromCache(fn)",
 "  Return whether the given asm.js module function has been loaded directly\n"
 "  from the cache. This function throws an error if fn is not a validated asm.js\n"
 "  module."),
