@@ -16,10 +16,20 @@
 #include "prclist.h"
 #include "prio.h"
 
+//#define DEBUG_HANDLES 1
+
 class nsIFile;
 
 namespace mozilla {
 namespace net {
+
+#ifdef DEBUG_HANDLES
+class CacheFileHandlesEntry;
+#endif
+
+const char kEntriesDir[] = "entries";
+const char kDoomedDir[]  = "doomed";
+
 
 class CacheFileHandle : public nsISupports
                       , public PRCList
@@ -28,12 +38,16 @@ public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   CacheFileHandle(const SHA1Sum::Hash *aHash, bool aPriority);
+  CacheFileHandle(const nsACString &aKey, bool aPriority);
+  void Log();
   bool IsDoomed() { return mIsDoomed; }
   const SHA1Sum::Hash *Hash() { return mHash; }
   int64_t FileSize() { return mFileSize; }
+  uint32_t FileSizeInK();
   bool IsPriority() { return mPriority; }
   bool FileExists() { return mFileExists; }
   bool IsClosed() { return mClosed; }
+  bool IsSpecialFile() { return !mHash; }
   nsCString & Key() { return mKey; }
 
 private:
@@ -72,6 +86,10 @@ public:
   void     RemoveHandle(CacheFileHandle *aHandlle);
   void     GetAllHandles(nsTArray<nsRefPtr<CacheFileHandle> > *_retval);
   uint32_t HandleCount();
+
+#ifdef DEBUG_HANDLES
+  void     Log(CacheFileHandlesEntry *entry);
+#endif
 
 private:
   static PLDHashNumber HashKey(PLDHashTable *table, const void *key);
@@ -115,6 +133,7 @@ public:
                         nsresult aResult) = 0;
   NS_IMETHOD OnFileDoomed(CacheFileHandle *aHandle, nsresult aResult) = 0;
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult) = 0;
+  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(CacheFileIOListener, CACHEFILEIOLISTENER_IID)
@@ -126,11 +145,12 @@ public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   enum {
-    OPEN       = 0U,
-    CREATE     = 1U,
-    CREATE_NEW = 2U,
-    PRIORITY   = 4U,
-    NOHASH     = 8U
+    OPEN         = 0U,
+    CREATE       = 1U,
+    CREATE_NEW   = 2U,
+    PRIORITY     = 4U,
+    NOHASH       = 8U,
+    SPECIAL_FILE = 16U
   };
 
   CacheFileIOManager();
@@ -158,6 +178,19 @@ public:
   static nsresult TruncateSeekSetEOF(CacheFileHandle *aHandle,
                                      int64_t aTruncatePos, int64_t aEOFPos,
                                      CacheFileIOListener *aCallback);
+  static nsresult RenameFile(CacheFileHandle *aHandle,
+                             const nsACString &aNewName,
+                             CacheFileIOListener *aCallback);
+  static nsresult InitIndexEntry(CacheFileHandle *aHandle,
+                                 uint32_t         aAppId,
+                                 bool             aAnonymous,
+                                 bool             aInBrowser);
+  static nsresult UpdateIndexEntry(CacheFileHandle *aHandle,
+                                   const uint32_t  *aFrecency,
+                                   const uint32_t  *aExpirationTime,
+                                   const uint32_t  *aSize);
+
+  static nsresult UpdateIndexEntry();
 
   enum EEnumerateMode {
     ENTRIES,
@@ -180,6 +213,8 @@ private:
   friend class DoomFileByKeyEvent;
   friend class ReleaseNSPRHandleEvent;
   friend class TruncateSeekSetEOFEvent;
+  friend class RenameFileEvent;
+  friend class CacheIndex;
 
   virtual ~CacheFileIOManager();
 
@@ -191,6 +226,9 @@ private:
   nsresult OpenFileInternal(const SHA1Sum::Hash *aHash,
                             uint32_t aFlags,
                             CacheFileHandle **_retval);
+  nsresult OpenSpecialFileInternal(const nsACString &aKey,
+                                   uint32_t aFlags,
+                                   CacheFileHandle **_retval);
   nsresult CloseHandleInternal(CacheFileHandle *aHandle);
   nsresult ReadInternal(CacheFileHandle *aHandle, int64_t aOffset,
                         char *aBuf, int32_t aCount);
@@ -201,10 +239,14 @@ private:
   nsresult ReleaseNSPRHandleInternal(CacheFileHandle *aHandle);
   nsresult TruncateSeekSetEOFInternal(CacheFileHandle *aHandle,
                                       int64_t aTruncatePos, int64_t aEOFPos);
+  nsresult RenameFileInternal(CacheFileHandle *aHandle,
+                              const nsACString &aNewName);
 
   nsresult CreateFile(CacheFileHandle *aHandle);
-  static void GetHashStr(const SHA1Sum::Hash *aHash, nsACString &_retval);
+  static void HashToStr(const SHA1Sum::Hash *aHash, nsACString &_retval);
+  static nsresult StrToHash(const nsACString &aHash, SHA1Sum::Hash *_retval);
   nsresult GetFile(const SHA1Sum::Hash *aHash, nsIFile **_retval);
+  nsresult GetSpecialFile(const nsACString &aKey, nsIFile **_retval);
   nsresult GetDoomedFile(nsIFile **_retval);
   nsresult CheckAndCreateDir(nsIFile *aFile, const char *aDir);
   nsresult CreateCacheTree();
@@ -212,13 +254,14 @@ private:
   void     NSPRHandleUsed(CacheFileHandle *aHandle);
 
 
-  static CacheFileIOManager  *gInstance;
-  bool                        mShuttingDown;
-  nsRefPtr<CacheIOThread>     mIOThread;
-  nsCOMPtr<nsIFile>           mCacheDirectory;
-  bool                        mTreeCreated;
-  CacheFileHandles            mHandles;
-  nsTArray<CacheFileHandle *> mHandlesByLastUsed;
+  static CacheFileIOManager           *gInstance;
+  bool                                 mShuttingDown;
+  nsRefPtr<CacheIOThread>              mIOThread;
+  nsCOMPtr<nsIFile>                    mCacheDirectory;
+  bool                                 mTreeCreated;
+  CacheFileHandles                     mHandles;
+  nsTArray<CacheFileHandle *>          mHandlesByLastUsed;
+  nsTArray<nsRefPtr<CacheFileHandle> > mSpecialHandles;
 };
 
 } // net
