@@ -12,8 +12,7 @@
 #include "mozilla/SHA1.h"
 #include "nsTArray.h"
 #include "nsString.h"
-#include "pldhash.h"
-#include "prclist.h"
+#include "nsTHashtable.h"
 #include "prio.h"
 
 //#define DEBUG_HANDLES 1
@@ -32,13 +31,14 @@ const char kDoomedDir[]  = "doomed";
 
 
 class CacheFileHandle : public nsISupports
-                      , public PRCList
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
+  bool DispatchRelease();
 
   CacheFileHandle(const SHA1Sum::Hash *aHash, bool aPriority);
   CacheFileHandle(const nsACString &aKey, bool aPriority);
+  CacheFileHandle(const CacheFileHandle &aOther);
   void Log();
   bool IsDoomed() { return mIsDoomed; }
   const SHA1Sum::Hash *Hash() { return mHash; }
@@ -59,7 +59,6 @@ private:
 
   const SHA1Sum::Hash *mHash;
   bool                 mIsDoomed;
-  bool                 mRemovingHandle;
   bool                 mPriority;
   bool                 mClosed;
   bool                 mInvalid;
@@ -78,9 +77,6 @@ public:
   CacheFileHandles();
   ~CacheFileHandles();
 
-  nsresult Init();
-  void     Shutdown();
-
   nsresult GetHandle(const SHA1Sum::Hash *aHash, CacheFileHandle **_retval);
   nsresult NewHandle(const SHA1Sum::Hash *aHash, bool aPriority, CacheFileHandle **_retval);
   void     RemoveHandle(CacheFileHandle *aHandlle);
@@ -91,19 +87,65 @@ public:
   void     Log(CacheFileHandlesEntry *entry);
 #endif
 
-private:
-  static PLDHashNumber HashKey(PLDHashTable *table, const void *key);
-  static bool          MatchEntry(PLDHashTable *table,
-                                  const PLDHashEntryHdr *entry,
-                                  const void *key);
-  static void          MoveEntry(PLDHashTable *table,
-                                 const PLDHashEntryHdr *from,
-                                 PLDHashEntryHdr *to);
-  static void          ClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry);
+  class HandleHashKey : public PLDHashEntryHdr
+  {
+  public:
+    typedef const SHA1Sum::Hash& KeyType;
+    typedef const SHA1Sum::Hash* KeyTypePointer;
 
-  static const PLDHashTableOps mOps;
-  PLDHashTable                 mTable;
-  bool                         mInitialized;
+    HandleHashKey(KeyTypePointer aKey)
+    {
+      MOZ_COUNT_CTOR(HandleHashKey);
+      mHash = (SHA1Sum::Hash*)new uint8_t[SHA1Sum::HashSize];
+      memcpy(mHash, aKey, sizeof(SHA1Sum::Hash));
+    }
+    HandleHashKey(const HandleHashKey& aOther)
+    {
+      NS_NOTREACHED("HandleHashKey copy constructor is forbidden!");
+    }
+    ~HandleHashKey()
+    {
+      MOZ_COUNT_DTOR(HandleHashKey);
+    }
+
+    bool KeyEquals(KeyTypePointer aKey) const
+    {
+      return memcmp(mHash, aKey, sizeof(SHA1Sum::Hash)) == 0;
+    }
+    static KeyTypePointer KeyToPointer(KeyType aKey)
+    {
+      return &aKey;
+    }
+    static PLDHashNumber HashKey(KeyTypePointer aKey)
+    {
+      return (reinterpret_cast<const uint32_t *>(aKey))[0];
+    }
+
+    void AddHandle(CacheFileHandle* aHandle);
+    void RemoveHandle(CacheFileHandle* aHandle);
+    already_AddRefed<CacheFileHandle> GetLastHandle();
+    void GetHandles(nsTArray<nsRefPtr<CacheFileHandle> > &aResult);
+
+    SHA1Sum::Hash *Hash() { return mHash; }
+    bool IsEmpty() { return mHandles.Length() == 0; }
+
+    enum { ALLOW_MEMMOVE = true };
+
+#ifdef DEBUG
+    void AssertHandlesState();
+#endif
+
+  private:
+    nsAutoArrayPtr<SHA1Sum::Hash> mHash;
+    // Use weak pointers since the hash table access is on a single thread
+    // only and CacheFileHandle removes itself from this table in its dtor
+    // that may only be called on the same thread as we work with the hashtable
+    // since we dispatch its Release() to this thread.
+    nsTArray<CacheFileHandle*> mHandles;
+  };
+
+private:
+  nsTHashtable<HandleHashKey> mTable;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -160,6 +202,8 @@ public:
   static nsresult OnProfile();
   static already_AddRefed<nsIEventTarget> IOTarget();
   static already_AddRefed<CacheIOThread> IOThread();
+  static bool IsOnIOThread(bool aResultWhenUnknown = true);
+  static bool IsShutdown();
 
   static nsresult OpenFile(const nsACString &aKey,
                            uint32_t aFlags,
@@ -217,8 +261,6 @@ private:
   friend class CacheIndex;
 
   virtual ~CacheFileIOManager();
-
-  static nsresult CloseHandle(CacheFileHandle *aHandle);
 
   nsresult InitInternal();
   nsresult ShutdownInternal();
