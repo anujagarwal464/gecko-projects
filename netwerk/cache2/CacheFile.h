@@ -6,7 +6,6 @@
 #define CacheFile__h__
 
 #include "CacheFileChunk.h"
-#include "nsWeakReference.h"
 #include "CacheFileIOManager.h"
 #include "CacheFileMetadata.h"
 #include "nsRefPtrHashtable.h"
@@ -47,7 +46,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(CacheFileListener, CACHEFILELISTENER_IID)
 class CacheFile : public CacheFileChunkListener
                 , public CacheFileIOListener
                 , public CacheFileMetadataListener
-                , public nsSupportsWeakReference
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -102,6 +100,7 @@ public:
   void Key(nsACString& aKey) { aKey = mKey; }
 
 private:
+  friend class CacheFileIOManager;
   friend class CacheFileChunk;
   friend class CacheFileInputStream;
   friend class CacheFileOutputStream;
@@ -139,6 +138,7 @@ private:
   void     NotifyListenersAboutOutputRemoval();
 
   bool IsDirty();
+  void MaybeWriteMetadataIfNeeded();
   void WriteMetadataIfNeeded();
   void PostWriteTimer();
 
@@ -174,7 +174,6 @@ private:
   nsRefPtr<CacheFileHandle>    mHandle;
   nsRefPtr<CacheFileMetadata>  mMetadata;
   nsCOMPtr<CacheFileListener>  mListener;
-  nsRefPtr<MetadataWriteTimer> mTimer;
 
   nsRefPtrHashtable<nsUint32HashKey, CacheFileChunk> mChunks;
   nsClassHashtable<nsUint32HashKey, ChunkListeners> mChunkListeners;

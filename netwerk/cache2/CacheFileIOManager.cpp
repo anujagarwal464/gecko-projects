@@ -9,6 +9,7 @@
 #include "CacheHashUtils.h"
 #include "CacheStorageService.h"
 #include "CacheIndex.h"
+#include "CacheFile.h"
 #include "nsThreadUtils.h"
 #include "nsIFile.h"
 #include "mozilla/Telemetry.h"
@@ -37,6 +38,7 @@ namespace mozilla {
 namespace net {
 
 #define kOpenHandlesLimit   64
+#define kMetadataWriteDelay 5000
 
 bool
 CacheFileHandle::DispatchRelease()
@@ -980,9 +982,49 @@ protected:
   uint32_t                  mSize;
 };
 
+class MetadataWriteScheduleEvent : public nsRunnable
+{
+public:
+  enum EMode {
+    SCHEDULE,
+    UNSCHEDULE,
+    SHUTDOWN
+  } mMode;
+
+  nsRefPtr<CacheFile> mFile;
+  nsRefPtr<CacheFileIOManager> mIOMan;
+
+  MetadataWriteScheduleEvent(CacheFileIOManager * aManager,
+                             CacheFile * aFile,
+                             EMode aMode)
+    : mMode(aMode)
+    , mFile(aFile)
+    , mIOMan(aManager)
+  { }
+
+  virtual ~MetadataWriteScheduleEvent() { }
+
+  NS_IMETHOD Run()
+  {
+    switch (mMode)
+    {
+    case SCHEDULE:
+      CacheFileIOManager::ScheduleMetadataWrite(mFile);
+      break;
+    case UNSCHEDULE:
+      CacheFileIOManager::UnscheduleMetadataWrite(mFile);
+      break;
+    case SHUTDOWN:
+      CacheFileIOManager::ShutdownMetadataWriteScheduling();
+      break;
+    }
+    return NS_OK;
+  }
+};
+
 CacheFileIOManager * CacheFileIOManager::gInstance = nullptr;
 
-NS_IMPL_ISUPPORTS0(CacheFileIOManager)
+NS_IMPL_ISUPPORTS1(CacheFileIOManager, nsITimerCallback)
 
 CacheFileIOManager::CacheFileIOManager()
   : mShuttingDown(false)
@@ -1045,6 +1087,8 @@ CacheFileIOManager::Shutdown()
   Telemetry::AutoTimer<Telemetry::NETWORK_DISK_CACHE_SHUTDOWN_V2> shutdownTimer;
 
   CacheIndex::PreShutdown();
+
+  ShutdownMetadataWriteScheduling();
 
   {
     mozilla::Mutex lock("CacheFileIOManager::Shutdown() lock");
@@ -1198,6 +1242,115 @@ CacheFileIOManager::IsShutdown()
   if (!gInstance)
     return true;
   return gInstance->mShuttingDown;
+}
+
+// static
+nsresult
+CacheFileIOManager::ScheduleMetadataWrite(CacheFile * aFile)
+{
+  NS_ENSURE_TRUE(gInstance, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(!gInstance->mShuttingDown, NS_ERROR_NOT_INITIALIZED);
+
+  if (!IsOnIOThread()) {
+    nsRefPtr<MetadataWriteScheduleEvent> event = new MetadataWriteScheduleEvent(
+      gInstance, aFile, MetadataWriteScheduleEvent::SCHEDULE);
+    nsCOMPtr<nsIEventTarget> target = gInstance->IOTarget();
+    NS_ENSURE_TRUE(target, NS_ERROR_UNEXPECTED);
+    return target->Dispatch(event, nsIEventTarget::DISPATCH_NORMAL);
+  }
+
+  nsresult rv;
+
+  if (!gInstance->mMetadataWritesTimer) {
+    gInstance->mMetadataWritesTimer = do_CreateInstance("@mozilla.org/timer;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = gInstance->mMetadataWritesTimer->InitWithCallback(
+      gInstance, kMetadataWriteDelay, nsITimer::TYPE_ONE_SHOT);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (gInstance->mScheduledMetadataWrites.IndexOf(aFile) !=
+      gInstance->mScheduledMetadataWrites.NoIndex) {
+    return NS_OK;
+  }
+
+  gInstance->mScheduledMetadataWrites.AppendElement(aFile);
+
+  return NS_OK;
+}
+
+// static
+nsresult
+CacheFileIOManager::UnscheduleMetadataWrite(CacheFile * aFile)
+{
+  NS_ENSURE_TRUE(gInstance, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(!gInstance->mShuttingDown, NS_ERROR_NOT_INITIALIZED);
+
+  if (!IsOnIOThread()) {
+    nsRefPtr<MetadataWriteScheduleEvent> event = new MetadataWriteScheduleEvent(
+      gInstance, aFile, MetadataWriteScheduleEvent::UNSCHEDULE);
+    nsCOMPtr<nsIEventTarget> target = gInstance->IOTarget();
+    NS_ENSURE_TRUE(target, NS_ERROR_UNEXPECTED);
+    return target->Dispatch(event, nsIEventTarget::DISPATCH_NORMAL);
+  }
+
+  gInstance->mScheduledMetadataWrites.RemoveElement(aFile);
+
+  if (gInstance->mScheduledMetadataWrites.Length() == 0 &&
+      gInstance->mMetadataWritesTimer) {
+    gInstance->mMetadataWritesTimer->Cancel();
+    gInstance->mMetadataWritesTimer = nullptr;
+  }
+
+  return NS_OK;
+}
+
+// static
+nsresult
+CacheFileIOManager::ShutdownMetadataWriteScheduling()
+{
+  NS_ENSURE_TRUE(gInstance, NS_ERROR_NOT_INITIALIZED);
+
+  if (!IsOnIOThread()) {
+    nsRefPtr<MetadataWriteScheduleEvent> event = new MetadataWriteScheduleEvent(
+      gInstance, nullptr, MetadataWriteScheduleEvent::SHUTDOWN);
+    nsCOMPtr<nsIEventTarget> target = gInstance->IOTarget();
+    NS_ENSURE_TRUE(target, NS_ERROR_UNEXPECTED);
+    return target->Dispatch(event, nsIEventTarget::DISPATCH_NORMAL);
+  }
+
+  nsTArray<nsRefPtr<CacheFile> > files;
+  files.SwapElements(gInstance->mScheduledMetadataWrites);
+  for (uint32_t i = 0; i < files.Length(); ++i) {
+    CacheFile * file = files[i];
+    file->MaybeWriteMetadataIfNeeded();
+  }
+
+  if (gInstance->mMetadataWritesTimer) {
+    gInstance->mMetadataWritesTimer->Cancel();
+    gInstance->mMetadataWritesTimer = nullptr;
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+CacheFileIOManager::Notify(nsITimer * aTimer)
+{
+  MOZ_ASSERT(IsOnIOThread());
+  MOZ_ASSERT(mMetadataWritesTimer == aTimer);
+
+  mMetadataWritesTimer = nullptr;
+
+  nsTArray<nsRefPtr<CacheFile> > files;
+  files.SwapElements(mScheduledMetadataWrites);
+  for (uint32_t i = 0; i < files.Length(); ++i) {
+    CacheFile * file = files[i];
+    file->MaybeWriteMetadataIfNeeded();
+  }
+
+  return NS_OK;
 }
 
 nsresult

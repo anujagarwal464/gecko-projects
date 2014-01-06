@@ -8,6 +8,7 @@
 #include "CacheIOThread.h"
 #include "CacheEntriesEnumerator.h"
 #include "nsIEventTarget.h"
+#include "nsITimer.h"
 #include "nsCOMPtr.h"
 #include "mozilla/SHA1.h"
 #include "nsTArray.h"
@@ -154,6 +155,7 @@ class OpenFileEvent;
 class CloseFileEvent;
 class ReadEvent;
 class WriteEvent;
+class MetadataWriteScheduleEvent;
 
 #define CACHEFILEIOLISTENER_IID \
 { /* dcaf2ddc-17cf-4242-bca1-8c86936375a5 */       \
@@ -181,10 +183,11 @@ public:
 NS_DEFINE_STATIC_IID_ACCESSOR(CacheFileIOListener, CACHEFILEIOLISTENER_IID)
 
 
-class CacheFileIOManager : public nsISupports
+class CacheFileIOManager : public nsITimerCallback
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSITIMERCALLBACK
 
   enum {
     OPEN         = 0U,
@@ -204,6 +207,15 @@ public:
   static already_AddRefed<CacheIOThread> IOThread();
   static bool IsOnIOThread(bool aResultWhenUnknown = true);
   static bool IsShutdown();
+
+  // Make aFile's MaybeWriteMetadataIfNeeded be called automatically after
+  // a short interval.
+  static nsresult ScheduleMetadataWrite(CacheFile * aFile);
+  // Remove aFile from the scheduling registry array.
+  // MaybeWriteMetadataIfNeeded will not be automatically called.
+  static nsresult UnscheduleMetadataWrite(CacheFile * aFile);
+  // Shuts the scheduling off and flushes all pending metadata writes.
+  static nsresult ShutdownMetadataWriteScheduling();
 
   static nsresult OpenFile(const nsACString &aKey,
                            uint32_t aFlags,
@@ -304,6 +316,8 @@ private:
   CacheFileHandles                     mHandles;
   nsTArray<CacheFileHandle *>          mHandlesByLastUsed;
   nsTArray<nsRefPtr<CacheFileHandle> > mSpecialHandles;
+  nsTArray<nsRefPtr<CacheFile> >       mScheduledMetadataWrites;
+  nsCOMPtr<nsITimer>                   mMetadataWritesTimer;
 };
 
 } // net
