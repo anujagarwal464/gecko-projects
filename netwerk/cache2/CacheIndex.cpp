@@ -2125,7 +2125,7 @@ CacheIndex::BuildIndex()
 
 #ifdef DEBUG
     nsRefPtr<CacheFileHandle> handle;
-    CacheFileIOManager::gInstance->mHandles.GetHandle(&hash,
+    CacheFileIOManager::gInstance->mHandles.GetHandle(&hash, false,
                                                       getter_AddRefs(handle));
 #endif
 
@@ -2336,7 +2336,7 @@ CacheIndex::UpdateIndex()
 
 #ifdef DEBUG
     nsRefPtr<CacheFileHandle> handle;
-    CacheFileIOManager::gInstance->mHandles.GetHandle(&hash,
+    CacheFileIOManager::gInstance->mHandles.GetHandle(&hash, false,
                                                       getter_AddRefs(handle));
 #endif
 

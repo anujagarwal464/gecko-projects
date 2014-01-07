@@ -255,6 +255,7 @@ CacheFileHandles::~CacheFileHandles()
 
 nsresult
 CacheFileHandles::GetHandle(const SHA1Sum::Hash *aHash,
+                            bool aReturnDoomed,
                             CacheFileHandle **_retval)
 {
   MOZ_ASSERT(CacheFileIOManager::IsOnIOThread());
@@ -288,11 +289,16 @@ CacheFileHandles::GetHandle(const SHA1Sum::Hash *aHash,
   if (handle->IsDoomed()) {
     LOG(("CacheFileHandles::GetHandle() hash=%08x%08x%08x%08x%08x "
          "found doomed handle %p, entry %p", LOGSHA1(aHash), handle.get(), entry));
-    return NS_ERROR_NOT_AVAILABLE;
+
+    // If the consumer doesn't want doomed handles, exit with NOT_AVAIL.
+    if (!aReturnDoomed)
+      return NS_ERROR_NOT_AVAILABLE;
+  }
+  else {
+    LOG(("CacheFileHandles::GetHandle() hash=%08x%08x%08x%08x%08x "
+         "found handle %p, entry %p", LOGSHA1(aHash), handle.get(), entry));
   }
 
-  LOG(("CacheFileHandles::GetHandle() hash=%08x%08x%08x%08x%08x "
-       "found handle %p, entry %p", LOGSHA1(aHash), handle.get(), entry));
   handle.forget(_retval);
   return NS_OK;
 }
@@ -1402,7 +1408,7 @@ CacheFileIOManager::OpenFileInternal(const SHA1Sum::Hash *aHash,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsRefPtr<CacheFileHandle> handle;
-  mHandles.GetHandle(aHash, getter_AddRefs(handle));
+  mHandles.GetHandle(aHash, false, getter_AddRefs(handle));
 
   if ((aFlags & (OPEN | CREATE | CREATE_NEW)) == CREATE_NEW) {
     if (handle) {
@@ -1845,7 +1851,7 @@ CacheFileIOManager::DoomFileByKeyInternal(const SHA1Sum::Hash *aHash)
 
   // Find active handle
   nsRefPtr<CacheFileHandle> handle;
-  mHandles.GetHandle(aHash, getter_AddRefs(handle));
+  mHandles.GetHandle(aHash, true, getter_AddRefs(handle));
 
   if (handle) {
     handle->Log();
