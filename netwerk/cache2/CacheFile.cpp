@@ -204,41 +204,45 @@ CacheFile::Release()
 {
   NS_PRECONDITION(0 != mRefCnt, "dup release");
   nsrefcnt count = --mRefCnt;
-  NS_LOG_RELEASE(this, count, "CacheFile");
 
-  MOZ_ASSERT(count != 0, "Unexpected");
+  if (count == 0) {
+    // Stabilize !
+    mRefCnt = 1;
 
-  if (count == 1) {
-    bool deleteFile = false;
+    {
+      // Make sure all metadata are correctly written to disk.
 
-    // Not using CacheFileAutoLock since it hard-refers the file
-    // and in it's destructor reenters this method.
-    Lock();
+      // Using CacheFileAutoLock since it hard-refers the file
+      // and in it's destructor reenters this method.  This way
+      // we correctly release the file completely regardless
+      // whether something inside WriteMetadataIfNeeded() or a code
+      // on a different thread addrefs and/or releases this instance.
+      // We just leave the counter logic do this automatically since
+      // stabilization protects us from double-deleting.
+      CacheFileAutoLock lock(this); // mRefCnt == 2
 
-    if (mMemoryOnly) {
-      deleteFile = true;
-    }
-    else if (mMetadata) {
-      WriteMetadataIfNeeded();
-      if (mWritingMetadata) {
-        MOZ_ASSERT(mRefCnt > 1);
-      } else {
-        if (mRefCnt == 1)
-          deleteFile = true;
+      if (!mMemoryOnly && !mMetadataClosed) {
+        // Prevent looping
+        mMetadataClosed = true;
+
+        WriteMetadataIfNeeded(); // mRefCnt may be increased/decresed here
+
+        // Revert stabilization, we are not going to actually
+        // delete this instance now.
+        --mRefCnt; // mRefCnt == 1;
+
+        // No need to call NS_LOG_RELEASE here, release is deferred.
+        // NS_LOG_RELEASE is only important when called with 0 count.
+        return 0; // ~CacheFileAutoLock > Release() > mRefCnt == 0 > delete
       }
-    }
-
-    Unlock();
-
-    if (!deleteFile) {
-      return count;
-    }
+    } // ~CacheFileAutoLock > Release() > mRefCnt == 1
 
     NS_LOG_RELEASE(this, 0, "CacheFile");
     delete (this);
     return 0;
   }
 
+  NS_LOG_RELEASE(this, count, "CacheFile");
   return count;
 }
 
@@ -258,13 +262,13 @@ CacheFile::CacheFile()
   , mDataAccessed(false)
   , mDataIsDirty(false)
   , mWritingMetadata(false)
+  , mMetadataClosed(false)
   , mStatus(NS_OK)
   , mDataSize(-1)
   , mOutput(nullptr)
 {
   LOG(("CacheFile::CacheFile() [this=%p]", this));
 
-  NS_ADDREF(this);
   MOZ_COUNT_CTOR(CacheFile);
 }
 

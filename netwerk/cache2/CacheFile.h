@@ -167,6 +167,7 @@ private:
   bool           mDataIsDirty;
   bool           mWritingMetadata;
   bool           mKeyIsHash;
+  bool           mMetadataClosed;
   nsresult       mStatus;
   int64_t        mDataSize;
   nsCString      mKey;
