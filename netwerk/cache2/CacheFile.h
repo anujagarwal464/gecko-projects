@@ -6,6 +6,7 @@
 #define CacheFile__h__
 
 #include "CacheFileChunk.h"
+#include "nsWeakReference.h"
 #include "CacheFileIOManager.h"
 #include "CacheFileMetadata.h"
 #include "nsRefPtrHashtable.h"
@@ -46,6 +47,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(CacheFileListener, CACHEFILELISTENER_IID)
 class CacheFile : public CacheFileChunkListener
                 , public CacheFileIOListener
                 , public CacheFileMetadataListener
+                , public nsSupportsWeakReference
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -71,7 +73,6 @@ public:
   NS_IMETHOD OnDataRead(CacheFileHandle *aHandle, char *aBuf, nsresult aResult);
   NS_IMETHOD OnFileDoomed(CacheFileHandle *aHandle, nsresult aResult);
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult);
-  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult);
 
   NS_IMETHOD OnMetadataRead(nsresult aResult);
   NS_IMETHOD OnMetadataWritten(nsresult aResult);
@@ -91,8 +92,6 @@ public:
   nsresult GetExpirationTime(uint32_t *_retval);
   nsresult SetLastModified(uint32_t aLastModified);
   nsresult GetLastModified(uint32_t *_retval);
-  nsresult SetFrecency(uint32_t aFrecency);
-  nsresult GetFrecency(uint32_t *_retval);
   nsresult GetLastFetched(uint32_t *_retval);
   nsresult GetFetchCount(uint32_t *_retval);
 
@@ -100,7 +99,6 @@ public:
   void Key(nsACString& aKey) { aKey = mKey; }
 
 private:
-  friend class CacheFileIOManager;
   friend class CacheFileChunk;
   friend class CacheFileInputStream;
   friend class CacheFileOutputStream;
@@ -138,7 +136,6 @@ private:
   void     NotifyListenersAboutOutputRemoval();
 
   bool IsDirty();
-  void MaybeWriteMetadataIfNeeded();
   void WriteMetadataIfNeeded();
   void PostWriteTimer();
 
@@ -157,8 +154,6 @@ private:
 
   nsresult PadChunkWithZeroes(uint32_t aChunkIdx);
 
-  nsresult InitIndexEntry();
-
   mozilla::Mutex mLock;
   bool           mOpeningFile;
   bool           mReady;
@@ -167,7 +162,6 @@ private:
   bool           mDataIsDirty;
   bool           mWritingMetadata;
   bool           mKeyIsHash;
-  bool           mMetadataClosed;
   nsresult       mStatus;
   int64_t        mDataSize;
   nsCString      mKey;
@@ -175,6 +169,7 @@ private:
   nsRefPtr<CacheFileHandle>    mHandle;
   nsRefPtr<CacheFileMetadata>  mMetadata;
   nsCOMPtr<CacheFileListener>  mListener;
+  nsRefPtr<MetadataWriteTimer> mTimer;
 
   nsRefPtrHashtable<nsUint32HashKey, CacheFileChunk> mChunks;
   nsClassHashtable<nsUint32HashKey, ChunkListeners> mChunkListeners;

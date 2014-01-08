@@ -8,7 +8,7 @@
 #include "CacheFileChunk.h"
 #include "CacheFileInputStream.h"
 #include "CacheFileOutputStream.h"
-#include "CacheIndex.h"
+#include "nsITimer.h"
 #include "nsThreadUtils.h"
 #include "mozilla/DebugOnly.h"
 #include <algorithm>
@@ -17,6 +17,8 @@
 
 namespace mozilla {
 namespace net {
+
+#define kMetadataWriteDelay        5000
 
 class NotifyCacheFileListenerEvent : public nsRunnable {
 public:
@@ -91,6 +93,129 @@ protected:
   nsRefPtr<CacheFileChunk>         mChunk;
 };
 
+class MetadataWriteTimer : public nsITimerCallback
+{
+public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSITIMERCALLBACK
+
+  MetadataWriteTimer(CacheFile *aFile);
+  nsresult Fire();
+  nsresult Cancel();
+  bool     ShouldFireNew();
+
+protected:
+  virtual ~MetadataWriteTimer();
+
+  nsCOMPtr<nsIWeakReference> mFile;
+  nsCOMPtr<nsITimer>         mTimer;
+  nsCOMPtr<nsIEventTarget>   mTarget;
+  PRIntervalTime             mFireTime;
+};
+
+NS_IMPL_ADDREF(MetadataWriteTimer)
+NS_IMPL_RELEASE(MetadataWriteTimer)
+
+NS_INTERFACE_MAP_BEGIN(MetadataWriteTimer)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITimerCallback)
+  NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
+NS_INTERFACE_MAP_END_THREADSAFE
+
+MetadataWriteTimer::MetadataWriteTimer(CacheFile *aFile)
+  : mFireTime(0)
+{
+  LOG(("MetadataWriteTimer::MetadataWriteTimer() [this=%p, file=%p]",
+       this, aFile));
+  MOZ_COUNT_CTOR(MetadataWriteTimer);
+
+  mFile = do_GetWeakReference(static_cast<CacheFileChunkListener *>(aFile));
+  mTarget = NS_GetCurrentThread();
+}
+
+MetadataWriteTimer::~MetadataWriteTimer()
+{
+  LOG(("MetadataWriteTimer::~MetadataWriteTimer() [this=%p]", this));
+  MOZ_COUNT_DTOR(MetadataWriteTimer);
+
+  NS_ProxyRelease(mTarget, mTimer.forget().get());
+  NS_ProxyRelease(mTarget, mFile.forget().get());
+}
+
+NS_IMETHODIMP
+MetadataWriteTimer::Notify(nsITimer *aTimer)
+{
+  LOG(("MetadataWriteTimer::Notify() [this=%p, timer=%p]", this, aTimer));
+
+  MOZ_ASSERT(aTimer == mTimer);
+
+  nsCOMPtr<nsISupports> supp = do_QueryReferent(mFile);
+  if (!supp)
+    return NS_OK;
+
+  CacheFile *file = static_cast<CacheFile *>(
+                      static_cast<CacheFileChunkListener *>(supp.get()));
+
+  CacheFileAutoLock lock(file);
+
+  if (file->mTimer != this)
+    return NS_OK;
+
+  if (file->mMemoryOnly)
+    return NS_OK;
+
+  file->WriteMetadataIfNeeded();
+  file->mTimer = nullptr;
+
+  return NS_OK;
+}
+
+nsresult
+MetadataWriteTimer::Fire()
+{
+  LOG(("MetadataWriteTimer::Fire() [this=%p]", this));
+
+  nsresult rv;
+
+#ifdef DEBUG
+  bool onCurrentThread = false;
+  rv = mTarget->IsOnCurrentThread(&onCurrentThread);
+  MOZ_ASSERT(NS_SUCCEEDED(rv) && onCurrentThread);
+#endif
+
+  mTimer = do_CreateInstance("@mozilla.org/timer;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = mTimer->InitWithCallback(this, kMetadataWriteDelay,
+                                nsITimer::TYPE_ONE_SHOT);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  mFireTime = PR_IntervalNow();
+
+  return NS_OK;
+}
+
+nsresult
+MetadataWriteTimer::Cancel()
+{
+  LOG(("MetadataWriteTimer::Cancel() [this=%p]", this));
+  return mTimer->Cancel();
+}
+
+bool
+MetadataWriteTimer::ShouldFireNew()
+{
+  uint32_t delta = PR_IntervalToMilliseconds(PR_IntervalNow() - mFireTime);
+
+  if (delta > kMetadataWriteDelay / 2) {
+    LOG(("MetadataWriteTimer::ShouldFireNew() - returning true [this=%p]",
+         this));
+    return true;
+  }
+
+  LOG(("MetadataWriteTimer::ShouldFireNew() - returning false [this=%p]",
+       this));
+  return false;
+}
 
 class DoomFileHelper : public CacheFileIOListener
 {
@@ -132,12 +257,6 @@ public:
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult)
   {
     MOZ_CRASH("DoomFileHelper::OnEOFSet should not be called!");
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
-  {
-    MOZ_CRASH("DoomFileHelper::OnFileRenamed should not be called!");
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -204,45 +323,41 @@ CacheFile::Release()
 {
   NS_PRECONDITION(0 != mRefCnt, "dup release");
   nsrefcnt count = --mRefCnt;
+  NS_LOG_RELEASE(this, count, "CacheFile");
 
-  if (count == 0) {
-    // Stabilize !
-    mRefCnt = 1;
+  MOZ_ASSERT(count != 0, "Unexpected");
 
-    {
-      // Make sure all metadata are correctly written to disk.
+  if (count == 1) {
+    bool deleteFile = false;
 
-      // Using CacheFileAutoLock since it hard-refers the file
-      // and in it's destructor reenters this method.  This way
-      // we correctly release the file completely regardless
-      // whether something inside WriteMetadataIfNeeded() or a code
-      // on a different thread addrefs and/or releases this instance.
-      // We just leave the counter logic do this automatically since
-      // stabilization protects us from double-deleting.
-      CacheFileAutoLock lock(this); // mRefCnt == 2
+    // Not using CacheFileAutoLock since it hard-refers the file
+    // and in it's destructor reenters this method.
+    Lock();
 
-      if (!mMemoryOnly && !mMetadataClosed) {
-        // Prevent looping
-        mMetadataClosed = true;
-
-        WriteMetadataIfNeeded(); // mRefCnt may be increased/decresed here
-
-        // Revert stabilization, we are not going to actually
-        // delete this instance now.
-        --mRefCnt; // mRefCnt == 1;
-
-        // No need to call NS_LOG_RELEASE here, release is deferred.
-        // NS_LOG_RELEASE is only important when called with 0 count.
-        return 0; // ~CacheFileAutoLock > Release() > mRefCnt == 0 > delete
+    if (mMemoryOnly) {
+      deleteFile = true;
+    }
+    else if (mMetadata) {
+      WriteMetadataIfNeeded();
+      if (mWritingMetadata) {
+        MOZ_ASSERT(mRefCnt > 1);
+      } else {
+        if (mRefCnt == 1)
+          deleteFile = true;
       }
-    } // ~CacheFileAutoLock > Release() > mRefCnt == 1
+    }
+
+    Unlock();
+
+    if (!deleteFile) {
+      return count;
+    }
 
     NS_LOG_RELEASE(this, 0, "CacheFile");
     delete (this);
     return 0;
   }
 
-  NS_LOG_RELEASE(this, count, "CacheFile");
   return count;
 }
 
@@ -250,6 +365,7 @@ NS_INTERFACE_MAP_BEGIN(CacheFile)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileChunkListener)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileIOListener)
   NS_INTERFACE_MAP_ENTRY(mozilla::net::CacheFileMetadataListener)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports,
                                    mozilla::net::CacheFileChunkListener)
 NS_INTERFACE_MAP_END_THREADSAFE
@@ -262,13 +378,13 @@ CacheFile::CacheFile()
   , mDataAccessed(false)
   , mDataIsDirty(false)
   , mWritingMetadata(false)
-  , mMetadataClosed(false)
   , mStatus(NS_OK)
   , mDataSize(-1)
   , mOutput(nullptr)
 {
   LOG(("CacheFile::CacheFile() [this=%p]", this));
 
+  NS_ADDREF(this);
   MOZ_COUNT_CTOR(CacheFile);
 }
 
@@ -322,35 +438,8 @@ CacheFile::Init(const nsACString &aKey,
       mReady = true;
       mDataSize = mMetadata->Offset();
     }
-    else {
+    else
       flags = CacheFileIOManager::CREATE;
-
-      if (!mKeyIsHash) {
-        // Have a look into index and change to CREATE_NEW when we are sure
-        // that the entry does not exist.
-        CacheIndex::EntryStatus status;
-        rv = CacheIndex::HasEntry(mKey, &status);
-        if (status == CacheIndex::DOES_NOT_EXIST) {
-          LOG(("CacheFile::Init() - Forcing CREATE_NEW flag since we don't have"
-               " this entry according to index"));
-          flags = CacheFileIOManager::CREATE_NEW;
-
-          // make sure we can use this entry immediately
-          mMetadata = new CacheFileMetadata(mKey);
-          mReady = true;
-          mDataSize = mMetadata->Offset();
-
-          // Notify callback now and don't store it in mListener, no further
-          // operation can change the result.
-          nsRefPtr<NotifyCacheFileListenerEvent> ev;
-          ev = new NotifyCacheFileListenerEvent(aCallback, NS_OK, true);
-          rv = NS_DispatchToCurrentThread(ev);
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          aCallback = nullptr;
-        }
-      }
-    }
 
     if (aPriority)
       flags |= CacheFileIOManager::PRIORITY;
@@ -564,12 +653,10 @@ CacheFile::OnFileOpened(CacheFileHandle *aHandle, nsresult aResult)
       mHandle = aHandle;
 
       if (mMetadata) {
-        InitIndexEntry();
-
         // The entry was initialized as createNew, don't try to read metadata.
         mMetadata->SetHandle(mHandle);
 
-        // Write all cached chunks, otherwise they may stay unwritten.
+        // Write all cached chunks, otherwise thay may stay unwritten.
         mCachedChunks.Enumerate(&CacheFile::WriteAllCachedChunks, this);
 
         return NS_OK;
@@ -634,8 +721,6 @@ CacheFile::OnMetadataRead(nsresult aResult)
       isNew = true;
       mMetadata->MarkDirty();
     }
-
-    InitIndexEntry();
   }
 
   nsCOMPtr<CacheFileListener> listener;
@@ -700,13 +785,6 @@ nsresult
 CacheFile::OnEOFSet(CacheFileHandle *aHandle, nsresult aResult)
 {
   MOZ_CRASH("CacheFile::OnEOFSet should not be called!");
-  return NS_ERROR_UNEXPECTED;
-}
-
-nsresult
-CacheFile::OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
-{
-  MOZ_CRASH("CacheFile::OnFileRenamed should not be called!");
   return NS_ERROR_UNEXPECTED;
 }
 
@@ -888,11 +966,6 @@ CacheFile::SetExpirationTime(uint32_t aExpirationTime)
   NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
 
   PostWriteTimer();
-
-  if (mHandle && !mHandle->IsDoomed())
-    CacheFileIOManager::UpdateIndexEntry(mHandle, nullptr, &aExpirationTime,
-                                         nullptr);
-
   return mMetadata->SetExpirationTime(aExpirationTime);
 }
 
@@ -925,31 +998,6 @@ CacheFile::GetLastModified(uint32_t *_retval)
   NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
 
   return mMetadata->GetLastModified(_retval);
-}
-
-nsresult
-CacheFile::SetFrecency(uint32_t aFrecency)
-{
-  CacheFileAutoLock lock(this);
-  MOZ_ASSERT(mMetadata);
-  NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
-
-  PostWriteTimer();
-
-  if (mHandle && !mHandle->IsDoomed())
-    CacheFileIOManager::UpdateIndexEntry(mHandle, &aFrecency, nullptr, nullptr);
-
-  return mMetadata->SetFrecency(aFrecency);
-}
-
-nsresult
-CacheFile::GetFrecency(uint32_t *_retval)
-{
-  CacheFileAutoLock lock(this);
-  MOZ_ASSERT(mMetadata);
-  NS_ENSURE_TRUE(mMetadata, NS_ERROR_UNEXPECTED);
-
-  return mMetadata->GetFrecency(_retval);
 }
 
 nsresult
@@ -1425,17 +1473,6 @@ CacheFile::IsDirty()
 }
 
 void
-CacheFile::MaybeWriteMetadataIfNeeded()
-{
-  LOG(("CacheFile::MaybeWriteMetadataIfNeeded() [this=%p]", this));
-
-  CacheFileAutoLock lock(this);
-
-  if (!mMemoryOnly)
-    WriteMetadataIfNeeded();
-}
-
-void
 CacheFile::WriteMetadataIfNeeded()
 {
   LOG(("CacheFile::WriteMetadataIfNeeded() [this=%p]", this));
@@ -1445,7 +1482,10 @@ CacheFile::WriteMetadataIfNeeded()
   AssertOwnsLock();
   MOZ_ASSERT(!mMemoryOnly);
 
-  CacheFileIOManager::UnscheduleMetadataWrite(this);
+  if (mTimer) {
+    mTimer->Cancel();
+    mTimer = nullptr;
+  }
 
   if (NS_FAILED(mStatus))
     return;
@@ -1478,7 +1518,30 @@ CacheFile::PostWriteTimer()
 {
   LOG(("CacheFile::PostWriteTimer() [this=%p]", this));
 
-  CacheFileIOManager::ScheduleMetadataWrite(this);
+  nsresult rv;
+
+  AssertOwnsLock();
+
+  if (mTimer) {
+    if (mTimer->ShouldFireNew()) {
+      LOG(("CacheFile::PostWriteTimer() - Canceling old timer [this=%p]",
+           this));
+      mTimer->Cancel();
+      mTimer = nullptr;
+    }
+    else {
+      LOG(("CacheFile::PostWriteTimer() - Keeping old timer [this=%p]", this));
+      return;
+    }
+  }
+
+  mTimer = new MetadataWriteTimer(this);
+
+  rv = mTimer->Fire();
+  if (NS_FAILED(rv)) {
+    LOG(("CacheFile::PostWriteTimer() - Firing timer failed with error 0x%08x "
+         "[this=%p]", rv, this));
+  }
 }
 
 PLDHashOperator
@@ -1575,35 +1638,6 @@ CacheFile::PadChunkWithZeroes(uint32_t aChunkIdx)
                         false);
 
   ReleaseOutsideLock(chunk.forget().get());
-
-  return NS_OK;
-}
-
-nsresult
-CacheFile::InitIndexEntry()
-{
-  MOZ_ASSERT(mHandle);
-
-  if (mHandle->IsDoomed())
-    return NS_OK;
-
-  nsresult rv;
-
-  rv = CacheFileIOManager::InitIndexEntry(mHandle,
-                                          mMetadata->AppId(),
-                                          mMetadata->IsAnonymous(),
-                                          mMetadata->IsInBrowser());
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  uint32_t expirationTime;
-  mMetadata->GetExpirationTime(&expirationTime);
-
-  uint32_t frecency;
-  mMetadata->GetFrecency(&frecency);
-
-  rv = CacheFileIOManager::UpdateIndexEntry(mHandle, &frecency, &expirationTime,
-                                            nullptr);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
 }

@@ -114,17 +114,13 @@ void CacheIOThread::ThreadFunc()
     MonitorAutoLock lock(mMonitor);
 
     // This creates nsThread for this PRThread
-    nsCOMPtr<nsIThread> xpcomThread = NS_GetCurrentThread();
+    mXPCOMThread = NS_GetCurrentThread();
 
-    threadInternal = do_QueryInterface(xpcomThread);
+    threadInternal = do_QueryInterface(mXPCOMThread);
     if (threadInternal)
       threadInternal->SetObserver(this);
 
-    mXPCOMThread.swap(xpcomThread);
-
     lock.NotifyAll();
-
-    static PRIntervalTime const waitTime = PR_MillisecondsToInterval(5000);
 
     do {
 loopStart:
@@ -162,14 +158,17 @@ loopStart:
       }
 
       if (EventsPending())
-        goto loopStart;
+        continue;
 
-      lock.Wait(waitTime);
+      if (mShutdown)
+        break;
+
+      lock.Wait(PR_INTERVAL_NO_TIMEOUT);
 
       if (EventsPending())
-        goto loopStart;
+        continue;
 
-    } while (!mShutdown);
+    } while (true);
 
     MOZ_ASSERT(!EventsPending());
   } // lock
