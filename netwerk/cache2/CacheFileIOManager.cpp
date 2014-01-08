@@ -1111,13 +1111,13 @@ CacheFileIOManager::Shutdown()
   MOZ_ASSERT(gInstance->mHandles.HandleCount() == 0);
   MOZ_ASSERT(gInstance->mHandlesByLastUsed.Length() == 0);
 
-  nsRefPtr<CacheFileIOManager> ioMan;
-  ioMan.swap(gInstance);
-
-  if (ioMan->mIOThread)
-    ioMan->mIOThread->Shutdown();
+  if (gInstance->mIOThread)
+    gInstance->mIOThread->Shutdown();
 
   CacheIndex::Shutdown();
+
+  nsRefPtr<CacheFileIOManager> ioMan;
+  ioMan.swap(gInstance);
 
   return NS_OK;
 }
