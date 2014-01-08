@@ -35,11 +35,11 @@ pref("general.warnOnAboutConfig", true);
 pref("browser.bookmarks.max_backups",       5);
 
 // Preference for switching the cache backend, can be changed freely at runtime
-// 0 - use the old (Darin's) cache [DEFAULT]
-// 1 - use the new cache back-end (cache v2)
+// 0 - use the old (Darin's) cache
+// 1 - use the new cache back-end (cache v2) [DEFAULT]
 // 2 - do a random choise for A/B testing (browser chooses old or new back-end at startup
 //     and keeps it per session)
-pref("browser.cache.use_new_backend",       0);
+pref("browser.cache.use_new_backend",       1);
 
 pref("browser.cache.disk.enable",           true);
 // Is this the first-time smartsizing has been introduced?
