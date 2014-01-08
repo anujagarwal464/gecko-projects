@@ -130,6 +130,7 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     let group = SourceUtils.getSourceGroup(url.split(" -> ").pop());
 
     let contents = document.createElement("label");
+    contents.className = "plain dbg-source-item";
     contents.setAttribute("value", label);
     contents.setAttribute("crop", "start");
     contents.setAttribute("flex", "1");
@@ -1088,8 +1089,10 @@ function TracerView() {
     DevToolsUtils.makeInfallible(this._onToggleTracing.bind(this));
   this._onStartTracing =
     DevToolsUtils.makeInfallible(this._onStartTracing.bind(this));
-  this._onClear = DevToolsUtils.makeInfallible(this._onClear.bind(this));
-  this._onSelect = DevToolsUtils.makeInfallible(this._onSelect.bind(this));
+  this._onClear =
+    DevToolsUtils.makeInfallible(this._onClear.bind(this));
+  this._onSelect =
+    DevToolsUtils.makeInfallible(this._onSelect.bind(this));
   this._onMouseOver =
     DevToolsUtils.makeInfallible(this._onMouseOver.bind(this));
   this._onSearch = DevToolsUtils.makeInfallible(this._onSearch.bind(this));
@@ -1118,13 +1121,10 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
     }
 
     this.widget = new FastListWidget(document.getElementById("tracer-traces"));
-
     this._traceButton.removeAttribute("hidden");
     this._tracerTab.removeAttribute("hidden");
 
-    this._tracerDeck = document.getElementById("tracer-deck");
     this._search = document.getElementById("tracer-search");
-
     this._template = document.getElementsByClassName("trace-item-template")[0];
     this._templateItem = this._template.getElementsByClassName("trace-item")[0];
     this._templateTypeIcon = this._template.getElementsByClassName("trace-type")[0];
@@ -1133,12 +1133,15 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
     this.widget.addEventListener("select", this._onSelect, false);
     this.widget.addEventListener("mouseover", this._onMouseOver, false);
     this.widget.addEventListener("mouseout", this._unhighlightMatchingItems, false);
-
     this._search.addEventListener("input", this._onSearch, false);
 
     this._startTooltip = L10N.getStr("startTracingTooltip");
     this._stopTooltip = L10N.getStr("stopTracingTooltip");
+    this._tracingNotStartedString = L10N.getStr("tracingNotStartedText");
+    this._noFunctionCallsString = L10N.getStr("noFunctionCallsText");
+
     this._traceButton.setAttribute("tooltiptext", this._startTooltip);
+    this.emptyText = this._tracingNotStartedString;
   },
 
   /**
@@ -1171,23 +1174,38 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
   /**
    * Function invoked either by the "startTracing" command or by
    * _onToggleTracing to start execution tracing in the backend.
+   *
+   * @return object
+   *         A promise resolved once the tracing has successfully started.
    */
   _onStartTracing: function() {
-    this._tracerDeck.selectedIndex = 0;
     this._traceButton.setAttribute("checked", true);
     this._traceButton.setAttribute("tooltiptext", this._stopTooltip);
+
     this.empty();
-    DebuggerController.Tracer.startTracing();
+    this.emptyText = this._noFunctionCallsString;
+
+    let deferred = promise.defer();
+    DebuggerController.Tracer.startTracing(deferred.resolve);
+    return deferred.promise;
   },
 
   /**
    * Function invoked by _onToggleTracing to stop execution tracing in the
    * backend.
+   *
+   * @return object
+   *         A promise resolved once the tracing has successfully stopped.
    */
   _onStopTracing: function() {
     this._traceButton.removeAttribute("checked");
     this._traceButton.setAttribute("tooltiptext", this._startTooltip);
-    DebuggerController.Tracer.stopTracing();
+
+    this.emptyText = this._tracingNotStartedString;
+
+    let deferred = promise.defer();
+    DebuggerController.Tracer.stopTracing(deferred.resolve);
+    return deferred.promise;
   },
 
   /**
@@ -1336,7 +1354,6 @@ TracerView.prototype = Heritage.extend(WidgetMethods, {
   selectTab: function() {
     const tabs = this._tracerTab.parentElement;
     tabs.selectedIndex = Array.indexOf(tabs.children, this._tracerTab);
-    this._tracerDeck.selectedIndex = 0;
   },
 
   /**
@@ -1856,8 +1873,9 @@ VariableBubbleView.prototype = {
       this._tooltip.setVariableContent(objectActor, {
         searchPlaceholder: L10N.getStr("emptyPropertiesFilterText"),
         searchEnabled: Prefs.variablesSearchboxVisible,
-        eval: aString => {
-          DebuggerController.StackFrames.evaluate(aString);
+        eval: (variable, value) => {
+          let string = variable.evaluationMacro(variable, value);
+          DebuggerController.StackFrames.evaluate(string);
           DebuggerView.VariableBubble.hideContents();
         }
       }, {
@@ -1875,13 +1893,7 @@ VariableBubbleView.prototype = {
       });
     }
 
-    // Calculate the x, y coordinates for the variable bubble anchor.
-    let identifierCenter = { line: line - 1, ch: column + length / 2 };
-    let anchor = editor.getCoordsFromPosition(identifierCenter);
-
-    this._tooltip.defaultOffsetX = anchor.left + EDITOR_VARIABLE_POPUP_OFFSET_X;
-    this._tooltip.defaultOffsetY = anchor.top + EDITOR_VARIABLE_POPUP_OFFSET_Y;
-    this._tooltip.show(this._editorContainer);
+    this._tooltip.show(this._markedText.anchor);
   },
 
   /**
@@ -2244,7 +2256,6 @@ EventListenersView.prototype = Heritage.extend(WidgetMethods, {
     dumpn("Initializing the EventListenersView");
 
     this.widget = new SideMenuWidget(document.getElementById("event-listeners"), {
-      theme: "light",
       showItemCheckboxes: true,
       showGroupCheckboxes: true
     });
@@ -2775,7 +2786,15 @@ GlobalSearchView.prototype = Heritage.extend(WidgetMethods, {
     let line = lineResultsItem.instance.line;
 
     DebuggerView.setEditorLocation(url, line + 1, { noDebug: true });
-    DebuggerView.editor.extendSelection(lineResultsItem.lineData.range);
+
+    let range = lineResultsItem.lineData.range;
+    let cursor = DebuggerView.editor.getOffset({ line: line, ch: 0 });
+    let [ anchor, head ] = DebuggerView.editor.getPosition(
+      cursor + range.start,
+      cursor + range.start + range.length
+    );
+
+    DebuggerView.editor.setSelection(anchor, head);
   },
 
   /**
@@ -3040,7 +3059,7 @@ LineResults.prototype = {
     lineNumberNode.setAttribute("value", this.line + 1);
 
     let lineContentsNode = document.createElement("hbox");
-    lineContentsNode.className = "light list-widget-item dbg-results-line-contents";
+    lineContentsNode.className = "dbg-results-line-contents";
     lineContentsNode.classList.add("devtools-monospace");
     lineContentsNode.setAttribute("flex", "1");
 

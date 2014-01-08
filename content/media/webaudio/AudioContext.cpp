@@ -81,15 +81,14 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            uint32_t aNumberOfChannels,
                            uint32_t aLength,
                            float aSampleRate)
-  : mSampleRate(GetSampleRateForAudioContext(aIsOffline, aSampleRate))
+  : nsDOMEventTargetHelper(aWindow)
+  , mSampleRate(GetSampleRateForAudioContext(aIsOffline, aSampleRate))
   , mNumberOfChannels(aNumberOfChannels)
   , mIsOffline(aIsOffline)
   , mIsStarted(!aIsOffline)
   , mIsShutDown(false)
 {
-  nsDOMEventTargetHelper::BindToOwner(aWindow);
   aWindow->AddAudioContext(this);
-  SetIsDOMBinding();
 
   // Note: AudioDestinationNode needs an AudioContext that must already be
   // bound to the window.
@@ -624,14 +623,18 @@ void
 AudioContext::Mute() const
 {
   MOZ_ASSERT(!mIsOffline);
-  mDestination->Mute();
+  if (mDestination) {
+    mDestination->Mute();
+  }
 }
 
 void
 AudioContext::Unmute() const
 {
   MOZ_ASSERT(!mIsOffline);
-  mDestination->Unmute();
+  if (mDestination) {
+    mDestination->Unmute();
+  }
 }
 
 AudioChannel
