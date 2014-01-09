@@ -1139,7 +1139,7 @@ class WatchdogManager : public nsIObserver
     }
 
     NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic,
-                       const PRUnichar* aData)
+                       const char16_t* aData)
     {
         RefreshWatchdog();
         return NS_OK;
@@ -1414,7 +1414,7 @@ XPCJSRuntime::SizeOfIncludingThis(MallocSizeOf mallocSizeOf)
 }
 
 XPCReadableJSStringWrapper *
-XPCJSRuntime::NewStringWrapper(const PRUnichar *str, uint32_t len)
+XPCJSRuntime::NewStringWrapper(const char16_t *str, uint32_t len)
 {
     for (uint32_t i = 0; i < XPCCCX_STRING_CACHE_SIZE; ++i) {
         StringWrapperEntry& ent = mScratchStrings[i];
@@ -1629,21 +1629,24 @@ JSMainRuntimeCompartmentsUserDistinguishedAmount()
     return JS::UserCompartmentCount(rt);
 }
 
-class JSMainRuntimeTemporaryPeakReporter MOZ_FINAL : public MemoryUniReporter
+class JSMainRuntimeTemporaryPeakReporter MOZ_FINAL : public nsIMemoryReporter
 {
-public:
-    JSMainRuntimeTemporaryPeakReporter()
-      : MemoryUniReporter("js-main-runtime-temporary-peak",
-                           KIND_OTHER, UNITS_BYTES,
-"The peak size of the transient storage in the main JSRuntime (the current "
-"size of which is reported as 'explicit/js-non-window/runtime/temporary').")
-    {}
-private:
-    int64_t Amount() MOZ_OVERRIDE
+  public:
+    NS_DECL_ISUPPORTS
+
+    NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
+                              nsISupports* aData)
     {
-        return JSMainRuntimeTemporaryPeakDistinguishedAmount();
+        return MOZ_COLLECT_REPORT(
+            "js-main-runtime-temporary-peak", KIND_OTHER, UNITS_BYTES,
+            JSMainRuntimeTemporaryPeakDistinguishedAmount(),
+            "The peak size of the transient storage in the main JSRuntime "
+            "(the current size of which is reported as "
+            "'explicit/js-non-window/runtime/temporary').");
     }
 };
+
+NS_IMPL_ISUPPORTS1(JSMainRuntimeTemporaryPeakReporter, nsIMemoryReporter)
 
 // The REPORT* macros do an unconditional report.  The ZCREPORT* macros are for
 // compartments and zones; they aggregate any entries smaller than
@@ -1792,11 +1795,11 @@ ReportZoneStats(const JS::ZoneStats &zStats,
                    "Memory holding miscellaneous additional information associated with lazy "
                    "scripts.  This memory is allocated on the malloc heap.");
 
-    ZCREPORT_GC_BYTES(pathPrefix + NS_LITERAL_CSTRING("ion-codes-gc-heap"),
-                      zStats.ionCodesGCHeap,
+    ZCREPORT_GC_BYTES(pathPrefix + NS_LITERAL_CSTRING("jit-codes-gc-heap"),
+                      zStats.jitCodesGCHeap,
                       "Memory on the garbage-collected JavaScript "
                       "heap that holds references to executable code pools "
-                      "used by the IonMonkey JIT.");
+                      "used by the JITs.");
 
     ZCREPORT_GC_BYTES(pathPrefix + NS_LITERAL_CSTRING("type-objects/gc-heap"),
                       zStats.typeObjectsGCHeap,
@@ -2447,6 +2450,15 @@ class OrphanReporter : public JS::ObjectPrivateVisitor
     nsTHashtable <nsISupportsHashKey> mAlreadyMeasuredOrphanTrees;
 };
 
+#ifdef DEBUG
+static bool
+StartsWithExplicit(nsACString& s)
+{
+    const char* e = "explicit/";
+    return Substring(s, 0, strlen(e)).Equals(e);
+}
+#endif
+
 class XPCJSRuntimeStats : public JS::RuntimeStats
 {
     WindowPaths *mWindowPaths;
@@ -2494,6 +2506,8 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
         }
 
         extras->pathPrefix += nsPrintfCString("zone(0x%p)/", (void *)zone);
+
+        MOZ_ASSERT(StartsWithExplicit(extras->pathPrefix));
 
         zStats->extra = extras;
     }
@@ -2562,6 +2576,9 @@ class XPCJSRuntimeStats : public JS::RuntimeStats
         // "explicit/dom/<something>?!/" otherwise (in which case it shouldn't
         // be used, because non-nsGlobalWindow compartments shouldn't have
         // orphan DOM nodes).
+
+        MOZ_ASSERT(StartsWithExplicit(extras->jsPathPrefix));
+        MOZ_ASSERT(StartsWithExplicit(extras->domPathPrefix));
 
         cstats->extra = extras;
     }
@@ -2903,6 +2920,12 @@ class XPCJSSourceHook: public js::SourceHook {
     }
 };
 
+static const JSWrapObjectCallbacks WrapObjectCallbacks = {
+    xpc::WrapperFactory::Rewrap,
+    xpc::WrapperFactory::WrapForSameCompartment,
+    xpc::WrapperFactory::PrepareForWrapping
+};
+
 XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    : CycleCollectedJSRuntime(32L * 1024L * 1024L, JS_USE_HELPER_THREADS),
    mJSContextStack(new XPCJSContextStack()),
@@ -3031,10 +3054,7 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     JS_SetCompartmentNameCallback(runtime, CompartmentNameCallback);
     mPrevGCSliceCallback = JS::SetGCSliceCallback(runtime, GCSliceCallback);
     JS_SetFinalizeCallback(runtime, FinalizeCallback);
-    JS_SetWrapObjectCallbacks(runtime,
-                              xpc::WrapperFactory::Rewrap,
-                              xpc::WrapperFactory::WrapForSameCompartment,
-                              xpc::WrapperFactory::PrepareForWrapping);
+    JS_SetWrapObjectCallbacks(runtime, &WrapObjectCallbacks);
     js::SetPreserveWrapperCallback(runtime, PreserveWrapper);
 #ifdef MOZ_CRASHREPORTER
     JS_EnumerateDiagnosticMemoryRegions(DiagnosticMemoryCallback);

@@ -65,7 +65,7 @@ extern PRLogModuleInfo* gWindowsLog;
 #endif
 
 static uint32_t gInstanceCount = 0;
-const PRUnichar* kMetroSubclassThisProp = L"MetroSubclassThisProp";
+const char16_t* kMetroSubclassThisProp = L"MetroSubclassThisProp";
 HWND MetroWidget::sICoreHwnd = nullptr;
 
 namespace mozilla {
@@ -1586,30 +1586,10 @@ MetroWidget::HasPendingInputEvent()
 }
 
 NS_IMETHODIMP
-MetroWidget::Observe(nsISupports *subject, const char *topic, const PRUnichar *data)
+MetroWidget::Observe(nsISupports *subject, const char *topic, const char16_t *data)
 {
   NS_ENSURE_ARG_POINTER(topic);
-  if (!strcmp(topic, "apzc-scroll-offset-changed")) {
-    uint64_t scrollId;
-    int32_t presShellId;
-    CSSIntPoint scrollOffset;
-    int matched = sscanf(NS_LossyConvertUTF16toASCII(data).get(),
-                         "%llu %d (%d, %d)",
-                         &scrollId,
-                         &presShellId,
-                         &scrollOffset.x,
-                         &scrollOffset.y);
-    if (matched != 4) {
-      NS_WARNING("Malformed scroll-offset-changed message");
-      return NS_ERROR_UNEXPECTED;
-    }
-    if (!mController) {
-      return NS_ERROR_UNEXPECTED;
-    }
-    mController->UpdateScrollOffset(ScrollableLayerGuid(mRootLayerTreeId, presShellId, scrollId),
-                                    scrollOffset);
-  }
-  else if (!strcmp(topic, "apzc-zoom-to-rect")) {
+  if (!strcmp(topic, "apzc-zoom-to-rect")) {
     CSSRect rect = CSSRect();
     uint64_t viewId = 0;
     int32_t presShellId = 0;
@@ -1635,7 +1615,8 @@ MetroWidget::Observe(nsISupports *subject, const char *topic, const PRUnichar *d
     }
 
     ScrollableLayerGuid guid = ScrollableLayerGuid(mRootLayerTreeId, presShellId, viewId);
-    APZController::sAPZC->UpdateZoomConstraints(guid, false, CSSToScreenScale(1.0f), CSSToScreenScale(1.0f));
+    APZController::sAPZC->UpdateZoomConstraints(guid,
+      ZoomConstraints(false, CSSToScreenScale(1.0f), CSSToScreenScale(1.0f)));
   }
   return NS_OK;
 }

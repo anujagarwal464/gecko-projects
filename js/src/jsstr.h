@@ -226,6 +226,9 @@ StringHasPattern(const jschar *text, uint32_t textlen,
 extern size_t
 js_strlen(const jschar *s);
 
+extern int32_t
+js_strcmp(const jschar *lhs, const jschar *rhs);
+
 extern jschar *
 js_strchr_limit(const jschar *s, jschar c, const jschar *limit);
 
@@ -362,6 +365,10 @@ str_split_string(JSContext *cx, HandleTypeObject type, HandleString str, HandleS
 bool
 str_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
             MutableHandleObject objp);
+
+bool
+str_replace_regexp_raw(JSContext *cx, HandleString string, HandleObject regexp,
+                       HandleString replacement, MutableHandleValue rval);
 
 } /* namespace js */
 

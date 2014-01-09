@@ -140,10 +140,10 @@ NS_IMPL_ISUPPORTS2(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
 NS_IMETHODIMP
 SRGBOverrideObserver::Observe(nsISupports *aSubject,
                               const char *aTopic,
-                              const PRUnichar *someData)
+                              const char16_t *someData)
 {
     NS_ASSERTION(NS_strcmp(someData,
-                   NS_LITERAL_STRING("gfx.color_mangement.force_srgb").get()),
+                   MOZ_UTF16("gfx.color_mangement.force_srgb")),
                  "Restarting CMS on wrong pref!");
     ShutdownCMS();
     return NS_OK;
@@ -183,7 +183,7 @@ NS_IMPL_ISUPPORTS1(FontPrefsObserver, nsIObserver)
 NS_IMETHODIMP
 FontPrefsObserver::Observe(nsISupports *aSubject,
                            const char *aTopic,
-                           const PRUnichar *someData)
+                           const char16_t *someData)
 {
     if (!someData) {
         NS_ERROR("font pref observer code broken");
@@ -207,7 +207,7 @@ NS_IMPL_ISUPPORTS1(OrientationSyncPrefsObserver, nsIObserver)
 NS_IMETHODIMP
 OrientationSyncPrefsObserver::Observe(nsISupports *aSubject,
                                       const char *aTopic,
-                                      const PRUnichar *someData)
+                                      const char16_t *someData)
 {
     if (!someData) {
         NS_ERROR("orientation sync pref observer broken");
@@ -231,7 +231,7 @@ NS_IMPL_ISUPPORTS1(MemoryPressureObserver, nsIObserver)
 NS_IMETHODIMP
 MemoryPressureObserver::Observe(nsISupports *aSubject,
                                 const char *aTopic,
-                                const PRUnichar *someData)
+                                const char16_t *someData)
 {
     NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
     Factory::PurgeAllCaches();
@@ -272,7 +272,6 @@ static const char *gPrefLangNames[] = {
     "x-sinh",
     "x-tibt",
     "x-unicode",
-    "x-user-def"
 };
 
 gfxPlatform::gfxPlatform()
@@ -415,7 +414,7 @@ gfxPlatform::Init()
 
     if (useOffMainThreadCompositing && (XRE_GetProcessType() == GeckoProcessType_Default)) {
         CompositorParent::StartUp();
-        if (Preferences::GetBool("layers.async-video.enabled", false)) {
+        if (AsyncVideoEnabled()) {
             ImageBridgeChild::StartUp();
         }
     }
@@ -1872,7 +1871,7 @@ static void MigratePrefs()
 // default SetupClusterBoundaries, based on Unicode properties;
 // platform subclasses may override if they wish
 void
-gfxPlatform::SetupClusterBoundaries(gfxTextRun *aTextRun, const PRUnichar *aString)
+gfxPlatform::SetupClusterBoundaries(gfxTextRun *aTextRun, const char16_t *aString)
 {
     if (aTextRun->GetFlags() & gfxTextRunFactory::TEXT_IS_8BIT) {
         // 8-bit text doesn't have clusters.
@@ -2045,6 +2044,7 @@ static bool sPrefLayersPreferOpenGL = false;
 static bool sPrefLayersPreferD3D9 = false;
 static bool sPrefLayersDump = false;
 static bool sPrefLayersScrollGraph = false;
+static bool sPrefLayersEnableTiles = false;
 static bool sLayersSupportsD3D9 = false;
 static int  sPrefLayoutFrameRate = -1;
 static bool sBufferRotationEnabled = false;
@@ -2073,6 +2073,7 @@ InitLayersAccelerationPrefs()
     sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
     sPrefLayersDump = Preferences::GetBool("layers.dump", false);
     sPrefLayersScrollGraph = Preferences::GetBool("layers.scroll-graph", false);
+    sPrefLayersEnableTiles = Preferences::GetBool("layers.enable-tiles", false);
     sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
     sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
     sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
@@ -2187,6 +2188,13 @@ gfxPlatform::GetPrefLayersScrollGraph()
 }
 
 bool
+gfxPlatform::GetPrefLayersEnableTiles()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefLayersEnableTiles;
+}
+
+bool
 gfxPlatform::BufferRotationEnabled()
 {
   MutexAutoLock autoLock(*gGfxPlatformPrefsLock);
@@ -2212,4 +2220,14 @@ gfxPlatform::ComponentAlphaEnabled()
 
   InitLayersAccelerationPrefs();
   return sComponentAlphaEnabled;
+}
+
+bool
+gfxPlatform::AsyncVideoEnabled()
+{
+#ifdef XP_WIN
+  return false;
+#else
+  return Preferences::GetBool("layers.async-video.enabled", false);
+#endif
 }

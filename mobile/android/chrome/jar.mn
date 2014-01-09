@@ -16,6 +16,7 @@ chrome.jar:
   content/aboutDownloads.xhtml         (content/aboutDownloads.xhtml)
   content/aboutDownloads.js            (content/aboutDownloads.js)
   content/aboutFeedback.xhtml          (content/aboutFeedback.xhtml)
+  content/aboutFeedback.js	       (content/aboutFeedback.js)
   content/aboutPrivateBrowsing.xhtml   (content/aboutPrivateBrowsing.xhtml)
   content/aboutReader.html             (content/aboutReader.html)
   content/aboutReader.js               (content/aboutReader.js)
@@ -55,6 +56,8 @@ chrome.jar:
   content/aboutHealthReport.xhtml      (content/aboutHealthReport.xhtml)
 * content/aboutHealthReport.js         (content/aboutHealthReport.js)
 #endif
+  content/aboutAccounts.xhtml          (content/aboutAccounts.xhtml)
+* content/aboutAccounts.js             (content/aboutAccounts.js)
 
 % content branding %content/branding/
 

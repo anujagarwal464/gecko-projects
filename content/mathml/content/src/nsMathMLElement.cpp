@@ -34,10 +34,10 @@ NS_IMPL_ISUPPORTS_INHERITED3(nsMathMLElement, nsMathMLElementBase,
                              nsIDOMElement, nsIDOMNode, Link)
 
 static nsresult
-WarnDeprecated(const PRUnichar* aDeprecatedAttribute, 
-               const PRUnichar* aFavoredAttribute, nsIDocument* aDocument)
+WarnDeprecated(const char16_t* aDeprecatedAttribute, 
+               const char16_t* aFavoredAttribute, nsIDocument* aDocument)
 {
-  const PRUnichar *argv[] = 
+  const char16_t *argv[] = 
     { aDeprecatedAttribute, aFavoredAttribute };
   return nsContentUtils::
           ReportToConsole(nsIScriptError::warningFlag,
@@ -49,7 +49,7 @@ WarnDeprecated(const PRUnichar* aDeprecatedAttribute,
 static nsresult 
 ReportLengthParseError(const nsString& aValue, nsIDocument* aDocument)
 {
-  const PRUnichar *arg = aValue.get();
+  const char16_t *arg = aValue.get();
   return nsContentUtils::
          ReportToConsole(nsIScriptError::errorFlag,
                          NS_LITERAL_CSTRING("MathML"), aDocument,
@@ -62,7 +62,7 @@ ReportParseErrorNoTag(const nsString& aValue,
                       nsIAtom*        aAtom,
                       nsIDocument*    aDocument)
 {
-  const PRUnichar *argv[] = 
+  const char16_t *argv[] = 
     { aValue.get(), aAtom->GetUTF16String() };
   return nsContentUtils::
          ReportToConsole(nsIScriptError::errorFlag,
@@ -377,7 +377,7 @@ nsMathMLElement::ParseNumericValue(const nsString& aString,
 
   // see if the negative sign is there
   int32_t i = 0;
-  PRUnichar c = str[0];
+  char16_t c = str[0];
   if (c == '-') {
     number.Append(c);
     i++;
@@ -558,7 +558,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
           // then it's a relative value and we store the nsCSSValue as an
           // Integer to indicate that. Otherwise we store it as a Number
           // to indicate that the scriptlevel is absolute.
-          PRUnichar ch = str.CharAt(0);
+          char16_t ch = str.CharAt(0);
           if (ch == '+' || ch == '-') {
             scriptLevel->SetIntValue(intValue, eCSSUnit_Integer);
           } else {
@@ -1074,8 +1074,8 @@ nsMathMLElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       (aNameSpaceID == kNameSpaceID_None ||
        aNameSpaceID == kNameSpaceID_XLink)) {
     if (aNameSpaceID == kNameSpaceID_XLink) {
-      WarnDeprecated(NS_LITERAL_STRING("xlink:href").get(),
-                     NS_LITERAL_STRING("href").get(), OwnerDoc());
+      WarnDeprecated(MOZ_UTF16("xlink:href"),
+                     MOZ_UTF16("href"), OwnerDoc());
     }
     Link::ResetLinkState(!!aNotify, true);
   }

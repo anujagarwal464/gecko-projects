@@ -50,6 +50,8 @@ class StableCharPtr : public CharPtr {
     StableCharPtr(const jschar *pos, const jschar *start, size_t len)
       : CharPtr(pos, start, len)
     {}
+
+    using CharPtr::operator=;
 };
 
 #if defined JS_THREADSAFE && defined JS_DEBUG
@@ -838,6 +840,13 @@ typedef JSObject *
  */
 typedef JSObject *
 (* JSSameCompartmentWrapObjectCallback)(JSContext *cx, JS::Handle<JSObject*> obj);
+
+struct JSWrapObjectCallbacks
+{
+    JSWrapObjectCallback wrap;
+    JSSameCompartmentWrapObjectCallback sameCompartmentWrap;
+    JSPreWrapCallback preWrap;
+};
 
 typedef void
 (* JSDestroyCompartmentCallback)(JSFreeOp *fop, JSCompartment *compartment);
@@ -1635,11 +1644,8 @@ JS_SetSweepZoneCallback(JSRuntime *rt, JSZoneCallback callback);
 extern JS_PUBLIC_API(void)
 JS_SetCompartmentNameCallback(JSRuntime *rt, JSCompartmentNameCallback callback);
 
-extern JS_PUBLIC_API(JSWrapObjectCallback)
-JS_SetWrapObjectCallbacks(JSRuntime *rt,
-                          JSWrapObjectCallback callback,
-                          JSSameCompartmentWrapObjectCallback sccallback,
-                          JSPreWrapCallback precallback);
+extern JS_PUBLIC_API(void)
+JS_SetWrapObjectCallbacks(JSRuntime *rt, const JSWrapObjectCallbacks *callbacks);
 
 extern JS_PUBLIC_API(void)
 JS_SetCompartmentPrivate(JSCompartment *compartment, void *data);
@@ -2200,6 +2206,9 @@ JS_SetGCParameterForThread(JSContext *cx, JSGCParamKey key, uint32_t value);
 extern JS_PUBLIC_API(uint32_t)
 JS_GetGCParameterForThread(JSContext *cx, JSGCParamKey key);
 
+extern JS_PUBLIC_API(void)
+JS_SetGCParametersBasedOnAvailableMemory(JSRuntime *rt, uint32_t availMem);
+
 /*
  * Create a new JSString whose chars member refers to external memory, i.e.,
  * memory requiring application-specific finalization.
@@ -2578,6 +2587,7 @@ class JS_PUBLIC_API(CompartmentOptions)
     explicit CompartmentOptions()
       : version_(JSVERSION_UNKNOWN)
       , invisibleToDebugger_(false)
+      , mergeable_(false)
     {
         zone_.spec = JS::FreshZone;
     }
@@ -2593,9 +2603,19 @@ class JS_PUBLIC_API(CompartmentOptions)
     // of the embedding, and references to them should never leak out to script.
     // This flag causes the this compartment to skip firing onNewGlobalObject
     // and makes addDebuggee a no-op for this global.
-    bool invisibleToDebugger() { return invisibleToDebugger_; }
+    bool invisibleToDebugger() const { return invisibleToDebugger_; }
     CompartmentOptions &setInvisibleToDebugger(bool flag) {
         invisibleToDebugger_ = flag;
+        return *this;
+    }
+
+    // Compartments used for off-thread compilation have their contents merged
+    // into a target compartment when the compilation is finished. This is only
+    // allowed if this flag is set.  The invisibleToDebugger flag must also be
+    // set for such compartments.
+    bool mergeable() const { return mergeable_; }
+    CompartmentOptions &setMergeable(bool flag) {
+        mergeable_ = flag;
         return *this;
     }
 
@@ -2622,6 +2642,7 @@ class JS_PUBLIC_API(CompartmentOptions)
   private:
     JSVersion version_;
     bool invisibleToDebugger_;
+    bool mergeable_;
     Override baselineOverride_;
     Override typeInferenceOverride_;
     Override ionOverride_;
@@ -3173,6 +3194,7 @@ JS_DropPrincipals(JSRuntime *rt, JSPrincipals *principals);
 struct JSSecurityCallbacks {
     JSCheckAccessOp            checkObjectAccess;
     JSCSPEvalChecker           contentSecurityPolicyAllows;
+    JSSubsumesOp               subsumes;
 };
 
 extern JS_PUBLIC_API(void)
@@ -4465,14 +4487,6 @@ extern JS_PUBLIC_API(JSErrorReport *)
 JS_ErrorFromException(JSContext *cx, JS::HandleValue v);
 
 /*
- * Given a reported error's message and JSErrorReport struct pointer, throw
- * the corresponding exception on cx.
- */
-extern JS_PUBLIC_API(bool)
-JS_ThrowReportedError(JSContext *cx, const char *message,
-                      JSErrorReport *reportp);
-
-/*
  * Throws a StopIteration exception on cx.
  */
 extern JS_PUBLIC_API(bool)
@@ -4543,6 +4557,8 @@ typedef enum JSJitCompilerOption {
 
 extern JS_PUBLIC_API(void)
 JS_SetGlobalJitCompilerOption(JSContext *cx, JSJitCompilerOption opt, uint32_t value);
+extern JS_PUBLIC_API(int)
+JS_GetGlobalJitCompilerOption(JSContext *cx, JSJitCompilerOption opt);
 
 /*
  * Convert a uint32_t index into a jsid.
@@ -4667,13 +4683,16 @@ typedef void
 (* CloseAsmJSCacheEntryForWriteOp)(HandleObject global, size_t size, uint8_t *memory,
                                    intptr_t handle);
 
+typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
+
 // Return the buildId (represented as a sequence of characters) associated with
 // the currently-executing build. If the JS engine is embedded such that a
 // single cache entry can be observed by different compiled versions of the JS
 // engine, it is critical that the buildId shall change for each new build of
 // the JS engine.
+
 typedef bool
-(* BuildIdOp)(js::Vector<char> *buildId);
+(* BuildIdOp)(BuildIdCharVector *buildId);
 
 struct AsmJSCacheOps
 {

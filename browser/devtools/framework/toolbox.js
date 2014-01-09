@@ -35,6 +35,7 @@ loader.lazyGetter(this, "toolboxStrings", () => {
       return bundle.formatStringFromName(name, args, args.length);
     } catch (ex) {
       Services.console.logStringMessage("Error reading '" + name + "'");
+      return null;
     }
   };
 });
@@ -585,6 +586,7 @@ Toolbox.prototype = {
           deck.insertBefore(vbox, deck.childNodes[i]);
           return true;
         }
+        return false;
       });
     }
 
@@ -796,7 +798,7 @@ Toolbox.prototype = {
    */
   highlightTool: function(id) {
     let tab = this.doc.getElementById("toolbox-tab-" + id);
-    tab && tab.classList.add("highlighted");
+    tab && tab.setAttribute("highlighted", "true");
   },
 
   /**
@@ -807,7 +809,7 @@ Toolbox.prototype = {
    */
   unhighlightTool: function(id) {
     let tab = this.doc.getElementById("toolbox-tab-" + id);
-    tab && tab.classList.remove("highlighted");
+    tab && tab.removeAttribute("highlighted");
   },
 
   /**
@@ -867,7 +869,7 @@ Toolbox.prototype = {
    */
   switchHost: function(hostType) {
     if (hostType == this._host.type || !this._target.isLocalTab) {
-      return;
+      return null;
     }
 
     let newHost = this._createHost(hostType);
@@ -992,16 +994,7 @@ Toolbox.prototype = {
     gDevTools.off("tool-registered", this._toolRegistered);
     gDevTools.off("tool-unregistered", this._toolUnregistered);
 
-    // Revert docShell.allowJavascript back to its original value if it was
-    // changed via the Disable JS option.
-    if (typeof this._origAllowJavascript != "undefined") {
-      let docShell = this._host.hostTab.linkedBrowser.docShell;
-      docShell.allowJavascript = this._origAllowJavascript;
-      this._origAllowJavascript = undefined;
-    }
-
     let outstanding = [];
-
     for (let [id, panel] of this._toolPanels) {
       try {
         outstanding.push(panel.destroy());
@@ -1025,12 +1018,13 @@ Toolbox.prototype = {
       // This is done after other destruction tasks since it may tear down
       // fronts and the debugger transport which earlier destroy methods may
       // require to complete.
-      if (this._target) {
-        let target = this._target;
-        this._target = null;
-        target.off("close", this.destroy);
-        return target.destroy();
+      if (!this._target) {
+        return null;
       }
+      let target = this._target;
+      this._target = null;
+      target.off("close", this.destroy);
+      return target.destroy();
     }).then(() => {
       this.emit("destroyed");
       // Free _host after the call to destroyed in order to let a chance

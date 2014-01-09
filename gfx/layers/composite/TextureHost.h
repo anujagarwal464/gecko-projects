@@ -149,6 +149,8 @@ public:
    */
   virtual void DeallocateDeviceData() = 0;
 
+  virtual void SetCompositor(Compositor* aCompositor) {}
+
   void SetNextSibling(NewTextureSource* aTexture)
   {
     mNextSibling = aTexture;
@@ -195,7 +197,6 @@ public:
    * the device texture it uploads to internally.
    */
   virtual bool Update(gfx::DataSourceSurface* aSurface,
-                      TextureFlags aFlags,
                       nsIntRegion* aDestRegion = nullptr,
                       gfx::IntPoint* aSrcOffset = nullptr) = 0;
 
@@ -778,6 +779,29 @@ protected:
                               // this will be gone in Gecko 24. See bug 858914.
   RefPtr<ISurfaceAllocator> mDeAllocator;
   gfx::SurfaceFormat mFormat;
+};
+
+class MOZ_STACK_CLASS AutoLockTextureHost
+{
+public:
+  AutoLockTextureHost(TextureHost* aTexture)
+    : mTexture(aTexture)
+  {
+    mLocked = mTexture ? mTexture->Lock() : false;
+  }
+
+  ~AutoLockTextureHost()
+  {
+    if (mTexture && mLocked) {
+      mTexture->Unlock();
+    }
+  }
+
+  bool Failed() { return mTexture && !mLocked; }
+
+private:
+  RefPtr<TextureHost> mTexture;
+  bool mLocked;
 };
 
 class AutoLockDeprecatedTextureHost

@@ -326,7 +326,7 @@ template <> struct TypeToPassInFloatReg<double> {
     static const uint32_t result = 1;
 };
 
-// Convert argument types to root types used by the gc, see MarkIonExitFrame.
+// Convert argument types to root types used by the gc, see MarkJitExitFrame.
 template <class T> struct TypeToRootType {
     static const uint32_t result = VMFunction::RootNone;
 };
@@ -663,6 +663,8 @@ JSObject *CreateDerivedTypedObj(JSContext *cx, HandleObject type,
                                 HandleObject owner, int32_t offset);
 
 bool Recompile(JSContext *cx);
+JSString *regexp_replace(JSContext *cx, HandleString string, HandleObject regexp,
+                         HandleString repl);
 
 #ifdef DEBUG
 void AssertValidObjectPtr(JSContext *cx, JSObject *obj);

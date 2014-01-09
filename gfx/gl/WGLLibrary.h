@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "GLContextTypes.h"
+#include <windows.h>
+
 struct PRLibrary;
 
 namespace mozilla {
@@ -80,6 +82,8 @@ public:
     LibraryType GetLibraryType() const { return mLibType; }
     static LibraryType SelectLibrary(const ContextFlags& aFlags);
     
+    PRLibrary *GetOGLLibrary() { return mOGLLibrary; }
+
 private:
     bool mInitialized;
     PRLibrary *mOGLLibrary;

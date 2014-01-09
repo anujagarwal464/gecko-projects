@@ -40,8 +40,6 @@ public class SearchEnginePreference extends Preference implements View.OnLongCli
 
     // Specifies if this engine is configured as the default search engine.
     private boolean mIsDefaultEngine;
-    // Specifies if this engine is one of the ones bundled with the app, which cannot be deleted.
-    private boolean mIsImmutableEngine;
 
     // Dialog element labels.
     private String[] mDialogItems;
@@ -121,12 +119,7 @@ public class SearchEnginePreference extends Preference implements View.OnLongCli
     public void setSearchEngineFromJSON(JSONObject geckoEngineJSON) throws JSONException {
         final String engineName = geckoEngineJSON.getString("name");
         final SpannableString titleSpannable = new SpannableString(engineName);
-        mIsImmutableEngine = geckoEngineJSON.getBoolean("immutable");
 
-        if (mIsImmutableEngine) {
-            // Delete the "Remove" option from the menu.
-            mDialogItems = new String[] { getContext().getResources().getString(R.string.pref_search_set_default) };
-        }
         setTitle(titleSpannable);
 
         final String iconURI = geckoEngineJSON.getString("iconURI");
@@ -176,11 +169,6 @@ public class SearchEnginePreference extends Preference implements View.OnLongCli
             return;
         }
 
-        // If we are both default and immutable, we have no enabled items to show on the menu - abort.
-        if (mIsDefaultEngine && mIsImmutableEngine) {
-            return;
-        }
-
         final AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
         builder.setTitle(getTitle().toString());
         builder.setItems(mDialogItems, new DialogInterface.OnClickListener() {
@@ -205,7 +193,7 @@ public class SearchEnginePreference extends Preference implements View.OnLongCli
         // Copy the icon from this object to the prompt we produce. We lazily create the drawable,
         // as the user may not ever actually tap this object.
         if (mPromptIcon == null && mIconBitmap != null) {
-            mPromptIcon = new BitmapDrawable(mFaviconView.getBitmap());
+            mPromptIcon = new BitmapDrawable(getContext().getResources(), mFaviconView.getBitmap());
         }
 
         // Icons are hidden until Bug 926711 is fixed.

@@ -24,6 +24,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/HoldDropJSObjects.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "nsContentUtils.h"
 #include "nsWrapperCache.h"
@@ -96,10 +97,24 @@ public:
     eRethrowExceptions
   };
 
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
+  {
+    return aMallocSizeOf(this);
+  }
+
 protected:
   explicit CallbackObject(CallbackObject* aCallbackObject)
   {
     Init(aCallbackObject->mCallback, aCallbackObject->mIncumbentGlobal);
+  }
+
+  bool operator==(const CallbackObject& aOther) const
+  {
+    JSObject* thisObj =
+      js::UncheckedUnwrap(CallbackPreserveColor());
+    JSObject* otherObj =
+      js::UncheckedUnwrap(aOther.CallbackPreserveColor());
+    return thisObj == otherObj;
   }
 
 private:
@@ -304,11 +319,7 @@ public:
       return false;
     }
 
-    JSObject* thisObj =
-      js::UncheckedUnwrap(GetWebIDLCallback()->CallbackPreserveColor());
-    JSObject* otherObj =
-      js::UncheckedUnwrap(aOtherCallback->CallbackPreserveColor());
-    return thisObj == otherObj;
+    return *GetWebIDLCallback() == *aOtherCallback;
   }
 
   bool operator==(XPCOMCallbackT* aOtherCallback) const

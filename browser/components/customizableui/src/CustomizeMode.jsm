@@ -129,10 +129,13 @@ CustomizeMode.prototype = {
       window.PanelUI.menuButton.open = true;
       window.PanelUI.beginBatchUpdate();
 
+      // Hide the palette before starting the transition for increased perf.
+      this.visiblePalette.hidden = true;
+
       // Move the mainView in the panel to the holder so that we can see it
       // while customizing.
-      let panelHolder = document.getElementById("customization-panelHolder");
       let mainView = window.PanelUI.mainView;
+      let panelHolder = document.getElementById("customization-panelHolder");
       panelHolder.appendChild(mainView);
 
       let customizeButton = document.getElementById("PanelUI-customize");
@@ -191,6 +194,10 @@ CustomizeMode.prototype = {
       window.PanelUI.endBatchUpdate();
       this._customizing = true;
       this._transitioning = false;
+
+      // Show the palette now that the transition has finished.
+      this.visiblePalette.hidden = false;
+
       this.dispatchToolboxEvent("customizationready");
     }.bind(this)).then(null, function(e) {
       ERROR(e);
@@ -214,11 +221,14 @@ CustomizeMode.prototype = {
 
     this._removePanelCustomizationPlaceholders();
 
-    this._transitioning = true;
-
     let window = this.window;
     let document = this.document;
     let documentElement = document.documentElement;
+
+    // Hide the palette before starting the transition for increased perf.
+    this.visiblePalette.hidden = true;
+
+    this._transitioning = true;
 
     Task.spawn(function() {
       yield this.depopulatePalette();
@@ -396,6 +406,9 @@ CustomizeMode.prototype = {
       aNode = aNode.firstChild;
     }
     CustomizableUI.addWidgetToArea(aNode.id, CustomizableUI.AREA_NAVBAR);
+    if (!this._customizing) {
+      this.dispatchToolboxEvent("customizationchange");
+    }
   },
 
   addToPanel: function(aNode) {
@@ -404,6 +417,9 @@ CustomizeMode.prototype = {
       aNode = aNode.firstChild;
     }
     CustomizableUI.addWidgetToArea(aNode.id, CustomizableUI.AREA_PANEL);
+    if (!this._customizing) {
+      this.dispatchToolboxEvent("customizationchange");
+    }
   },
 
   removeFromArea: function(aNode) {
@@ -412,6 +428,9 @@ CustomizeMode.prototype = {
       aNode = aNode.firstChild;
     }
     CustomizableUI.removeWidgetFromArea(aNode.id);
+    if (!this._customizing) {
+      this.dispatchToolboxEvent("customizationchange");
+    }
   },
 
   populatePalette: function() {
@@ -527,9 +546,14 @@ CustomizeMode.prototype = {
       aNode.removeAttribute("command");
     }
 
-    if (aNode.checked) {
+    if (aNode.hasAttribute("observes")) {
+      wrapper.setAttribute("itemobserves", aNode.getAttribute("observes"));
+      aNode.removeAttribute("observes");
+    }
+
+    if (aNode.getAttribute("checked") == "true") {
       wrapper.setAttribute("itemchecked", "true");
-      aNode.checked = false;
+      aNode.removeAttribute("checked");
     }
 
     if (aNode.hasAttribute("id")) {
@@ -600,6 +624,10 @@ CustomizeMode.prototype = {
       ERROR("no toolbarItem child for " + aWrapper.tagName + "#" + aWrapper.id);
       aWrapper.remove();
       return null;
+    }
+
+    if (aWrapper.hasAttribute("itemobserves")) {
+      toolbarItem.setAttribute("observes", aWrapper.getAttribute("itemobserves"));
     }
 
     if (aWrapper.hasAttribute("itemchecked")) {

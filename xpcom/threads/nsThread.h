@@ -18,8 +18,8 @@
 #include "nsAutoPtr.h"
 
 // A native thread
-class nsThread MOZ_FINAL : public nsIThreadInternal,
-                           public nsISupportsPriority
+class nsThread : public nsIThreadInternal,
+                 public nsISupportsPriority
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -54,7 +54,7 @@ public:
   static nsresult
   SetMainThreadObserver(nsIThreadObserver* aObserver);
 
-private:
+protected:
   static nsIThreadObserver* sMainThreadObserver;
 
   class nsChainedEventQueue;
@@ -64,7 +64,7 @@ private:
 
   friend class nsThreadShutdownEvent;
 
-  ~nsThread();
+  virtual ~nsThread();
 
   bool ShuttingDown() { return mShutdownContext != nullptr; }
 
@@ -149,6 +149,8 @@ private:
   PRThread *mThread;
   uint32_t  mRunningEvent;  // counter
   uint32_t  mStackSize;
+
+  uint32_t  mProcessingEvent;
 
   struct nsThreadShutdownContext *mShutdownContext;
 

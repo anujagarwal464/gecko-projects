@@ -86,6 +86,9 @@ public:
      */
     static void JoinAllSubprocesses();
 
+    static bool PreallocatedProcessReady();
+    static void RunAfterPreallocatedProcessReady(nsIRunnable* aRequest);
+
     static already_AddRefed<ContentParent>
     GetNewOrUsed(bool aForBrowserElement = false);
 
@@ -381,7 +384,7 @@ private:
 
     virtual PAsmJSCacheEntryParent* AllocPAsmJSCacheEntryParent(
                                  const asmjscache::OpenMode& aOpenMode,
-                                 const int64_t& aSizeToWrite,
+                                 const asmjscache::WriteParams& aWriteParams,
                                  const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
     virtual bool DeallocPAsmJSCacheEntryParent(
                                    PAsmJSCacheEntryParent* aActor) MOZ_OVERRIDE;

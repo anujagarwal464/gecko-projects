@@ -1076,7 +1076,7 @@ UploadLastDir::StoreLastUsedDirectory(nsIDocument* aDoc, nsIFile* aDir)
 }
 
 NS_IMETHODIMP
-UploadLastDir::Observe(nsISupports* aSubject, char const* aTopic, PRUnichar const* aData)
+UploadLastDir::Observe(nsISupports* aSubject, char const* aTopic, char16_t const* aData)
 {
   if (strcmp(aTopic, "browser:purge-session-history") == 0) {
     nsCOMPtr<nsIContentPrefService2> contentPrefService =
@@ -2209,7 +2209,7 @@ HTMLInputElement::MozGetFileNameArray(nsTArray< nsString >& aArray)
 
 
 NS_IMETHODIMP
-HTMLInputElement::MozGetFileNameArray(uint32_t* aLength, PRUnichar*** aFileNames)
+HTMLInputElement::MozGetFileNameArray(uint32_t* aLength, char16_t*** aFileNames)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     // Since this function returns full paths it's important that normal pages
@@ -2221,8 +2221,8 @@ HTMLInputElement::MozGetFileNameArray(uint32_t* aLength, PRUnichar*** aFileNames
   MozGetFileNameArray(array);
 
   *aLength = array.Length();
-  PRUnichar** ret =
-    static_cast<PRUnichar**>(NS_Alloc(*aLength * sizeof(PRUnichar*)));
+  char16_t** ret =
+    static_cast<char16_t**>(NS_Alloc(*aLength * sizeof(char16_t*)));
   if (!ret) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -2269,7 +2269,7 @@ HTMLInputElement::MozSetFileNameArray(const Sequence< nsString >& aFileNames)
 }
 
 NS_IMETHODIMP
-HTMLInputElement::MozSetFileNameArray(const PRUnichar** aFileNames, uint32_t aLength)
+HTMLInputElement::MozSetFileNameArray(const char16_t** aFileNames, uint32_t aLength)
 {
   if (!nsContentUtils::IsCallerChrome()) {
     // setting the value of a "FILE" input widget requires chrome privilege
@@ -2484,7 +2484,7 @@ HTMLInputElement::GetDisplayFileName(nsAString& aValue) const
     nsString count;
     count.AppendInt(mFiles.Length());
 
-    const PRUnichar* params[] = { count.get() };
+    const char16_t* params[] = { count.get() };
     nsContentUtils::FormatLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
                                           "XFilesSelected", params, value);
   }
@@ -4439,14 +4439,14 @@ HTMLInputElement::SanitizeValue(nsAString& aValue)
     case NS_FORM_INPUT_TEL:
     case NS_FORM_INPUT_PASSWORD:
       {
-        PRUnichar crlf[] = { PRUnichar('\r'), PRUnichar('\n'), 0 };
+        char16_t crlf[] = { char16_t('\r'), char16_t('\n'), 0 };
         aValue.StripChars(crlf);
       }
       break;
     case NS_FORM_INPUT_EMAIL:
     case NS_FORM_INPUT_URL:
       {
-        PRUnichar crlf[] = { PRUnichar('\r'), PRUnichar('\n'), 0 };
+        char16_t crlf[] = { char16_t('\r'), char16_t('\n'), 0 };
         aValue.StripChars(crlf);
 
         aValue = nsContentUtils::TrimWhitespace<nsContentUtils::IsHTMLWhitespace>(aValue);
@@ -5077,18 +5077,18 @@ HTMLInputElement::SetRangeText(const nsAString& aReplacement, uint32_t aStart,
   }
 
   if (aSelectionStart == -1 && aSelectionEnd == -1) {
-      aRv = GetSelectionRange(&aSelectionStart, &aSelectionEnd);
-      if (aRv.Failed()) {
-        nsTextEditorState* state = GetEditorState();
-        if (state && state->IsSelectionCached()) {
-          aSelectionStart = state->GetSelectionProperties().mStart;
-          aSelectionEnd = state->GetSelectionProperties().mEnd;
-          aRv = NS_OK;
-        }
+    aRv = GetSelectionRange(&aSelectionStart, &aSelectionEnd);
+    if (aRv.Failed()) {
+      nsTextEditorState* state = GetEditorState();
+      if (state && state->IsSelectionCached()) {
+        aSelectionStart = state->GetSelectionProperties().mStart;
+        aSelectionEnd = state->GetSelectionProperties().mEnd;
+        aRv = NS_OK;
       }
+    }
   }
 
-  if (aStart < aEnd) {
+  if (aStart <= aEnd) {
     value.Replace(aStart, aEnd - aStart, aReplacement);
     SetValueInternal(value, false, false);
   }
@@ -5115,15 +5115,17 @@ HTMLInputElement::SetRangeText(const nsAString& aReplacement, uint32_t aStart,
     break;
     case mozilla::dom::SelectionMode::Preserve:
     {
-      if ((uint32_t)aSelectionStart > aEnd)
+      if ((uint32_t)aSelectionStart > aEnd) {
         aSelectionStart += delta;
-      else if ((uint32_t)aSelectionStart > aStart)
-       aSelectionStart = aStart;
+      } else if ((uint32_t)aSelectionStart > aStart) {
+        aSelectionStart = aStart;
+      }
 
-      if ((uint32_t)aSelectionEnd > aEnd)
+      if ((uint32_t)aSelectionEnd > aEnd) {
         aSelectionEnd += delta;
-      else if ((uint32_t)aSelectionEnd > aStart)
+      } else if ((uint32_t)aSelectionEnd > aStart) {
         aSelectionEnd = newEnd;
+      }
     }
     break;
   }
@@ -6553,7 +6555,7 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
       strMaxLength.AppendInt(maxLength);
       strTextLength.AppendInt(textLength);
 
-      const PRUnichar* params[] = { strMaxLength.get(), strTextLength.get() };
+      const char16_t* params[] = { strMaxLength.get(), strTextLength.get() };
       rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                  "FormValidationTextTooLong",
                                                  params, message);
@@ -6612,7 +6614,7 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
         if (title.Length() > nsIConstraintValidation::sContentSpecifiedMaxLengthMessage) {
           title.Truncate(nsIConstraintValidation::sContentSpecifiedMaxLengthMessage);
         }
-        const PRUnichar* params[] = { title.get() };
+        const char16_t* params[] = { title.get() };
         rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                    "FormValidationPatternMismatchWithTitle",
                                                    params, message);
@@ -6641,7 +6643,7 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
         NS_NOTREACHED("Unexpected input type");
       }
 
-      const PRUnichar* params[] = { maxStr.get() };
+      const char16_t* params[] = { maxStr.get() };
       rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                  "FormValidationRangeOverflow",
                                                  params, message);
@@ -6668,7 +6670,7 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
         NS_NOTREACHED("Unexpected input type");
       }
 
-      const PRUnichar* params[] = { minStr.get() };
+      const char16_t* params[] = { minStr.get() };
       rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                  "FormValidationRangeUnderflow",
                                                  params, message);
@@ -6708,12 +6710,12 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
         ConvertNumberToString(valueHigh, valueHighStr);
 
         if (valueLowStr.Equals(valueHighStr)) {
-          const PRUnichar* params[] = { valueLowStr.get() };
+          const char16_t* params[] = { valueLowStr.get() };
           rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                      "FormValidationStepMismatchOneValue",
                                                      params, message);
         } else {
-          const PRUnichar* params[] = { valueLowStr.get(), valueHighStr.get() };
+          const char16_t* params[] = { valueLowStr.get(), valueHighStr.get() };
           rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                      "FormValidationStepMismatch",
                                                      params, message);
@@ -6722,7 +6724,7 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
         nsAutoString valueLowStr;
         ConvertNumberToString(valueLow, valueLowStr);
 
-        const PRUnichar* params[] = { valueLowStr.get() };
+        const char16_t* params[] = { valueLowStr.get() };
         rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                                    "FormValidationStepMismatchOneValue",
                                                    params, message);
@@ -6805,7 +6807,7 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
 
   // Parsing the username.
   for (; i < atPos; ++i) {
-    PRUnichar c = value[i];
+    char16_t c = value[i];
 
     // The username characters have to be in this list to be valid.
     if (!(nsCRT::IsAsciiAlpha(c) || nsCRT::IsAsciiDigit(c) ||
@@ -6827,7 +6829,7 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
 
   // Parsing the domain name.
   for (; i < length; ++i) {
-    PRUnichar c = value[i];
+    char16_t c = value[i];
 
     if (c == '.') {
       // A dot can't follow a dot or a dash.
@@ -7026,15 +7028,15 @@ HTMLInputElement::SetFilePickerFiltersFromAccept(nsIFilePicker* filePicker)
     // First, check for image/audio/video filters...
     if (token.EqualsLiteral("image/*")) {
       filterMask = nsIFilePicker::filterImages;
-      filterBundle->GetStringFromName(NS_LITERAL_STRING("imageFilter").get(),
+      filterBundle->GetStringFromName(MOZ_UTF16("imageFilter"),
                                       getter_Copies(extensionListStr));
     } else if (token.EqualsLiteral("audio/*")) {
       filterMask = nsIFilePicker::filterAudio;
-      filterBundle->GetStringFromName(NS_LITERAL_STRING("audioFilter").get(),
+      filterBundle->GetStringFromName(MOZ_UTF16("audioFilter"),
                                       getter_Copies(extensionListStr));
     } else if (token.EqualsLiteral("video/*")) {
       filterMask = nsIFilePicker::filterVideo;
-      filterBundle->GetStringFromName(NS_LITERAL_STRING("videoFilter").get(),
+      filterBundle->GetStringFromName(MOZ_UTF16("videoFilter"),
                                       getter_Copies(extensionListStr));
     } else {
       //... if no image/audio/video filter is found, check mime types filters

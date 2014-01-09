@@ -11,7 +11,6 @@ import org.mozilla.gecko.animation.ViewHelper;
 import org.mozilla.gecko.home.HomeAdapter.OnAddPageListener;
 import org.mozilla.gecko.home.HomeConfig.PageEntry;
 import org.mozilla.gecko.home.HomeConfig.PageType;
-import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.util.HardwareUtils;
 
 import android.content.Context;
@@ -46,35 +45,10 @@ public class HomePager extends ViewPager {
     private final HomeConfig mConfig;
     private ConfigLoaderCallbacks mConfigLoaderCallbacks;
 
-    private Page mInitialPage;
+    private String mInitialPageId;
 
-    // List of pages in order.
-    @RobocopTarget
-    public enum Page {
-        HISTORY,
-        TOP_SITES,
-        BOOKMARKS,
-        READING_LIST;
-
-        static Page valueOf(PageType page) {
-            switch(page) {
-                case TOP_SITES:
-                    return Page.TOP_SITES;
-
-                case BOOKMARKS:
-                    return Page.BOOKMARKS;
-
-                case HISTORY:
-                    return Page.HISTORY;
-
-                case READING_LIST:
-                    return Page.READING_LIST;
-
-                default:
-                    throw new IllegalArgumentException("Could not convert unrecognized PageType");
-            }
-        }
-    }
+    // Whether or not we need to restart the loader when we show the HomePager.
+    private boolean mRestartLoader;
 
     // This is mostly used by UI tests to easily fetch
     // specific list views at runtime.
@@ -183,20 +157,33 @@ public class HomePager extends ViewPager {
         super.addView(child, index, params);
     }
 
-    public void redisplay(LoaderManager lm, FragmentManager fm) {
+    /**
+     * Invalidates the current configuration, redisplaying the HomePager if necessary.
+     */
+    public void invalidate(LoaderManager lm, FragmentManager fm) {
+        // We need to restart the loader to load the new strings.
+        mRestartLoader = true;
+
+        // If the HomePager is currently visible, redisplay it with the new strings.
+        if (isVisible()) {
+            redisplay(lm, fm);
+        }
+    }
+
+    private void redisplay(LoaderManager lm, FragmentManager fm) {
         final HomeAdapter adapter = (HomeAdapter) getAdapter();
 
-        // If mInitialPage is non-null, this means the HomePager hasn't
+        // If mInitialPageId is non-null, this means the HomePager hasn't
         // finished loading its config yet. Simply re-show() with the
         // current target page.
-        final Page currentPage;
-        if (mInitialPage != null) {
-            currentPage = mInitialPage;
+        final String currentPageId;
+        if (mInitialPageId != null) {
+            currentPageId = mInitialPageId;
         } else {
-            currentPage = adapter.getPageAtPosition(getCurrentItem());
+            currentPageId = adapter.getPageIdAtPosition(getCurrentItem());
         }
 
-        show(lm, fm, currentPage, null);
+        show(lm, fm, currentPageId, null);
     }
 
     /**
@@ -204,9 +191,9 @@ public class HomePager extends ViewPager {
      *
      * @param fm FragmentManager for the adapter
      */
-    public void show(LoaderManager lm, FragmentManager fm, Page page, PropertyAnimator animator) {
+    public void show(LoaderManager lm, FragmentManager fm, String pageId, PropertyAnimator animator) {
         mLoaded = true;
-        mInitialPage = page;
+        mInitialPageId = pageId;
 
         // Only animate on post-HC devices, when a non-null animator is given
         final boolean shouldAnimate = (animator != null && Build.VERSION.SDK_INT >= 11);
@@ -222,8 +209,13 @@ public class HomePager extends ViewPager {
         // list of pages in place.
         mTabStrip.setVisibility(View.INVISIBLE);
 
-        // Load list of pages from configuration
-        lm.initLoader(LOADER_ID_CONFIG, null, mConfigLoaderCallbacks);
+        // Load list of pages from configuration. Restart the loader if necessary.
+        if (mRestartLoader) {
+            lm.restartLoader(LOADER_ID_CONFIG, null, mConfigLoaderCallbacks);
+            mRestartLoader = false;
+        } else {
+            lm.initLoader(LOADER_ID_CONFIG, null, mConfigLoaderCallbacks);
+        }
 
         if (shouldAnimate) {
             animator.addPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener() {
@@ -314,9 +306,10 @@ public class HomePager extends ViewPager {
 
         // Use the default page as defined in the HomePager's configuration
         // if the initial page wasn't explicitly set by the show() caller.
-        if (mInitialPage != null) {
-            setCurrentItem(adapter.getItemPosition(mInitialPage), false);
-            mInitialPage = null;
+        if (mInitialPageId != null) {
+            // XXX: Handle the case where the desired page isn't currently in the adapter (bug 949178)
+            setCurrentItem(adapter.getItemPosition(mInitialPageId), false);
+            mInitialPageId = null;
         } else {
             for (int i = 0; i < count; i++) {
                 final PageEntry pageEntry = pageEntries.get(i);

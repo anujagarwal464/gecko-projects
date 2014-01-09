@@ -1284,7 +1284,7 @@ NS_IMETHODIMP nsEditor::GetInlineSpellChecker(bool autoCreate,
 }
 
 NS_IMETHODIMP nsEditor::Observe(nsISupports* aSubj, const char *aTopic,
-                                const PRUnichar *aData)
+                                const char16_t *aData)
 {
   NS_ASSERTION(!strcmp(aTopic,
                        SPELLCHECK_DICTIONARY_UPDATE_NOTIFICATION),
@@ -4162,7 +4162,7 @@ nsEditor::DeleteSelectionAndCreateNode(const nsAString& aTag,
   NS_ENSURE_TRUE(selection, NS_ERROR_NULL_POINTER);
 
   nsCOMPtr<nsINode> node = selection->GetAnchorNode();
-  int32_t offset = selection->GetAnchorOffset();
+  uint32_t offset = selection->AnchorOffset();
 
   nsCOMPtr<nsIDOMNode> newNode;
   result = CreateNode(aTag, node->AsDOMNode(), offset,
@@ -4248,14 +4248,14 @@ nsEditor::DeleteSelectionAndPrepareToCreateNode()
                  "fix the caller");
     NS_ENSURE_STATE(node->GetParentNode());
 
-    int32_t offset = selection->GetAnchorOffset();
+    uint32_t offset = selection->AnchorOffset();
 
     if (offset == 0) {
       res = selection->Collapse(node->GetParentNode(),
                                 node->GetParentNode()->IndexOf(node));
       MOZ_ASSERT(NS_SUCCEEDED(res));
       NS_ENSURE_SUCCESS(res, res);
-    } else if (offset == (int32_t)node->Length()) {
+    } else if (offset == node->Length()) {
       res = selection->Collapse(node->GetParentNode(),
                                 node->GetParentNode()->IndexOf(node) + 1);
       MOZ_ASSERT(NS_SUCCEEDED(res));

@@ -34,6 +34,7 @@
 #include "nsINameSpaceManager.h"
 #include "nsIBaseWindow.h"
 #include "nsISelection.h"
+#include "nsITextControlElement.h"
 #include "nsFrameSelection.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -943,7 +944,7 @@ nsEventStateManager::Shutdown()
 NS_IMETHODIMP
 nsEventStateManager::Observe(nsISupports *aSubject,
                              const char *aTopic,
-                             const PRUnichar *someData)
+                             const char16_t *someData)
 {
   if (!nsCRT::strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
     Shutdown();
@@ -2793,6 +2794,16 @@ nsEventStateManager::ComputeScrollTarget(nsIFrame* aTargetFrame,
     frameToScroll = scrollFrame->GetScrollTargetFrame();
     if (!frameToScroll) {
       continue;
+    }
+
+    // Don't scroll vertically by mouse-wheel on a single-line text control.
+    if (checkIfScrollableY) {
+      nsIContent* c = scrollFrame->GetContent();
+      nsCOMPtr<nsITextControlElement> ctrl =
+        do_QueryInterface(c->IsInAnonymousSubtree() ? c->GetBindingParent() : c);
+      if (ctrl && ctrl->IsSingleLineTextControl()) {
+        continue;
+      }
     }
 
     if (!checkIfScrollableX && !checkIfScrollableY) {

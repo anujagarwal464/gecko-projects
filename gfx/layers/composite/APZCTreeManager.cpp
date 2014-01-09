@@ -156,6 +156,7 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
           apzc = new AsyncPanZoomController(aLayersId, this, state->mController,
                                             AsyncPanZoomController::USE_GESTURE_DETECTOR);
           apzc->SetCompositorParent(aCompositor);
+          apzc->SetCrossProcessCompositorParent(state->mCrossProcessParent);
         } else {
           // If there was already an APZC for the layer clear the tree pointers
           // so that it doesn't continue pointing to APZCs that should no longer
@@ -190,22 +191,20 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
         aParent = apzc;
 
         if (newApzc) {
-          bool allowZoom;
-          CSSToScreenScale minZoom, maxZoom;
           if (apzc->IsRootForLayersId()) {
             // If we just created a new apzc that is the root for its layers ID, then
             // we need to update its zoom constraints which might have arrived before this
             // was created
-            if (state->mController->GetRootZoomConstraints(&allowZoom, &minZoom, &maxZoom)) {
-              apzc->UpdateZoomConstraints(allowZoom, minZoom, maxZoom);
+            ZoomConstraints constraints;
+            if (state->mController->GetRootZoomConstraints(&constraints)) {
+              apzc->UpdateZoomConstraints(constraints);
             }
           } else {
             // For an apzc that is not the root for its layers ID, we give it the
             // same zoom constraints as its parent. This ensures that if e.g.
             // user-scalable=no was specified, none of the APZCs allow double-tap
             // to zoom.
-            apzc->GetParent()->GetZoomConstraints(&allowZoom, &minZoom, &maxZoom);
-            apzc->UpdateZoomConstraints(allowZoom, minZoom, maxZoom);
+            apzc->UpdateZoomConstraints(apzc->GetParent()->GetZoomConstraints());
           }
         }
       }
@@ -554,20 +553,6 @@ APZCTreeManager::ReceiveInputEvent(WidgetInputEvent& aEvent,
 }
 
 void
-APZCTreeManager::UpdateRootCompositionBounds(const uint64_t& aLayersId,
-                                             const ScreenIntRect& aCompositionBounds)
-{
-  // There can be multiple root APZCs for a given layers id (e.g. tabs in
-  // a single-process setup) and in such a case we probably want to notify
-  // all of them.
-  nsTArray< nsRefPtr<AsyncPanZoomController> > rootApzcs;
-  GetRootAPZCsFor(aLayersId, &rootApzcs);
-  for (size_t i = 0; i < rootApzcs.Length(); i++) {
-    rootApzcs[i]->UpdateCompositionBounds(aCompositionBounds);
-  }
-}
-
-void
 APZCTreeManager::ZoomToRect(const ScrollableLayerGuid& aGuid,
                             const CSSRect& aRect)
 {
@@ -589,43 +574,29 @@ APZCTreeManager::ContentReceivedTouch(const ScrollableLayerGuid& aGuid,
 
 void
 APZCTreeManager::UpdateZoomConstraints(const ScrollableLayerGuid& aGuid,
-                                       bool aAllowZoom,
-                                       const CSSToScreenScale& aMinScale,
-                                       const CSSToScreenScale& aMaxScale)
+                                       const ZoomConstraints& aConstraints)
 {
   nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
   // For a given layers id, non-root APZCs inherit the zoom constraints
   // of their root.
   if (apzc && apzc->IsRootForLayersId()) {
     MonitorAutoLock lock(mTreeLock);
-    UpdateZoomConstraintsRecursively(apzc.get(), aAllowZoom, aMinScale, aMaxScale);
+    UpdateZoomConstraintsRecursively(apzc.get(), aConstraints);
   }
 }
 
 void
 APZCTreeManager::UpdateZoomConstraintsRecursively(AsyncPanZoomController* aApzc,
-                                                  bool aAllowZoom,
-                                                  const CSSToScreenScale& aMinScale,
-                                                  const CSSToScreenScale& aMaxScale)
+                                                  const ZoomConstraints& aConstraints)
 {
   mTreeLock.AssertCurrentThreadOwns();
 
-  aApzc->UpdateZoomConstraints(aAllowZoom, aMinScale, aMaxScale);
+  aApzc->UpdateZoomConstraints(aConstraints);
   for (AsyncPanZoomController* child = aApzc->GetLastChild(); child; child = child->GetPrevSibling()) {
     // We can have subtrees with their own layers id - leave those alone.
     if (!child->IsRootForLayersId()) {
-      UpdateZoomConstraintsRecursively(child, aAllowZoom, aMinScale, aMaxScale);
+      UpdateZoomConstraintsRecursively(child, aConstraints);
     }
-  }
-}
-
-void
-APZCTreeManager::UpdateScrollOffset(const ScrollableLayerGuid& aGuid,
-                                    const CSSPoint& aScrollOffset)
-{
-  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
-  if (apzc) {
-    apzc->UpdateScrollOffset(aScrollOffset);
   }
 }
 
@@ -784,17 +755,6 @@ APZCTreeManager::BuildOverscrollHandoffChain(const nsRefPtr<AsyncPanZoomControll
                    CompareByScrollPriority());
 }
 
-void
-APZCTreeManager::GetRootAPZCsFor(const uint64_t& aLayersId,
-                                 nsTArray< nsRefPtr<AsyncPanZoomController> >* aOutRootApzcs)
-{
-  MonitorAutoLock lock(mTreeLock);
-  // The root may have siblings, check those too
-  for (AsyncPanZoomController* apzc = mRootApzc; apzc; apzc = apzc->GetPrevSibling()) {
-    FindRootAPZCs(apzc, aLayersId, aOutRootApzcs);
-  }
-}
-
 AsyncPanZoomController*
 APZCTreeManager::FindTargetAPZC(AsyncPanZoomController* aApzc, const ScrollableLayerGuid& aGuid)
 {
@@ -869,25 +829,6 @@ APZCTreeManager::GetAPZCAtPoint(AsyncPanZoomController* aApzc, const gfxPoint& a
     return aApzc;
   }
   return nullptr;
-}
-
-void
-APZCTreeManager::FindRootAPZCs(AsyncPanZoomController* aApzc,
-                               const uint64_t& aLayersId,
-                               nsTArray< nsRefPtr<AsyncPanZoomController> >* aOutRootApzcs)
-{
-  mTreeLock.AssertCurrentThreadOwns();
-
-  if (aApzc->IsRootForLayersId(aLayersId)) {
-    aOutRootApzcs->AppendElement(aApzc);
-    // If this APZC is a root for this layers id then we know nothing else
-    // in the subtree rooted here will match so we can early-exit
-    return;
-  }
-
-  for (AsyncPanZoomController* child = aApzc->GetLastChild(); child; child = child->GetPrevSibling()) {
-    FindRootAPZCs(child, aLayersId, aOutRootApzcs);
-  }
 }
 
 /* This function sets the aTransformToApzcOut and aTransformToGeckoOut out-parameters

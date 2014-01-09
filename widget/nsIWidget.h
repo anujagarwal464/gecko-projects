@@ -504,7 +504,7 @@ class nsIWidget : public nsISupports {
     /**
      * Create and initialize a widget. 
      *
-     * All the arguments can be NULL in which case a top level window
+     * All the arguments can be null in which case a top level window
      * with size 0 is created. The event callback function has to be
      * provided only if the caller wants to deal with the events this
      * widget receives.  The event callback is basically a preprocess
@@ -1151,6 +1151,13 @@ class nsIWidget : public nsISupports {
      * Ignored on child widgets and on non-Mac platforms.
      */
     virtual void SetWindowAnimationType(WindowAnimationType aType) = 0;
+
+    /**
+     * Specifies whether the window title should be drawn even if the window
+     * contents extend into the titlebar. Ignored on windows that don't draw
+     * in the titlebar. Only implemented on OS X.
+     */
+    virtual void SetDrawsTitle(bool aDrawTitle) {}
 
     /** 
      * Hide window chrome (borders, buttons) for this widget.

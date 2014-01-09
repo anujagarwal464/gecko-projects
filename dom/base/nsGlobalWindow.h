@@ -82,7 +82,6 @@ class nsICSSDeclaration;
 class nsIDocShellTreeOwner;
 class nsIDOMCrypto;
 class nsIDOMOfflineResourceList;
-class nsIDOMMozWakeLock;
 class nsIScrollableFrame;
 class nsIControllers;
 class nsIScriptContext;
@@ -104,12 +103,15 @@ struct nsRect;
 class nsWindowSizes;
 
 namespace mozilla {
+class Selection;
 namespace dom {
 class BarProp;
 class Function;
 class Gamepad;
+class MediaQueryList;
 class Navigator;
 class SpeechSynthesis;
+class WakeLock;
 namespace indexedDB {
 class IDBFactory;
 } // namespace indexedDB
@@ -587,7 +589,7 @@ public:
   nsIScrollableFrame *GetScrollFrame();
 
   nsresult Observe(nsISupports* aSubject, const char* aTopic,
-                   const PRUnichar* aData);
+                   const char16_t* aData);
 
   // Outer windows only.
   void UnblockScriptedClosing();
@@ -845,13 +847,13 @@ public:
             mozilla::ErrorResult& aError);
   nsIDOMStorage* GetSessionStorage(mozilla::ErrorResult& aError);
   nsIDOMStorage* GetLocalStorage(mozilla::ErrorResult& aError);
-  nsISelection* GetSelection(mozilla::ErrorResult& aError);
+  mozilla::Selection* GetSelection(mozilla::ErrorResult& aError);
   mozilla::dom::indexedDB::IDBFactory* GetIndexedDB(mozilla::ErrorResult& aError);
   already_AddRefed<nsICSSDeclaration>
     GetComputedStyle(mozilla::dom::Element& aElt, const nsAString& aPseudoElt,
                      mozilla::ErrorResult& aError);
-  already_AddRefed<nsIDOMMediaQueryList> MatchMedia(const nsAString& aQuery,
-                                                    mozilla::ErrorResult& aError);
+  already_AddRefed<mozilla::dom::MediaQueryList> MatchMedia(const nsAString& aQuery,
+                                                            mozilla::ErrorResult& aError);
   nsScreen* GetScreen(mozilla::ErrorResult& aError);
   void MoveTo(int32_t aXPos, int32_t aYPos, mozilla::ErrorResult& aError);
   void MoveBy(int32_t aXDif, int32_t aYDif, mozilla::ErrorResult& aError);
@@ -970,7 +972,7 @@ protected:
 
   nsCOMPtr <nsIIdleService> mIdleService;
 
-  nsCOMPtr <nsIDOMMozWakeLock> mWakeLock;
+  nsRefPtr<mozilla::dom::WakeLock> mWakeLock;
 
   static bool sIdleObserversAPIFuzzTimeDisabled;
 
@@ -979,7 +981,7 @@ protected:
 
   // Object Management
   virtual ~nsGlobalWindow();
-  void ClearDelayedEventsAndDropDocument();
+  void DropOuterWindowDocs();
   void CleanUp();
   void ClearControllers();
   nsresult FinalClose();
@@ -1474,6 +1476,12 @@ protected:
 
   nsAutoPtr<nsJSThingHashtable<nsPtrHashKey<nsXBLPrototypeHandler>, JSObject*> > mCachedXBLPrototypeHandlers;
 
+  // mSuspendedDoc is only set on outer windows. It's useful when we get matched
+  // EnterModalState/LeaveModalState calls, in which case the outer window is
+  // responsible for unsuspending events on the document. If we don't (for
+  // example, if the outer window is closed before the LeaveModalState call),
+  // then the inner window whose mDoc is our mSuspendedDoc is responsible for
+  // unsuspending it.
   nsCOMPtr<nsIDocument> mSuspendedDoc;
 
   nsRefPtr<mozilla::dom::indexedDB::IDBFactory> mIndexedDB;

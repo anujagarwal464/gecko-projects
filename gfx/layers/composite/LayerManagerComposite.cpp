@@ -25,7 +25,6 @@
 #ifdef XP_MACOSX
 #include "gfxPlatformMac.h"
 #endif
-#include "gfxPoint.h"                   // for gfxIntSize
 #include "gfxRect.h"                    // for gfxRect
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/RefPtr.h"             // for RefPtr, TemporaryRef
@@ -118,7 +117,6 @@ bool
 LayerManagerComposite::Initialize()
 {
   bool result = mCompositor->Initialize();
-  mComposer2D = mCompositor->GetWidget()->GetComposer2D();
   return result;
 }
 
@@ -253,7 +251,7 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
 }
 
 already_AddRefed<gfxASurface>
-LayerManagerComposite::CreateOptimalMaskSurface(const gfxIntSize &aSize)
+LayerManagerComposite::CreateOptimalMaskSurface(const IntSize &aSize)
 {
   NS_RUNTIMEABORT("Should only be called on the drawing side");
   return nullptr;
@@ -352,7 +350,10 @@ LayerManagerComposite::Render()
     this->Dump();
   }
 
-  if (mComposer2D && mComposer2D->TryRender(mRoot, mWorldMatrix)) {
+  /** Our more efficient but less powerful alter ego, if one is available. */
+  nsRefPtr<Composer2D> composer2D = mCompositor->GetWidget()->GetComposer2D();
+
+  if (composer2D && composer2D->TryRender(mRoot, mWorldMatrix)) {
     mCompositor->EndFrameForExternalComposition(mWorldMatrix);
     return;
   }
@@ -387,23 +388,19 @@ LayerManagerComposite::Render()
   }
 
   // Allow widget to render a custom background.
-  mCompositor->SaveState();
   mCompositor->GetWidget()->DrawWindowUnderlay(this, nsIntRect(actualBounds.x,
                                                                actualBounds.y,
                                                                actualBounds.width,
                                                                actualBounds.height));
-  mCompositor->RestoreState();
 
   // Render our layers.
   RootLayer()->RenderLayer(clipRect);
 
   // Allow widget to render a custom foreground.
-  mCompositor->SaveState();
   mCompositor->GetWidget()->DrawWindowOverlay(this, nsIntRect(actualBounds.x,
                                                               actualBounds.y,
                                                               actualBounds.width,
                                                               actualBounds.height));
-  mCompositor->RestoreState();
 
   // Debugging
   RenderDebugOverlay(actualBounds);
@@ -784,7 +781,7 @@ LayerComposite::Destroy()
 }
 
 bool
-LayerManagerComposite::CanUseCanvasLayerForSize(const gfxIntSize &aSize)
+LayerManagerComposite::CanUseCanvasLayerForSize(const IntSize &aSize)
 {
   return mCompositor->CanUseCanvasLayerForSize(gfx::IntSize(aSize.width,
                                                             aSize.height));

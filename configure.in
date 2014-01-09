@@ -71,7 +71,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.8.1
+SQLITE_VERSION=3.8.2
 
 MSMANIFEST_TOOL=
 
@@ -1523,6 +1523,17 @@ MOZ_ARG_ENABLE_BOOL(profiling,
 [  --enable-profiling      Set compile flags necessary for using sampling profilers (e.g. shark, perf)],
     MOZ_PROFILING=1,
     MOZ_PROFILING= )
+
+dnl ========================================================
+dnl = Turn on systrace for android/b2g.
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(systrace,
+[  --enable-systrace       Set compile flags necessary for using sampling profilers (e.g. shark, perf)],
+    MOZ_USE_SYSTRACE=1,
+    MOZ_USE_SYSTRACE= )
+if test -n "$MOZ_USE_SYSTRACE"; then
+    AC_DEFINE(MOZ_USE_SYSTRACE)
+fi
 
 # For profiling builds keep the symbol information
 if test "$MOZ_PROFILING" -a -z "$STRIP_FLAGS"; then
@@ -3812,6 +3823,7 @@ if test "${BZ2_DIR}" -a -d "${BZ2_DIR}" -a "$MOZ_NATIVE_BZ2" = 1; then
     MOZ_BZ2_LIBS="-L${BZ2_DIR}/lib ${MOZ_BZ2_LIBS}"
 fi
 
+dnl ========================================================
 dnl system PNG Support
 dnl ========================================================
 MOZ_ARG_WITH_STRING(system-png,
@@ -3856,10 +3868,37 @@ if test "${PNG_DIR}" -a -d "${PNG_DIR}" -a "$MOZ_NATIVE_PNG" = 1; then
     MOZ_PNG_LIBS="-L${PNG_DIR}/lib ${MOZ_PNG_LIBS}"
 fi
 
+MOZ_PNG_ARM_NEON_CHECK=
+if test "$MOZ_NATIVE_PNG" != 1 -a "$CPU_ARCH" = "arm" ; then
+    MOZ_ARG_ENABLE_STRING(png-arm-neon-support,
+        [  --enable-png-arm-neon-support=TYPE
+             Options include:
+                 no
+                 check (default)
+                 nocheck (faster but unsafe)],
+        [MOZ_PNG_ARM_NEON_SUPPORT=$enableval ] )
+    case "$MOZ_PNG_ARM_NEON_SUPPORT" in
+        no)
+            # enable-png-arm-neon-support = no
+            ;;
+        nocheck)
+            # enable-png-arm-neon-support = nocheck
+            MOZ_PNG_ARM_NEON=1
+            ;;
+        *)
+            MOZ_PNG_ARM_NEON=1
+            MOZ_PNG_ARM_NEON_CHECK=1
+            ;;
+    esac
+fi
+
+AC_SUBST(MOZ_PNG_ARM_NEON_CHECK)
+
 fi # SKIP_LIBRARY_CHECKS
 
 AC_SUBST(MOZ_PNG_ARM_NEON)
 
+dnl ========================================================
 dnl system HunSpell Support
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(system-hunspell,
@@ -3914,6 +3953,7 @@ MOZ_ARG_WITH_BOOL(system-icu,
 if test -n "$MOZ_NATIVE_ICU"; then
     PKG_CHECK_MODULES(MOZ_ICU, icu-i18n >= 50.1)
     MOZ_JS_STATIC_LIBS="$MOZ_JS_STATIC_LIBS $MOZ_ICU_LIBS"
+    MOZ_SHARED_ICU=1
 fi
 
 AC_SUBST(MOZ_NATIVE_ICU)
@@ -7212,7 +7252,7 @@ MOZ_ARG_ENABLE_BOOL(stdcxx-compat,
     STDCXX_COMPAT=1)
 
 if test -n "$STDCXX_COMPAT"; then
-   eval $(CXX="$CXX" HOST_CXX="$HOST_CXX" $PYTHON $_topsrcdir/build/autoconf/libstdcxx.py)
+   eval $(CXX="$CXX" HOST_CXX="$HOST_CXX" $PYTHON -m mozbuild.configure.libstdcxx)
    AC_SUBST(MOZ_LIBSTDCXX_TARGET_VERSION)
    AC_SUBST(MOZ_LIBSTDCXX_HOST_VERSION)
 fi
@@ -7675,6 +7715,12 @@ else
     rm -f dummy-hello.c
   fi
 fi
+
+dnl Make sure that the build system can handle non-ASCII characters
+dnl in environment variables to prevent it from breking silently on
+dnl non-English systems.
+NONASCII=$'\241\241'
+AC_SUBST(NONASCII)
 
 dnl ========================================================
 dnl =
@@ -8662,7 +8708,7 @@ if test "$MOZ_X11"; then
             exit(1);
         }
     ], [],
-    [ AC_MSG_ERROR([Could not compile basic X program.]) ])
+    [ AC_MSG_ERROR([Can't find X headers (install libxt-dev (Debian/Ubuntu), libXt-devel (Fedora), or xorg-x11-libXt-devel (SuSE)).]) ])
     CFLAGS="$_SAVE_CFLAGS"
 
     if test -n "$MISSING_X"; then

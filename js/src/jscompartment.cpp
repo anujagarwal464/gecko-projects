@@ -22,6 +22,7 @@
 #include "jit/JitCompartment.h"
 #endif
 #include "js/RootingAPI.h"
+#include "vm/SelfHosting.h"
 #include "vm/StopIterationObject.h"
 #include "vm/WrapperObject.h"
 
@@ -71,6 +72,7 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
 #endif
 {
     runtime_->numCompartments++;
+    JS_ASSERT_IF(options.mergeable(), options.invisibleToDebugger());
 }
 
 JSCompartment::~JSCompartment()
@@ -182,22 +184,80 @@ JSCompartment::ensureJitCompartmentExists(JSContext *cx)
 #endif
 
 static bool
-WrapForSameCompartment(JSContext *cx, MutableHandleObject obj)
+WrapForSameCompartment(JSContext *cx, MutableHandleObject obj, const JSWrapObjectCallbacks *cb)
 {
     JS_ASSERT(cx->compartment() == obj->compartment());
-    if (!cx->runtime()->sameCompartmentWrapObjectCallback)
+    if (!cb->sameCompartmentWrap)
         return true;
 
-    RootedObject wrapped(cx);
-    wrapped = cx->runtime()->sameCompartmentWrapObjectCallback(cx, obj);
+    RootedObject wrapped(cx, cb->sameCompartmentWrap(cx, obj));
     if (!wrapped)
         return false;
     obj.set(wrapped);
     return true;
 }
 
+#ifdef JSGC_GENERATIONAL
+
+/*
+ * This class is used to add a post barrier on the crossCompartmentWrappers map,
+ * as the key is calculated based on objects which may be moved by generational
+ * GC.
+ */
+class WrapperMapRef : public BufferableRef
+{
+    WrapperMap *map;
+    CrossCompartmentKey key;
+
+  public:
+    WrapperMapRef(WrapperMap *map, const CrossCompartmentKey &key)
+      : map(map), key(key) {}
+
+    void mark(JSTracer *trc) {
+        CrossCompartmentKey prior = key;
+        if (key.debugger)
+            Mark(trc, &key.debugger, "CCW debugger");
+        if (key.kind != CrossCompartmentKey::StringWrapper)
+            Mark(trc, reinterpret_cast<JSObject**>(&key.wrapped), "CCW wrapped object");
+        if (key.debugger == prior.debugger && key.wrapped == prior.wrapped)
+            return;
+
+        /* Look for the original entry, which might have been removed. */
+        WrapperMap::Ptr p = map->lookup(prior);
+        if (!p)
+            return;
+
+        /* Rekey the entry. */
+        map->rekeyAs(prior, key, key);
+    }
+};
+
+#ifdef DEBUG
+void
+JSCompartment::checkWrapperMapAfterMovingGC()
+{
+    /*
+     * Assert that the postbarriers have worked and that nothing is left in
+     * wrapperMap that points into the nursery, and that the hash table entries
+     * are discoverable.
+     */
+    JS::shadow::Runtime *rt = JS::shadow::Runtime::asShadowRuntime(runtimeFromMainThread());
+    for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
+        CrossCompartmentKey key = e.front().key();
+        JS_ASSERT(!IsInsideNursery(rt, key.debugger));
+        JS_ASSERT(!IsInsideNursery(rt, key.wrapped));
+        JS_ASSERT(!IsInsideNursery(rt, e.front().value().get().toGCThing()));
+
+        WrapperMap::Ptr ptr = crossCompartmentWrappers.lookup(key);
+        JS_ASSERT(ptr.found() && &*ptr == &e.front());
+    }
+}
+#endif
+
+#endif
+
 bool
-JSCompartment::putWrapper(const CrossCompartmentKey &wrapped, const js::Value &wrapper)
+JSCompartment::putWrapper(JSContext *cx, const CrossCompartmentKey &wrapped, const js::Value &wrapper)
 {
     JS_ASSERT(wrapped.wrapped);
     JS_ASSERT(!IsPoisonedPtr(wrapped.wrapped));
@@ -205,7 +265,20 @@ JSCompartment::putWrapper(const CrossCompartmentKey &wrapped, const js::Value &w
     JS_ASSERT(!IsPoisonedPtr(wrapper.toGCThing()));
     JS_ASSERT_IF(wrapped.kind == CrossCompartmentKey::StringWrapper, wrapper.isString());
     JS_ASSERT_IF(wrapped.kind != CrossCompartmentKey::StringWrapper, wrapper.isObject());
-    return crossCompartmentWrappers.put(wrapped, wrapper);
+    bool success = crossCompartmentWrappers.put(wrapped, wrapper);
+
+#ifdef JSGC_GENERATIONAL
+    /* There's no point allocating wrappers in the nursery since we will tenure them anyway. */
+    Nursery &nursery = cx->nursery();
+    JS_ASSERT(!nursery.isInside(wrapper.toGCThing()));
+
+    if (success && (nursery.isInside(wrapped.wrapped) || nursery.isInside(wrapped.debugger))) {
+        WrapperMapRef ref(&crossCompartmentWrappers, wrapped);
+        cx->runtime()->gcStoreBuffer.putGeneric(ref);
+    }
+#endif
+
+    return success;
 }
 
 bool
@@ -240,7 +313,7 @@ JSCompartment::wrap(JSContext *cx, JSString **strp)
                                               linear->length());
     if (!copy)
         return false;
-    if (!putWrapper(key, StringValue(copy)))
+    if (!putWrapper(cx, key, StringValue(copy)))
         return false;
 
     if (linear->zone()->isGCMarking()) {
@@ -289,17 +362,26 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
      * This loses us some transparency, and is generally very cheesy.
      */
     HandleObject global = cx->global();
+    RootedObject objGlobal(cx, &obj->global());
     JS_ASSERT(global);
+    JS_ASSERT(objGlobal);
+
+    const JSWrapObjectCallbacks *cb;
+
+    if (cx->runtime()->isSelfHostingGlobal(global) || cx->runtime()->isSelfHostingGlobal(objGlobal))
+        cb = &SelfHostingWrapObjectCallbacks;
+    else
+        cb = cx->runtime()->wrapObjectCallbacks;
 
     if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj);
+        return WrapForSameCompartment(cx, obj, cb);
 
     /* Unwrap the object, but don't unwrap outer windows. */
     unsigned flags = 0;
     obj.set(UncheckedUnwrap(obj, /* stopAtOuter = */ true, &flags));
 
     if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj);
+        return WrapForSameCompartment(cx, obj, cb);
 
     /* Translate StopIteration singleton. */
     if (obj->is<StopIterationObject>()) {
@@ -313,14 +395,14 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
     /* Invoke the prewrap callback. We're a bit worried about infinite
      * recursion here, so we do a check - see bug 809295. */
     JS_CHECK_CHROME_RECURSION(cx, return false);
-    if (cx->runtime()->preWrapObjectCallback) {
-        obj.set(cx->runtime()->preWrapObjectCallback(cx, global, obj, flags));
+    if (cb->preWrap) {
+        obj.set(cb->preWrap(cx, global, obj, flags));
         if (!obj)
             return false;
     }
 
     if (obj->compartment() == this)
-        return WrapForSameCompartment(cx, obj);
+        return WrapForSameCompartment(cx, obj, cb);
 
 #ifdef DEBUG
     {
@@ -338,7 +420,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
         return true;
     }
 
-    RootedObject proto(cx, Proxy::LazyProto);
+    RootedObject proto(cx, TaggedProto::LazyProto);
     RootedObject existing(cx, existingArg);
     if (existing) {
         /* Is it possible to reuse |existing|? */
@@ -352,12 +434,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
         }
     }
 
-    /*
-     * We hand in the original wrapped object into the wrap hook to allow
-     * the wrap hook to reason over what wrappers are currently applied
-     * to the object.
-     */
-    obj.set(cx->runtime()->wrapObjectCallback(cx, existing, obj, proto, global, flags));
+    obj.set(cb->wrap(cx, existing, obj, proto, global, flags));
     if (!obj)
         return false;
 
@@ -367,7 +444,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
      */
     JS_ASSERT(Wrapper::wrappedObject(obj) == &key.get().toObject());
 
-    return putWrapper(key, ObjectValue(*obj));
+    return putWrapper(cx, key, ObjectValue(*obj));
 }
 
 bool
@@ -460,26 +537,6 @@ JSCompartment::markCrossCompartmentWrappers(JSTracer *trc)
             MarkValueRoot(trc, &referent, "cross-compartment wrapper");
             JS_ASSERT(referent == wrapper->private_());
         }
-    }
-}
-
-/*
- * This method marks and keeps live all pointers in the cross compartment
- * wrapper map. It should be called only for minor GCs, since minor GCs cannot,
- * by their nature, apply the weak constraint to safely remove items from the
- * wrapper map.
- */
-void
-JSCompartment::markAllCrossCompartmentWrappers(JSTracer *trc)
-{
-    for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
-        CrossCompartmentKey key = e.front().key();
-        MarkGCThingRoot(trc, (void **)&key.wrapped, "CrossCompartmentKey::wrapped");
-        if (key.debugger)
-            MarkObjectRoot(trc, &key.debugger, "CrossCompartmentKey::debugger");
-        MarkValueRoot(trc, e.front().value().unsafeGet(), "CrossCompartmentWrapper");
-        if (key.wrapped != e.front().key().wrapped || key.debugger != e.front().key().debugger)
-            e.rekeyFront(key);
     }
 }
 

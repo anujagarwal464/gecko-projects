@@ -1504,7 +1504,10 @@ MmsService.prototype = {
   mergeRetrievalConfirmation: function mergeRetrievalConfirmation(mmsConnection,
                                                                   intermediate,
                                                                   savable) {
+    // Prepare timestamp/sentTimestamp.
     savable.timestamp = Date.now();
+    savable.sentTimestamp = intermediate.headers["date"].getTime();
+
     savable.receivers = [];
     // We don't have Bcc in recevied MMS message.
     for each (let type in ["cc", "to"]) {
@@ -1572,19 +1575,20 @@ MmsService.prototype = {
     // because the system message mechamism will rewrap the object
     // based on the content window, which needs to know the properties.
     gSystemMessenger.broadcastMessage(aName, {
-      type:         aDomMessage.type,
-      id:           aDomMessage.id,
-      threadId:     aDomMessage.threadId,
-      delivery:     aDomMessage.delivery,
-      deliveryInfo: aDomMessage.deliveryInfo,
-      sender:       aDomMessage.sender,
-      receivers:    aDomMessage.receivers,
-      timestamp:    aDomMessage.timestamp,
-      read:         aDomMessage.read,
-      subject:      aDomMessage.subject,
-      smil:         aDomMessage.smil,
-      attachments:  aDomMessage.attachments,
-      expiryDate:   aDomMessage.expiryDate
+      type:          aDomMessage.type,
+      id:            aDomMessage.id,
+      threadId:      aDomMessage.threadId,
+      delivery:      aDomMessage.delivery,
+      deliveryInfo:  aDomMessage.deliveryInfo,
+      sender:        aDomMessage.sender,
+      receivers:     aDomMessage.receivers,
+      timestamp:     aDomMessage.timestamp,
+      sentTimestamp: aDomMessage.sentTimestamp,
+      read:          aDomMessage.read,
+      subject:       aDomMessage.subject,
+      smil:          aDomMessage.smil,
+      attachments:   aDomMessage.attachments,
+      expiryDate:    aDomMessage.expiryDate
     });
   },
 
@@ -2268,7 +2272,17 @@ MmsService.prototype = {
       // which could fail when the corresponding SIM card isn't installed.
       let serviceId;
       try {
-        serviceId = gRil.getClientIdByIccId(aMessageRecord.iccId);
+        if (aMessageRecord.iccId == null) {
+          // If the ICC ID isn't available, it means the MMS has been received
+          // during the previous version that didn't take the DSDS scenario
+          // into consideration. Tentatively, setting the service ID to be 0 by
+          // default is better than nothing. Although it might use the wrong
+          // SIM to download the desired MMS, eventually it would still fail to
+          // download due to the wrong MMSC and proxy settings.
+          serviceId = 0;
+        } else {
+          serviceId = gRil.getClientIdByIccId(aMessageRecord.iccId);
+        }
       } catch (e) {
         if (DEBUG) debug("RIL service is not available for ICC ID.");
         aRequest.notifyGetMessageFailed(Ci.nsIMobileMessageCallback.NO_SIM_CARD_ERROR);
@@ -2406,7 +2420,17 @@ MmsService.prototype = {
     // which could fail when the corresponding SIM card isn't installed.
     let serviceId;
     try {
-      serviceId = gRil.getClientIdByIccId(iccId);
+      if (iccId == null) {
+        // If the ICC ID isn't available, it means the MMS has been received
+        // during the previous version that didn't take the DSDS scenario
+        // into consideration. Tentatively, setting the service ID to be 0 by
+        // default is better than nothing. Although it might use the wrong
+        // SIM to send the read report for the desired MMS, eventually it
+        // would still fail to send due to the wrong MMSC and proxy settings.
+        serviceId = 0;
+      } else {
+        serviceId = gRil.getClientIdByIccId(iccId);
+      }
     } catch (e) {
       if (DEBUG) debug("RIL service is not available for ICC ID.");
       return;

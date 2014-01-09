@@ -160,6 +160,37 @@ namespace {
     }
   }
 
+  int16_t
+  ButtonsForPointerPoint(UI::Input::IPointerPoint* aPoint) {
+    WRL::ComPtr<UI::Input::IPointerPointProperties> props;
+    aPoint->get_Properties(props.GetAddressOf());
+
+    int16_t buttons = 0;
+    boolean buttonPressed;
+
+    props->get_IsLeftButtonPressed(&buttonPressed);
+    if (buttonPressed) {
+      buttons |= WidgetMouseEvent::eLeftButtonFlag;
+    }
+    props->get_IsMiddleButtonPressed(&buttonPressed);
+    if (buttonPressed) {
+      buttons |= WidgetMouseEvent::eMiddleButtonFlag;
+    }
+    props->get_IsRightButtonPressed(&buttonPressed);
+    if (buttonPressed) {
+      buttons |= WidgetMouseEvent::eRightButtonFlag;
+    }
+    props->get_IsXButton1Pressed(&buttonPressed);
+    if (buttonPressed) {
+      buttons |= WidgetMouseEvent::e4thButtonFlag;
+    }
+    props->get_IsXButton2Pressed(&buttonPressed);
+    if (buttonPressed) {
+      buttons |= WidgetMouseEvent::e5thButtonFlag;
+    }
+    return buttons;
+  }
+
   /**
    * This function is for use with mTouches.Enumerate.  It will
    * append each element it encounters to the {@link nsTArray}
@@ -408,40 +439,43 @@ MetroInput::OnPointerNonTouch(UI::Input::IPointerPoint* aPoint) {
   aPoint->get_Properties(props.GetAddressOf());
   props->get_PointerUpdateKind(&pointerUpdateKind);
 
-  WidgetMouseEvent* event =
-    new WidgetMouseEvent(true, NS_MOUSE_MOVE, mWidget.Get(),
-                         WidgetMouseEvent::eReal,
-                         WidgetMouseEvent::eNormal);
+  uint32_t message = NS_MOUSE_MOVE;
+  int16_t button = 0;
 
   switch (pointerUpdateKind) {
     case UI::Input::PointerUpdateKind::PointerUpdateKind_LeftButtonPressed:
-      // We don't bother setting mouseEvent.button because it is already
-      // set to WidgetMouseEvent::buttonType::eLeftButton whose value is 0.
-      event->message = NS_MOUSE_BUTTON_DOWN;
+      button = WidgetMouseEvent::buttonType::eLeftButton;
+      message = NS_MOUSE_BUTTON_DOWN;
       break;
     case UI::Input::PointerUpdateKind::PointerUpdateKind_MiddleButtonPressed:
-      event->button = WidgetMouseEvent::buttonType::eMiddleButton;
-      event->message = NS_MOUSE_BUTTON_DOWN;
+      button = WidgetMouseEvent::buttonType::eMiddleButton;
+      message = NS_MOUSE_BUTTON_DOWN;
       break;
     case UI::Input::PointerUpdateKind::PointerUpdateKind_RightButtonPressed:
-      event->button = WidgetMouseEvent::buttonType::eRightButton;
-      event->message = NS_MOUSE_BUTTON_DOWN;
+      button = WidgetMouseEvent::buttonType::eRightButton;
+      message = NS_MOUSE_BUTTON_DOWN;
       break;
     case UI::Input::PointerUpdateKind::PointerUpdateKind_LeftButtonReleased:
-      // We don't bother setting mouseEvent.button because it is already
-      // set to WidgetMouseEvent::buttonType::eLeftButton whose value is 0.
-      event->message = NS_MOUSE_BUTTON_UP;
+      button = WidgetMouseEvent::buttonType::eLeftButton;
+      message = NS_MOUSE_BUTTON_UP;
       break;
     case UI::Input::PointerUpdateKind::PointerUpdateKind_MiddleButtonReleased:
-      event->button = WidgetMouseEvent::buttonType::eMiddleButton;
-      event->message = NS_MOUSE_BUTTON_UP;
+      button = WidgetMouseEvent::buttonType::eMiddleButton;
+      message = NS_MOUSE_BUTTON_UP;
       break;
     case UI::Input::PointerUpdateKind::PointerUpdateKind_RightButtonReleased:
-      event->button = WidgetMouseEvent::buttonType::eRightButton;
-      event->message = NS_MOUSE_BUTTON_UP;
+      button = WidgetMouseEvent::buttonType::eRightButton;
+      message = NS_MOUSE_BUTTON_UP;
       break;
   }
+
   UpdateInputLevel(LEVEL_PRECISE);
+
+  WidgetMouseEvent* event =
+    new WidgetMouseEvent(true, message, mWidget.Get(),
+                         WidgetMouseEvent::eReal,
+                         WidgetMouseEvent::eNormal);
+  event->button = button;
   InitGeckoMouseEventFromPointerPoint(event, aPoint);
   DispatchAsyncEventIgnoreStatus(event);
 }
@@ -653,11 +687,6 @@ MetroInput::OnPointerReleased(UI::Core::ICoreWindow* aSender,
     mGestureRecognizer->ProcessUpEvent(currentPoint.Get());
   }
 
-  // Make sure all gecko events are dispatched and the dom is up to date
-  // so that when ui automation comes in looking for focus info it gets
-  // the right information.
-  MetroAppShell::MarkEventQueueForPurge();
-
   return S_OK;
 }
 
@@ -751,6 +780,7 @@ MetroInput::InitGeckoMouseEventFromPointerPoint(
     aEvent->clickCount = 2;
   }
   aEvent->pressure = pressure;
+  aEvent->buttons = ButtonsForPointerPoint(aPointerPoint);
 
   MozInputSourceFromDeviceType(deviceType, aEvent->inputSource);
 }
@@ -962,11 +992,7 @@ MetroInput::HandleTap(const Foundation::Point& aPoint, unsigned int aTapCount)
 #endif
 
   LayoutDeviceIntPoint refPoint;
-  bool hitTestChrome = TransformRefPoint(aPoint, refPoint);
-  if (!hitTestChrome) {
-    // Let APZC handle tap/doubletap detection for content.
-    return;
-  }
+  TransformRefPoint(aPoint, refPoint);
 
   WidgetMouseEvent* mouseEvent =
     new WidgetMouseEvent(true, NS_MOUSE_MOVE, mWidget.Get(),
@@ -993,6 +1019,11 @@ MetroInput::HandleTap(const Foundation::Point& aPoint, unsigned int aTapCount)
   mouseEvent->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
   mouseEvent->button = WidgetMouseEvent::buttonType::eLeftButton;
   DispatchAsyncEventIgnoreStatus(mouseEvent);
+
+  // Make sure all gecko events are dispatched and the dom is up to date
+  // so that when ui automation comes in looking for focus info it gets
+  // the right information.
+  MetroAppShell::MarkEventQueueForPurge();
 }
 
 void
@@ -1036,6 +1067,12 @@ MetroInput::DeliverNextQueuedEventIgnoreStatus()
     static_cast<WidgetGUIEvent*>(mInputEventQueue.PopFront());
   MOZ_ASSERT(event.get());
   DispatchEventIgnoreStatus(event.get());
+
+  // Let app shell know we've delivered that last input we wanted purged
+  // via a call to MarkEventQueueForPurge().
+  if (event->message == NS_MOUSE_BUTTON_UP) {
+    MetroAppShell::InputEventsDispatched();
+  }
 
   // Clear :hover/:active states for mouse events generated by HandleTap
   WidgetMouseEvent* mouseEvent = event.get()->AsMouseEvent();

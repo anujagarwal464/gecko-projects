@@ -9,7 +9,7 @@ dnl ========================================================
 
 AC_PREREQ(2.13)
 AC_INIT(jsapi.h)
-AC_CONFIG_AUX_DIR(${srcdir}/build/autoconf)
+AC_CONFIG_AUX_DIR(${srcdir}/../../build/autoconf)
 AC_CANONICAL_SYSTEM
 TARGET_CPU="${target_cpu}"
 TARGET_VENDOR="${target_vendor}"
@@ -3820,6 +3820,12 @@ else
   fi
 fi
 
+dnl Make sure that the build system can handle non-ASCII characters
+dnl in environment variables to prevent it from breking silently on
+dnl non-English systems.
+NONASCII=$'\241\241'
+AC_SUBST(NONASCII)
+
 dnl ========================================================
 dnl = Disable -fstrict-aliasing with GCC 4.4 and earlier.
 dnl = See bugs 821502 and 832623.
@@ -4116,7 +4122,7 @@ if test "$MOZ_X11"; then
             exit(1);
         }
     ], [],
-    [ AC_MSG_ERROR([Could not compile basic X program.]) ])
+    [ AC_MSG_ERROR([Can't find X headers (install libxt-dev (Debian/Ubuntu), libXt-devel (Fedora), or xorg-x11-libXt-devel (SuSE)).]) ])
     CFLAGS="$_SAVE_CFLAGS"
 
     if test -n "$MISSING_X"; then
@@ -4165,6 +4171,7 @@ MOZ_ARG_WITH_BOOL(system-icu,
 
 if test -n "$MOZ_NATIVE_ICU"; then
     PKG_CHECK_MODULES(MOZ_ICU, icu-i18n >= 50.1)
+    MOZ_SHARED_ICU=1
 fi
 
 MOZ_ARG_WITH_STRING(intl-api,
@@ -4313,10 +4320,12 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
         mkdir -p $_objdir/intl/icu/host
         (cd $_objdir/intl/icu/host
          MOZ_SUBCONFIGURE_WRAP([.],[
+         AR="$HOST_AR" RANLIB="$HOST_RANLIB" \
          CC="$HOST_CC" CXX="$HOST_CXX" LD="$HOST_LD" \
          CFLAGS="$HOST_ICU_CFLAGS $HOST_OPTIMIZE_FLAGS" \
          CPPFLAGS="$ICU_CPPFLAGS" \
-         CXXFLAGS="$HOST_ICU_CXXFLAGS $HOST_OPTIMZIE_FLAGS" \
+         CXXFLAGS="$HOST_ICU_CXXFLAGS $HOST_OPTIMIZE_FLAGS" \
+         LDFLAGS="$HOST_LDFLAGS" \
                 $SHELL $abs_srcdir/../../intl/icu/source/runConfigureICU \
                 $HOST_ICU_BUILD_OPTS \
                 $ICU_TARGET \
@@ -4355,6 +4364,18 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
     if test -n "$MOZ_DEBUG" -o "MOZ_DEBUG_SYMBOLS"; then
         ICU_CFLAGS="$ICU_CFLAGS $MOZ_DEBUG_FLAGS"
         ICU_CXXFLAGS="$ICU_CXXFLAGS $MOZ_DEBUG_FLAGS"
+        if test -n "$CROSS_COMPILE" -a "$OS_TARGET" = "Darwin" \
+                -a "$HOST_OS_ARCH" != "Darwin"
+        then
+            # Bug 951758: Cross-OSX builds with non-Darwin hosts have issues
+            # with -g and friends (like -gdwarf and -gfull) because they try
+            # to run dsymutil
+            changequote(,)
+            ICU_CFLAGS=`echo $ICU_CFLAGS | sed 's|-g[^ \t]*||g'`
+            ICU_CXXFLAGS=`echo $ICU_CXXFLAGS | sed 's|-g[^ \t]*||g'`
+            changequote([,])
+        fi
+
         ICU_LDFLAGS="$MOZ_DEBUG_LDFLAGS"
         if test -z "$MOZ_DEBUG"; then
             # To generate debug symbols, it requires MOZ_DEBUG_FLAGS.

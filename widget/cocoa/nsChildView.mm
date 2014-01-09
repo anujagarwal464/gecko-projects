@@ -60,8 +60,9 @@
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "GLTextureImage.h"
 #include "GLContextProvider.h"
-#include "GLContext.h"
+#include "GLContextCGL.h"
 #include "GLUploadHelpers.h"
+#include "ScopedGLHelpers.h"
 #include "mozilla/layers/GLManager.h"
 #include "mozilla/layers/CompositorOGL.h"
 #include "mozilla/layers/BasicCompositor.h"
@@ -167,6 +168,7 @@ uint32_t nsChildView::sLastInputEventCount = 0;
 - (void)clearCorners;
 
 // Overlay drawing functions for traditional CGContext drawing
+- (void)drawTitleString;
 - (void)drawTitlebarHighlight;
 - (void)maskTopCornersInContext:(CGContextRef)aContext;
 
@@ -352,8 +354,7 @@ public:
 
   NSOpenGLContext* GetNSOpenGLContext()
   {
-    return static_cast<NSOpenGLContext*>(
-      mGLContext->GetNativeData(GLContext::NativeGLContext));
+    return GLContextCGL::Cast(mGLContext)->GetNSOpenGLContext();
   }
 
 protected:
@@ -761,6 +762,29 @@ static void HideChildPluginViews(NSView* aView)
   }
 }
 
+// Some NSView methods (e.g. setFrame and setHidden) invalidate the view's
+// bounds in our window. However, we don't want these invalidations because
+// they are unnecessary and because they actually slow us down since we
+// block on the compositor inside drawRect.
+// When we actually need something invalidated, there will be an explicit call
+// to Invalidate from Gecko, so turning these automatic invalidations off
+// won't hurt us in the non-OMTC case.
+// The invalidations inside these NSView methods happen via a call to the
+// private method -[NSWindow _setNeedsDisplayInRect:]. Our BaseWindow
+// implementation of that method is augmented to let us ignore those calls
+// using -[BaseWindow disable/enableSetNeedsDisplay].
+static void
+ManipulateViewWithoutNeedingDisplay(NSView* aView, void (^aCallback)())
+{
+  BaseWindow* win = nil;
+  if ([[aView window] isKindOfClass:[BaseWindow class]]) {
+    win = (BaseWindow*)[aView window];
+  }
+  [win disableSetNeedsDisplay];
+  aCallback();
+  [win enableSetNeedsDisplay];
+}
+
 // Hide or show this component
 NS_IMETHODIMP nsChildView::Show(bool aState)
 {
@@ -772,7 +796,10 @@ NS_IMETHODIMP nsChildView::Show(bool aState)
     // no pool in place.
     nsAutoreleasePool localPool;
 
-    [mView setHidden:!aState];
+    ManipulateViewWithoutNeedingDisplay(mView, ^{
+      [mView setHidden:!aState];
+    });
+
     mVisible = aState;
     if (!mVisible && IsPluginView())
       HidePlugin();
@@ -1022,10 +1049,9 @@ NS_IMETHODIMP nsChildView::Move(double aX, double aY)
   mBounds.x = x;
   mBounds.y = y;
 
-  [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
-
-  if (mVisible)
-    [mView setNeedsDisplay:YES];
+  ManipulateViewWithoutNeedingDisplay(mView, ^{
+    [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
+  });
 
   NotifyRollupGeometryChange();
   ReportMoveEvent();
@@ -1048,7 +1074,9 @@ NS_IMETHODIMP nsChildView::Resize(double aWidth, double aHeight, bool aRepaint)
   mBounds.width  = width;
   mBounds.height = height;
 
-  [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
+  ManipulateViewWithoutNeedingDisplay(mView, ^{
+    [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
+  });
 
   if (mVisible && aRepaint)
     [mView setNeedsDisplay:YES];
@@ -1085,7 +1113,9 @@ NS_IMETHODIMP nsChildView::Resize(double aX, double aY,
     mBounds.height = height;
   }
 
-  [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
+  ManipulateViewWithoutNeedingDisplay(mView, ^{
+    [mView setFrame:DevPixelsToCocoaPoints(mBounds)];
+  });
 
   if (mVisible && aRepaint)
     [mView setNeedsDisplay:YES];
@@ -2006,14 +2036,12 @@ nsChildView::NotifyDirtyRegion(const nsIntRegion& aDirtyRegion)
   }
 }
 
-static const CGFloat kTitlebarHighlightHeight = 6;
-
 nsIntRect
 nsChildView::RectContainingTitlebarControls()
 {
-  // Start with a 6px high strip at the top of the window for the highlight line.
+  // Start with a thin strip at the top of the window for the highlight line.
   NSRect rect = NSMakeRect(0, 0, [mView bounds].size.width,
-                           kTitlebarHighlightHeight);
+                           [(ChildView*)mView cornerRadius]);
 
   // Add the rects of the titlebar controls.
   for (id view in [(BaseWindow*)[mView window] titlebarControls]) {
@@ -2058,7 +2086,7 @@ nsChildView::PreRender(LayerManagerComposite* aManager)
   // composition is done, thus keeping the GL context locked forever.
   mViewTearDownLock.Lock();
 
-  NSOpenGLContext *glContext = (NSOpenGLContext *)manager->gl()->GetNativeData(GLContext::NativeGLContext);
+  NSOpenGLContext *glContext = GLContextCGL::Cast(manager->gl())->GetNSOpenGLContext();
 
   if (![(ChildView*)mView preRender:glContext]) {
     mViewTearDownLock.Unlock();
@@ -2074,7 +2102,7 @@ nsChildView::PostRender(LayerManagerComposite* aManager)
   if (!manager) {
     return;
   }
-  NSOpenGLContext *glContext = (NSOpenGLContext *)manager->gl()->GetNativeData(GLContext::NativeGLContext);
+  NSOpenGLContext *glContext = GLContextCGL::Cast(manager->gl())->GetNSOpenGLContext();
   [(ChildView*)mView postRender:glContext];
   mViewTearDownLock.Unlock();
 }
@@ -2091,6 +2119,9 @@ nsChildView::DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect)
 void
 nsChildView::DrawWindowOverlay(GLManager* aManager, nsIntRect aRect)
 {
+  GLContext* gl = aManager->gl();
+  ScopedGLState scopedScissorTestState(gl, LOCAL_GL_SCISSOR_TEST, false);
+
   MaybeDrawTitlebar(aManager, aRect);
   MaybeDrawResizeIndicator(aManager, aRect);
   MaybeDrawRoundedCorners(aManager, aRect);
@@ -2173,7 +2204,7 @@ DrawTitlebarHighlight(NSSize aWindowSize, CGFloat aRadius, CGFloat aDevicePixelW
   // masked away in a later step.
   NSBezierPath* path = [NSBezierPath bezierPath];
   [path setWindingRule:NSEvenOddWindingRule];
-  NSRect pathRect = NSMakeRect(0, 0, aWindowSize.width, kTitlebarHighlightHeight + 2);
+  NSRect pathRect = NSMakeRect(0, 0, aWindowSize.width, aRadius + 2);
   [path appendBezierPathWithRect:pathRect];
   pathRect = NSInsetRect(pathRect, aDevicePixelWidth, aDevicePixelWidth);
   CGFloat innerRadius = aRadius - aDevicePixelWidth;
@@ -2181,11 +2212,13 @@ DrawTitlebarHighlight(NSSize aWindowSize, CGFloat aRadius, CGFloat aDevicePixelW
   [path addClip];
 
   // Now we fill the path with a subtle highlight gradient.
-  NSColor* topColor = [NSColor colorWithDeviceWhite:1.0 alpha:0.4];
-  NSColor* bottomColor = [NSColor colorWithDeviceWhite:1.0 alpha:0.0];
-  NSGradient* gradient = [[NSGradient alloc] initWithStartingColor:topColor endingColor:bottomColor];
-  [gradient drawInRect:NSMakeRect(0, 0, aWindowSize.width, kTitlebarHighlightHeight) angle:90];
-  [gradient release];
+  // We don't use NSGradient because it's 5x to 15x slower than the manual fill,
+  // as indicated by the performance test in bug 880620.
+  for (CGFloat y = 0; y < aRadius; y += aDevicePixelWidth) {
+    CGFloat t = y / aRadius;
+    [[NSColor colorWithDeviceWhite:1.0 alpha:0.4 * (1.0 - t)] set];
+    NSRectFill(NSMakeRect(0, y, aWindowSize.width, aDevicePixelWidth));
+  }
 
   [NSGraphicsContext restoreGraphicsState];
 }
@@ -2263,6 +2296,11 @@ nsChildView::UpdateTitlebarCGContext()
   }
   NSGraphicsContext* context = [NSGraphicsContext graphicsContextWithGraphicsPort:ctx flipped:[frameView isFlipped]];
   [NSGraphicsContext setCurrentContext:context];
+
+  // Draw the title string.
+  if ([window wantsTitleDrawn] && [frameView respondsToSelector:@selector(_drawTitleBar:)]) {
+    [frameView _drawTitleBar:[frameView bounds]];
+  }
 
   // Draw the titlebar controls into the titlebar image.
   for (id view in [window titlebarControls]) {
@@ -2727,7 +2765,6 @@ RectTextureImage::Draw(GLManager* aManager,
 GLPresenter::GLPresenter(GLContext* aContext)
  : mGLContext(aContext)
 {
-  mGLContext->SetFlipped(true);
   mGLContext->MakeCurrent();
   mRGBARectProgram = new ShaderProgramOGL(mGLContext,
     ProgramProfileOGL::GetProfileFor(RGBARectLayerProgramType, MaskNone));
@@ -3545,6 +3582,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   }
 
   if ([self isCoveringTitlebar]) {
+    [self drawTitleString];
     [self drawTitlebarHighlight];
     [self maskTopCornersInContext:aContext];
   }
@@ -3699,6 +3737,31 @@ NSEvent* gLastDragMouseDownEvent = nil;
   CGContextDrawImage(aContext, destRect, mTopLeftCornerMask);
 
   CGContextRestoreGState(aContext);
+}
+
+- (void)drawTitleString
+{
+  BaseWindow* window = (BaseWindow*)[self window];
+  if (![window wantsTitleDrawn]) {
+    return;
+  }
+
+  NSView* frameView = [[window contentView] superview];
+  if (![frameView respondsToSelector:@selector(_drawTitleBar:)]) {
+    return;
+  }
+
+  NSGraphicsContext* oldContext = [NSGraphicsContext currentContext];
+  CGContextRef ctx = (CGContextRef)[oldContext graphicsPort];
+  CGContextSaveGState(ctx);
+  if ([oldContext isFlipped] != [frameView isFlipped]) {
+    CGContextTranslateCTM(ctx, 0, [self bounds].size.height);
+    CGContextScaleCTM(ctx, 1, -1);
+  }
+  [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithGraphicsPort:ctx flipped:[frameView isFlipped]]];
+  [frameView _drawTitleBar:[frameView bounds]];
+  CGContextRestoreGState(ctx);
+  [NSGraphicsContext setCurrentContext:oldContext];
 }
 
 - (void)drawTitlebarHighlight

@@ -108,12 +108,6 @@ static size_t gMaxStackSize = 2 * 128 * sizeof(size_t) * 1024;
 static size_t gMaxStackSize = 128 * sizeof(size_t) * 1024;
 #endif
 
-#ifdef JS_THREADSAFE
-static unsigned gStackBaseThreadIndex;
-#else
-static uintptr_t gStackBase;
-#endif
-
 /*
  * Limit the timeout to 30 minutes to prevent an overflow on platfoms
  * that represent the time internally in microseconds using 32-bit int.
@@ -325,6 +319,7 @@ ShellOperationCallback(JSContext *cx)
 
     bool result;
     if (!gTimeoutFunc.isNull()) {
+        JSAutoCompartment ac(cx, &gTimeoutFunc.toObject());
         RootedValue returnedValue(cx);
         if (!JS_CallFunctionValue(cx, nullptr, gTimeoutFunc, 0, nullptr, returnedValue.address()))
             return false;
@@ -861,7 +856,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
     RootedObject element(cx);
     RootedString elementProperty(cx);
     JSAutoByteString fileNameBytes;
-    RootedString sourceURL(cx);
+    RootedString displayURL(cx);
     RootedString sourceMapURL(cx);
     unsigned lineNumber = 1;
     RootedObject global(cx, nullptr);
@@ -919,11 +914,11 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
                 return false;
         }
 
-        if (!JS_GetProperty(cx, opts, "sourceURL", &v))
+        if (!JS_GetProperty(cx, opts, "displayURL", &v))
             return false;
         if (!v.isUndefined()) {
-            sourceURL = ToString(cx, v);
-            if (!sourceURL)
+            displayURL = ToString(cx, v);
+            if (!displayURL)
                 return false;
         }
 
@@ -1030,11 +1025,11 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
                 return false;
         }
 
-        if (sourceURL && !script->scriptSource()->hasSourceURL()) {
-            const jschar *surl = JS_GetStringCharsZ(cx, sourceURL);
-            if (!surl)
+        if (displayURL && !script->scriptSource()->hasDisplayURL()) {
+            const jschar *durl = JS_GetStringCharsZ(cx, displayURL);
+            if (!durl)
                 return false;
-            if (!script->scriptSource()->setSourceURL(cx, surl))
+            if (!script->scriptSource()->setDisplayURL(cx, durl))
                 return false;
         }
         if (sourceMapURL && !script->scriptSource()->hasSourceMapURL()) {
@@ -5235,7 +5230,7 @@ ShellCloseAsmJSCacheEntryForWrite(HandleObject global, size_t serializedSize, ui
 }
 
 static bool
-ShellBuildId(js::Vector<char> *buildId)
+ShellBuildId(JS::BuildIdCharVector *buildId)
 {
     // The browser embeds the date into the buildid and the buildid is embedded
     // in the binary, so every 'make' necessarily builds a new firefox binary.
@@ -5469,103 +5464,110 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     }
 
     if (const char *str = op->getStringOption("ion-gvn")) {
-        if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.gvn = false;
-        else if (strcmp(str, "pessimistic") == 0)
-            jit::js_IonOptions.gvnIsOptimistic = false;
-        else if (strcmp(str, "optimistic") == 0)
-            jit::js_IonOptions.gvnIsOptimistic = true;
-        else
+        if (strcmp(str, "off") == 0) {
+            jit::js_JitOptions.disableGvn = true;
+        } else if (strcmp(str, "pessimistic") == 0) {
+            jit::js_JitOptions.forceGvnKind = true;
+            jit::js_JitOptions.forcedGvnKind = jit::GVN_Pessimistic;
+        } else if (strcmp(str, "optimistic") == 0) {
+            jit::js_JitOptions.forceGvnKind = true;
+            jit::js_JitOptions.forcedGvnKind = jit::GVN_Optimistic;
+        } else {
             return OptionFailure("ion-gvn", str);
+        }
     }
 
     if (const char *str = op->getStringOption("ion-licm")) {
         if (strcmp(str, "on") == 0)
-            jit::js_IonOptions.licm = true;
+            jit::js_JitOptions.disableLicm = false;
         else if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.licm = false;
+            jit::js_JitOptions.disableLicm = true;
         else
             return OptionFailure("ion-licm", str);
     }
 
     if (const char *str = op->getStringOption("ion-edgecase-analysis")) {
         if (strcmp(str, "on") == 0)
-            jit::js_IonOptions.edgeCaseAnalysis = true;
+            jit::js_JitOptions.disableEdgeCaseAnalysis = false;
         else if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.edgeCaseAnalysis = false;
+            jit::js_JitOptions.disableEdgeCaseAnalysis = true;
         else
             return OptionFailure("ion-edgecase-analysis", str);
     }
 
      if (const char *str = op->getStringOption("ion-range-analysis")) {
          if (strcmp(str, "on") == 0)
-             jit::js_IonOptions.rangeAnalysis = true;
+             jit::js_JitOptions.disableRangeAnalysis = false;
          else if (strcmp(str, "off") == 0)
-             jit::js_IonOptions.rangeAnalysis = false;
+             jit::js_JitOptions.disableRangeAnalysis = true;
          else
              return OptionFailure("ion-range-analysis", str);
      }
 
     if (op->getBoolOption("ion-check-range-analysis"))
-        jit::js_IonOptions.checkRangeAnalysis = true;
+        jit::js_JitOptions.checkRangeAnalysis = true;
 
     if (op->getBoolOption("ion-check-thread-safety"))
-        jit::js_IonOptions.checkThreadSafety = true;
+        jit::js_JitOptions.checkThreadSafety = true;
 
     if (const char *str = op->getStringOption("ion-inlining")) {
         if (strcmp(str, "on") == 0)
-            jit::js_IonOptions.inlining = true;
+            jit::js_JitOptions.disableInlining = false;
         else if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.inlining = false;
+            jit::js_JitOptions.disableInlining = true;
         else
             return OptionFailure("ion-inlining", str);
     }
 
     if (const char *str = op->getStringOption("ion-osr")) {
         if (strcmp(str, "on") == 0)
-            jit::js_IonOptions.osr = true;
+            jit::js_JitOptions.osr = true;
         else if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.osr = false;
+            jit::js_JitOptions.osr = false;
         else
             return OptionFailure("ion-osr", str);
     }
 
     if (const char *str = op->getStringOption("ion-limit-script-size")) {
         if (strcmp(str, "on") == 0)
-            jit::js_IonOptions.limitScriptSize = true;
+            jit::js_JitOptions.limitScriptSize = true;
         else if (strcmp(str, "off") == 0)
-            jit::js_IonOptions.limitScriptSize = false;
+            jit::js_JitOptions.limitScriptSize = false;
         else
             return OptionFailure("ion-limit-script-size", str);
     }
 
     int32_t useCount = op->getIntOption("ion-uses-before-compile");
     if (useCount >= 0)
-        jit::js_IonOptions.usesBeforeCompile = useCount;
+        jit::js_JitOptions.setUsesBeforeCompile(useCount);
 
     useCount = op->getIntOption("baseline-uses-before-compile");
     if (useCount >= 0)
-        jit::js_IonOptions.baselineUsesBeforeCompile = useCount;
+        jit::js_JitOptions.baselineUsesBeforeCompile = useCount;
 
     if (op->getBoolOption("baseline-eager"))
-        jit::js_IonOptions.baselineUsesBeforeCompile = 0;
+        jit::js_JitOptions.baselineUsesBeforeCompile = 0;
 
     if (const char *str = op->getStringOption("ion-regalloc")) {
-        if (strcmp(str, "lsra") == 0)
-            jit::js_IonOptions.registerAllocator = jit::RegisterAllocator_LSRA;
-        else if (strcmp(str, "backtracking") == 0)
-            jit::js_IonOptions.registerAllocator = jit::RegisterAllocator_Backtracking;
-        else if (strcmp(str, "stupid") == 0)
-            jit::js_IonOptions.registerAllocator = jit::RegisterAllocator_Stupid;
-        else
+        if (strcmp(str, "lsra") == 0) {
+            jit::js_JitOptions.forceRegisterAllocator = true;
+            jit::js_JitOptions.forcedRegisterAllocator = jit::RegisterAllocator_LSRA;
+        } else if (strcmp(str, "backtracking") == 0) {
+            jit::js_JitOptions.forceRegisterAllocator = true;
+            jit::js_JitOptions.forcedRegisterAllocator = jit::RegisterAllocator_Backtracking;
+        } else if (strcmp(str, "stupid") == 0) {
+            jit::js_JitOptions.forceRegisterAllocator = true;
+            jit::js_JitOptions.forcedRegisterAllocator = jit::RegisterAllocator_Stupid;
+        } else {
             return OptionFailure("ion-regalloc", str);
+        }
     }
 
     if (op->getBoolOption("ion-eager"))
-        jit::js_IonOptions.setEagerCompilation();
+        jit::js_JitOptions.setEagerCompilation();
 
     if (op->getBoolOption("ion-compile-try-catch"))
-        jit::js_IonOptions.compileTryCatch = true;
+        jit::js_JitOptions.compileTryCatch = true;
 
     bool parallelCompilation = true;
     if (const char *str = op->getStringOption("ion-parallel-compile")) {
@@ -5713,7 +5715,6 @@ main(int argc, char **argv, char **envp)
     sArgc = argc;
     sArgv = argv;
 
-    int stackDummy;
     JSRuntime *rt;
     JSContext *cx;
     int result;
@@ -5729,15 +5730,6 @@ main(int argc, char **argv, char **envp)
 
 #ifdef HAVE_SETLOCALE
     setlocale(LC_ALL, "");
-#endif
-
-#ifdef JS_THREADSAFE
-    if (PR_FAILURE == PR_NewThreadPrivateIndex(&gStackBaseThreadIndex, nullptr) ||
-        PR_FAILURE == PR_SetThreadPrivate(gStackBaseThreadIndex, &stackDummy)) {
-        return 1;
-    }
-#else
-    gStackBase = (uintptr_t) &stackDummy;
 #endif
 
 #ifdef XP_OS2
@@ -5852,6 +5844,8 @@ main(int argc, char **argv, char **envp)
 #ifdef JSGC_GENERATIONAL
         || !op.addBoolOption('\0', "no-ggc", "Disable Generational GC")
 #endif
+        || !op.addIntOption('\0', "available-memory", "SIZE",
+                            "Select GC settings based on available memory (MB)", 0)
     )
     {
         return EXIT_FAILURE;
@@ -5924,6 +5918,10 @@ main(int argc, char **argv, char **envp)
     if (op.getBoolOption("no-ggc"))
         JS::DisableGenerationalGC(rt);
 #endif
+
+    size_t availMem = op.getIntOption("available-memory");
+    if (availMem > 0)
+        JS_SetGCParametersBasedOnAvailableMemory(rt, availMem);
 
     /* Set the initial counter to 1 so the principal will never be destroyed. */
     JSPrincipals shellTrustedPrincipals;

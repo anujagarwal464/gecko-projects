@@ -121,12 +121,7 @@ static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printset
 using namespace mozilla;
 using namespace mozilla::dom;
 
-#ifdef DEBUG
-
-#undef NOISY_VIEWER
-#else
-#undef NOISY_VIEWER
-#endif
+#define BEFOREUNLOAD_DISABLED_PREFNAME "dom.disable_beforeunload"
 
 //-----------------------------------------------------
 // PR LOGGING
@@ -559,10 +554,6 @@ nsDocumentViewer::~nsDocumentViewer()
 NS_IMETHODIMP
 nsDocumentViewer::LoadStart(nsISupports *aDoc)
 {
-#ifdef NOISY_VIEWER
-  printf("nsDocumentViewer::LoadStart\n");
-#endif
-
   nsresult rv = NS_OK;
   if (!mDocument) {
     mDocument = do_QueryInterface(aDoc, &rv);
@@ -1063,7 +1054,19 @@ nsDocumentViewer::LoadComplete(nsresult aStatus)
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
+nsDocumentViewer::PermitUnload(bool aCallerClosesWindow,
+                               bool *aPermitUnload)
+{
+  bool shouldPrompt = true;
+  return PermitUnloadInternal(aCallerClosesWindow, &shouldPrompt,
+                              aPermitUnload);
+}
+
+
+nsresult
+nsDocumentViewer::PermitUnloadInternal(bool aCallerClosesWindow,
+                                       bool *aShouldPrompt,
+                                       bool *aPermitUnload)
 {
   *aPermitUnload = true;
 
@@ -1071,6 +1074,20 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
    || mInPermitUnload
    || mCallerIsClosingWindow
    || mInPermitUnloadPrompt) {
+    return NS_OK;
+  }
+
+  static bool sIsBeforeUnloadDisabled;
+  static bool sBeforeUnloadPrefCached = false;
+
+  if (!sBeforeUnloadPrefCached ) {
+    sBeforeUnloadPrefCached = true;
+    Preferences::AddBoolVarCache(&sIsBeforeUnloadDisabled,
+                                 BEFOREUNLOAD_DISABLED_PREFNAME);
+  }
+
+  // If the user has turned off onbeforeunload warnings, no need to check.
+  if (sIsBeforeUnloadDisabled) {
     return NS_OK;
   }
 
@@ -1128,8 +1145,8 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
   nsCOMPtr<nsIDocShellTreeNode> docShellNode(mContainer);
   nsAutoString text;
   beforeUnload->GetReturnValue(text);
-  if (event->GetInternalNSEvent()->mFlags.mDefaultPrevented ||
-      !text.IsEmpty()) {
+  if (*aShouldPrompt && (event->GetInternalNSEvent()->mFlags.mDefaultPrevented ||
+                         !text.IsEmpty())) {
     // Ask the user if it's ok to unload the current page
 
     nsCOMPtr<nsIPrompt> prompt = do_GetInterface(docShellNode);
@@ -1181,6 +1198,11 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
 
       // Button 0 == leave, button 1 == stay
       *aPermitUnload = (buttonPressed == 0);
+      // If the user decided to go ahead, make sure not to prompt the user again
+      // by toggling the internal prompting bool to false:
+      if (*aPermitUnload) {
+        *aShouldPrompt = false;
+      }
     }
   }
 
@@ -1199,7 +1221,8 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
         docShell->GetContentViewer(getter_AddRefs(cv));
 
         if (cv) {
-          cv->PermitUnload(aCallerClosesWindow, aPermitUnload);
+          cv->PermitUnloadInternal(aCallerClosesWindow, aShouldPrompt,
+                                   aPermitUnload);
         }
       }
     }
@@ -2696,6 +2719,17 @@ struct LineBoxInfo
 };
 
 static void
+ChangeChildPaintingEnabled(nsIMarkupDocumentViewer* aChild, void* aClosure)
+{
+  bool* enablePainting = (bool*) aClosure;
+  if (*enablePainting) {
+    aChild->ResumePainting();
+  } else {
+    aChild->PausePainting();
+  }
+}
+
+static void
 ChangeChildMaxLineBoxWidth(nsIMarkupDocumentViewer* aChild, void* aClosure)
 {
   struct LineBoxInfo* lbi = (struct LineBoxInfo*) aClosure;
@@ -3121,7 +3155,36 @@ NS_IMETHODIMP nsDocumentViewer::AppendSubtree(nsTArray<nsCOMPtr<nsIMarkupDocumen
   return NS_OK;
 }
 
-NS_IMETHODIMP nsDocumentViewer::ChangeMaxLineBoxWidth(int32_t aMaxLineBoxWidth)
+NS_IMETHODIMP
+nsDocumentViewer::PausePainting()
+{
+  bool enablePaint = false;
+  CallChildren(ChangeChildPaintingEnabled, &enablePaint);
+
+  nsIPresShell* presShell = GetPresShell();
+  if (presShell) {
+    presShell->PausePainting();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::ResumePainting()
+{
+  bool enablePaint = true;
+  CallChildren(ChangeChildPaintingEnabled, &enablePaint);
+
+  nsIPresShell* presShell = GetPresShell();
+  if (presShell) {
+    presShell->ResumePainting();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::ChangeMaxLineBoxWidth(int32_t aMaxLineBoxWidth)
 {
   // Change the max line box width for all children.
   struct LineBoxInfo lbi = { aMaxLineBoxWidth };
@@ -3803,7 +3866,7 @@ nsDocumentViewer::ExitPrintPreview()
 // Enumerate all the documents for their titles
 NS_IMETHODIMP
 nsDocumentViewer::EnumerateDocumentNames(uint32_t* aCount,
-                                           PRUnichar*** aResult)
+                                           char16_t*** aResult)
 {
 #ifdef NS_PRINTING
   NS_ENSURE_ARG(aCount);

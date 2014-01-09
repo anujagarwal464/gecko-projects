@@ -2614,14 +2614,17 @@ nsCSSRendering::PaintBackgroundColorWithSC(nsPresContext* aPresContext,
   // background colors.
   bool drawBackgroundImage;
   bool drawBackgroundColor;
-
   nscolor bgColor = DetermineBackgroundColor(aPresContext,
                                              aBackgroundSC,
                                              aForFrame,
                                              drawBackgroundImage,
                                              drawBackgroundColor);
 
-  NS_ASSERTION(drawBackgroundColor, "Should not be trying to paint a background color if we don't have one");
+  NS_ASSERTION(drawBackgroundImage || drawBackgroundColor,
+               "Should not be trying to paint a background if we don't have one");
+  if (!drawBackgroundColor) {
+    return;
+  }
 
   // Compute the outermost boundary of the area that might be painted.
   gfxContext *ctx = aRenderingContext.ThebesContext();
@@ -4862,6 +4865,8 @@ nsContextBoxBlur::BlurRectangle(gfxContext* aDestinationCtx,
     scaleX = transform.xx;
     scaleY = transform.yy;
     aDestinationCtx->IdentityMatrix();
+  } else {
+    transform = gfxMatrix();
   }
 
   gfxPoint blurStdDev = ComputeBlurStdDev(aBlurRadius, aAppUnitsPerDevPixel, scaleX, scaleY);

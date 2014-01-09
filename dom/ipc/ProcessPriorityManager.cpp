@@ -43,9 +43,7 @@
 //
 // (Wow, our logging story is a huge mess.)
 
-#ifndef HAVE_64BIT_OS
-#define ENABLE_LOGGING 1
-#endif
+// #define ENABLE_LOGGING 1
 
 #if defined(ANDROID) && defined(ENABLE_LOGGING)
 #  include <android/log.h>
@@ -432,7 +430,7 @@ NS_IMETHODIMP
 ProcessPriorityManagerImpl::Observe(
   nsISupports* aSubject,
   const char* aTopic,
-  const PRUnichar* aData)
+  const char16_t* aData)
 {
   nsDependentCString topic(aTopic);
   if (topic.EqualsLiteral("ipc:content-created")) {
@@ -663,7 +661,7 @@ ParticularProcessPriorityManager::Notify(const WakeLockInformation& aInfo)
 NS_IMETHODIMP
 ParticularProcessPriorityManager::Observe(nsISupports* aSubject,
                                           const char* aTopic,
-                                          const PRUnichar* aData)
+                                          const char16_t* aData)
 {
   if (!mContentParent) {
     // We've been shut down.
@@ -1158,7 +1156,7 @@ NS_IMETHODIMP
 ProcessPriorityManagerChild::Observe(
   nsISupports* aSubject,
   const char* aTopic,
-  const PRUnichar* aData)
+  const char16_t* aData)
 {
   MOZ_ASSERT(!strcmp(aTopic, "ipc:process-priority-changed"));
 

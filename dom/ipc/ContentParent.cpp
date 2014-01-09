@@ -64,7 +64,7 @@
 #include "nsIAppsService.h"
 #include "nsIClipboard.h"
 #include "nsIDOMGeoGeolocation.h"
-#include "nsIDOMWakeLock.h"
+#include "mozilla/dom/WakeLock.h"
 #include "nsIDOMWindow.h"
 #include "nsIExternalProtocolService.h"
 #include "nsIFilePicker.h"
@@ -96,6 +96,7 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsIDocShell.h"
 #include "mozilla/net/NeckoMessageUtils.h"
+#include "gfxPlatform.h"
 
 #if defined(ANDROID) || defined(LINUX)
 #include "nsSystemInfo.h"
@@ -245,8 +246,8 @@ ContentParentsMemoryReporter::CollectReports(nsIMemoryReporterCallback* cb,
 
         nsresult rv = cb->Callback(/* process */ EmptyCString(),
                                    path,
-                                   nsIMemoryReporter::KIND_OTHER,
-                                   nsIMemoryReporter::UNITS_COUNT,
+                                   KIND_OTHER,
+                                   UNITS_COUNT,
                                    numQueuedMessages,
                                    desc,
                                    aClosure);
@@ -487,6 +488,24 @@ ContentParent::GetInitialProcessPriority(Element* aFrameElement)
                PROCESS_PRIORITY_FOREGROUND;
 }
 
+bool
+ContentParent::PreallocatedProcessReady()
+{
+#ifdef MOZ_NUWA_PROCESS
+    return PreallocatedProcessManager::PreallocatedProcessReady();
+#else
+    return true;
+#endif
+}
+
+void
+ContentParent::RunAfterPreallocatedProcessReady(nsIRunnable* aRequest)
+{
+#ifdef MOZ_NUWA_PROCESS
+    PreallocatedProcessManager::RunAfterPreallocatedProcessReady(aRequest);
+#endif
+}
+
 /*static*/ TabParent*
 ContentParent::CreateBrowserOrApp(const TabContext& aContext,
                                   Element* aFrameElement)
@@ -561,6 +580,14 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
         p = MaybeTakePreallocatedAppProcess(manifestURL, privs,
                                             initialPriority);
         if (!p) {
+#ifdef MOZ_NUWA_PROCESS
+            if (Preferences::GetBool("dom.ipc.processPrelaunch.enabled",
+                                     false)) {
+                // Returning nullptr from here so the frame loader will retry
+                // later when we have a spare process.
+                return nullptr;
+            }
+#endif
             NS_WARNING("Unable to use pre-allocated app process");
             p = new ContentParent(ownApp,
                                   /* isForBrowserElement = */ false,
@@ -686,7 +713,7 @@ public:
         listener->ShutDown();
     }
 
-    void Init(nsIDOMMozWakeLock* aWakeLock)
+    void Init(WakeLock* aWakeLock)
     {
         MOZ_ASSERT(!mWakeLock);
         MOZ_ASSERT(!mTimer);
@@ -724,7 +751,8 @@ private:
     {
         nsRefPtr<SystemMessageHandledListener> kungFuDeathGrip = this;
 
-        mWakeLock->Unlock();
+        ErrorResult rv;
+        mWakeLock->Unlock(rv);
 
         if (mTimer) {
             mTimer->Cancel();
@@ -732,7 +760,7 @@ private:
         }
     }
 
-    nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
+    nsRefPtr<WakeLock> mWakeLock;
     nsCOMPtr<nsITimer> mTimer;
 };
 
@@ -759,7 +787,7 @@ ContentParent::MaybeTakeCPUWakeLock(Element* aFrameElement)
     }
 
     nsRefPtr<PowerManagerService> pms = PowerManagerService::GetInstance();
-    nsCOMPtr<nsIDOMMozWakeLock> lock =
+    nsRefPtr<WakeLock> lock =
         pms->NewWakeLockOnBehalfOfProcess(NS_LITERAL_STRING("cpu"), this);
 
     // This object's Init() function keeps it alive.
@@ -1385,7 +1413,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
             DebugOnly<bool> opened = PCompositor::Open(this);
             MOZ_ASSERT(opened);
 
-            if (Preferences::GetBool("layers.async-video.enabled",false)) {
+            if (gfxPlatform::AsyncVideoEnabled()) {
                 opened = PImageBridge::Open(this);
                 MOZ_ASSERT(opened);
             }
@@ -1570,7 +1598,7 @@ ContentParent::RecvSetClipboardText(const nsString& text,
         do_QueryInterface(dataWrapper);
     
     rv = trans->SetTransferData(kUnicodeMime, nsisupportsDataWrapper,
-                                text.Length() * sizeof(PRUnichar));
+                                text.Length() * sizeof(char16_t));
     NS_ENSURE_SUCCESS(rv, true);
     
     clipboard->SetData(trans, nullptr, whichClipboard);
@@ -1808,7 +1836,7 @@ NS_IMPL_ISUPPORTS3(ContentParent,
 NS_IMETHODIMP
 ContentParent::Observe(nsISupports* aSubject,
                        const char* aTopic,
-                       const PRUnichar* aData)
+                       const char16_t* aData)
 {
     if (!strcmp(aTopic, "xpcom-shutdown") && mSubprocess) {
         ShutDownProcess(/* closeWithError */ false);
@@ -2478,11 +2506,11 @@ ContentParent::DeallocPFMRadioParent(PFMRadioParent* aActor)
 
 asmjscache::PAsmJSCacheEntryParent*
 ContentParent::AllocPAsmJSCacheEntryParent(
-                                          const asmjscache::OpenMode& aOpenMode,
-                                          const int64_t& aSizeToWrite,
-                                          const IPC::Principal& aPrincipal)
+                                    const asmjscache::OpenMode& aOpenMode,
+                                    const asmjscache::WriteParams& aWriteParams,
+                                    const IPC::Principal& aPrincipal)
 {
-  return asmjscache::AllocEntryParent(aOpenMode, aSizeToWrite, aPrincipal);
+  return asmjscache::AllocEntryParent(aOpenMode, aWriteParams, aPrincipal);
 }
 
 bool
@@ -3196,7 +3224,7 @@ ContentParent::RecvRemoveIdleObserver(const uint64_t& aObserver, const uint32_t&
 NS_IMPL_ISUPPORTS1(ParentIdleListener, nsIObserver)
 
 NS_IMETHODIMP
-ParentIdleListener::Observe(nsISupports*, const char* aTopic, const PRUnichar* aData) {
+ParentIdleListener::Observe(nsISupports*, const char* aTopic, const char16_t* aData) {
   mozilla::unused << mParent->SendNotifyIdleObserver(mObserver,
                                                      nsDependentCString(aTopic),
                                                      nsDependentString(aData));

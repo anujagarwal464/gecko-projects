@@ -598,6 +598,8 @@ ContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
                             mFrontBufferRect,
                             mFrontBufferRotation);
   UpdateDestinationFrom(frontBuffer, updateRegion);
+  // We need to flush our buffers before we unlock our front textures
+  FlushBuffers();
   mFrontClient->Unlock();
   if (mFrontClientOnWhite) {
     mFrontClientOnWhite->Unlock();
@@ -608,29 +610,35 @@ void
 ContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
                                                    const nsIntRegion& aUpdateRegion)
 {
-  nsRefPtr<gfxContext> destCtx =
-    GetContextForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_BLACK);
-  destCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
+  DrawTarget* destDT =
+    BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_BLACK);
 
-  bool isClippingCheap = IsClippingCheap(destCtx, aUpdateRegion);
+  bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
   if (isClippingCheap) {
-    gfxUtils::ClipToRegion(destCtx, aUpdateRegion);
+    gfxUtils::ClipToRegion(destDT, aUpdateRegion);
   }
 
-  aSource.DrawBufferWithRotation(destCtx->GetDrawTarget(), BUFFER_BLACK, 1.0, OP_SOURCE);
+  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, OP_SOURCE);
+  if (isClippingCheap) {
+    destDT->PopClip();
+  }
+  ReturnDrawTarget(destDT);
 
   if (aSource.HaveBufferOnWhite()) {
     MOZ_ASSERT(HaveBufferOnWhite());
-    nsRefPtr<gfxContext> destCtx =
-      GetContextForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
-    destCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
+    DrawTarget* destDT =
+      BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
 
-    bool isClippingCheap = IsClippingCheap(destCtx, aUpdateRegion);
+    bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
     if (isClippingCheap) {
-      gfxUtils::ClipToRegion(destCtx, aUpdateRegion);
+      gfxUtils::ClipToRegion(destDT, aUpdateRegion);
     }
 
-    aSource.DrawBufferWithRotation(destCtx->GetDrawTarget(), BUFFER_WHITE, 1.0, OP_SOURCE);
+    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, OP_SOURCE);
+    if (isClippingCheap) {
+      destDT->PopClip();
+    }
+    ReturnDrawTarget(destDT);
   }
 }
 
@@ -810,6 +818,9 @@ DeprecatedContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
                             mFrontBufferRotation);
   UpdateDestinationFrom(frontBuffer, updateRegion);
 
+  // We need to flush our buffers before we unlock our front textures
+  FlushBuffers();
+
   mFrontAndBackBufferDiffer = false;
 }
 
@@ -817,32 +828,38 @@ void
 DeprecatedContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
                                                    const nsIntRegion& aUpdateRegion)
 {
-  nsRefPtr<gfxContext> destCtx =
-    GetContextForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_BLACK);
-  if (!destCtx) {
+  DrawTarget* destDT =
+    BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_BLACK);
+  if (!destDT) {
     return;
   }
-  destCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
 
-  bool isClippingCheap = IsClippingCheap(destCtx, aUpdateRegion);
+  bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
   if (isClippingCheap) {
-    gfxUtils::ClipToRegion(destCtx, aUpdateRegion);
+    gfxUtils::ClipToRegion(destDT, aUpdateRegion);
   }
 
-  aSource.DrawBufferWithRotation(destCtx->GetDrawTarget(), BUFFER_BLACK, 1.0, OP_SOURCE);
+  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, OP_SOURCE);
+  if (isClippingCheap) {
+    destDT->PopClip();
+  }
+  ReturnDrawTarget(destDT);
 
   if (aSource.HaveBufferOnWhite()) {
     MOZ_ASSERT(HaveBufferOnWhite());
-    nsRefPtr<gfxContext> destCtx =
-      GetContextForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
-    destCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
+    DrawTarget* destDT =
+      BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
 
-    bool isClippingCheap = IsClippingCheap(destCtx, aUpdateRegion);
+    bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
     if (isClippingCheap) {
-      gfxUtils::ClipToRegion(destCtx, aUpdateRegion);
+      gfxUtils::ClipToRegion(destDT, aUpdateRegion);
     }
 
-    aSource.DrawBufferWithRotation(destCtx->GetDrawTarget(), BUFFER_WHITE, 1.0, OP_SOURCE);
+    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, OP_SOURCE);
+    if (isClippingCheap) {
+      destDT->PopClip();
+    }
+    ReturnDrawTarget(destDT);
   }
 }
 
@@ -1135,6 +1152,8 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
   invalidate.Sub(aLayer->GetValidRegion(), destBufferRect);
   result.mRegionToInvalidate.Or(result.mRegionToInvalidate, invalidate);
 
+  MOZ_ASSERT(!mLoanedDrawTarget);
+
   // BeginUpdate is allowed to modify the given region,
   // if it wants more to be repainted than we request.
   if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
@@ -1147,24 +1166,27 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
       FillSurface(onBlack, result.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(0.0, 0.0, 0.0, 1.0));
       FillSurface(onWhite, result.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(1.0, 1.0, 1.0, 1.0));
       MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
-      RefPtr<DrawTarget> onBlackDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onBlack, onBlack->GetSize());
-      RefPtr<DrawTarget> onWhiteDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onWhite, onWhite->GetSize());
-      RefPtr<DrawTarget> dt = Factory::CreateDualDrawTarget(onBlackDT, onWhiteDT);
-      result.mContext = new gfxContext(dt);
+      RefPtr<DrawTarget> onBlackDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onBlack, onBlack->GetSize().ToIntSize());
+      RefPtr<DrawTarget> onWhiteDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onWhite, onWhite->GetSize().ToIntSize());
+      mLoanedDrawTarget = Factory::CreateDualDrawTarget(onBlackDT, onWhiteDT);
     } else {
-      result.mContext = nullptr;
+      mLoanedDrawTarget = nullptr;
     }
   } else {
     nsRefPtr<gfxASurface> surf = GetUpdateSurface(BUFFER_BLACK, result.mRegionToDraw);
     MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
-    RefPtr<DrawTarget> dt = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(surf, surf->GetSize());
-    result.mContext = new gfxContext(dt);
+    mLoanedDrawTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(surf, surf->GetSize().ToIntSize());
   }
-  if (!result.mContext) {
+  if (!mLoanedDrawTarget) {
     NS_WARNING("unable to get context for update");
     return result;
   }
-  result.mContext->Translate(-gfxPoint(drawBounds.x, drawBounds.y));
+
+  result.mTarget = mLoanedDrawTarget;
+  mLoanedTransform = mLoanedDrawTarget->GetTransform();
+  mLoanedTransform.Translate(-drawBounds.x, -drawBounds.y);
+  result.mTarget->SetTransform(mLoanedTransform);
+  mLoanedTransform.Translate(drawBounds.x, drawBounds.y);
 
   // If we do partial updates, we have to clip drawing to the regionToDraw.
   // If we don't clip, background images will be fillrect'd to the region correctly,
@@ -1176,11 +1198,9 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
   result.mClip = CLIP_DRAW;
 
   if (mContentType == GFX_CONTENT_COLOR_ALPHA) {
-    result.mContext->Save();
-    gfxUtils::ClipToRegion(result.mContext, result.mRegionToDraw);
-    result.mContext->SetOperator(gfxContext::OPERATOR_CLEAR);
-    result.mContext->Paint();
-    result.mContext->Restore();
+    gfxUtils::ClipToRegion(result.mTarget, result.mRegionToDraw);
+    nsIntRect bounds = result.mRegionToDraw.GetBounds();
+    result.mTarget->ClearRect(Rect(bounds.x, bounds.y, bounds.width, bounds.height));
   }
 
   return result;
@@ -1226,7 +1246,7 @@ ContentClientIncremental::GetUpdateSurface(BufferType aType,
     return nullptr;
   }
   SurfaceDescriptor desc;
-  if (!mForwarder->AllocSurfaceDescriptor(gfxIntSize(rgnSize.width, rgnSize.height),
+  if (!mForwarder->AllocSurfaceDescriptor(rgnSize.Size().ToIntSize(),
                                           mContentType,
                                           &desc)) {
     NS_WARNING("creating SurfaceDescriptor failed!");

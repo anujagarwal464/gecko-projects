@@ -19,6 +19,7 @@ import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.HardwareUtils;
+import org.mozilla.gecko.util.ProxySelector;
 import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.Activity;
@@ -68,6 +69,7 @@ import android.os.MessageQueue;
 import android.os.SystemClock;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.support.v4.util.LruCache;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Base64;
@@ -96,7 +98,6 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.Proxy;
-import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -2664,42 +2665,20 @@ public class GeckoAppShell
 
     @WrapElementForJNI(stubName = "GetProxyForURIWrapper")
     public static String getProxyForURI(String spec, String scheme, String host, int port) {
-        URI uri = null;
-        try {
-            uri = new URI(spec);
-        } catch(java.net.URISyntaxException uriEx) {
-            try {
-                uri = new URI(scheme, null, host, port, null, null, null);
-            } catch(java.net.URISyntaxException uriEx2) {
-                Log.d("GeckoProxy", "Failed to create uri from spec", uriEx);
-                Log.d("GeckoProxy", "Failed to create uri from parts", uriEx2);
-            }
+        final ProxySelector ps = new ProxySelector();
+
+        Proxy proxy = ps.select(scheme, host);
+        if (Proxy.NO_PROXY.equals(proxy)) {
+            return "DIRECT";
         }
-        if (uri != null) {
-            ProxySelector ps = ProxySelector.getDefault();
-            if (ps != null) {
-                List<Proxy> proxies = ps.select(uri);
-                if (proxies != null && !proxies.isEmpty()) {
-                    Proxy proxy = proxies.get(0);
-                    if (!Proxy.NO_PROXY.equals(proxy)) {
-                        final String proxyStr;
-                        switch (proxy.type()) {
-                        case HTTP:
-                            proxyStr = "PROXY " + proxy.address().toString();
-                            break;
-                        case SOCKS:
-                            proxyStr = "SOCKS " + proxy.address().toString();
-                            break;
-                        case DIRECT:
-                        default:
-                            proxyStr = "DIRECT";
-                            break;
-                        }
-                        return proxyStr;
-                    }
-                }
-            }
+        
+        switch (proxy.type()) {
+            case HTTP:
+                return "PROXY " + proxy.address().toString();
+            case SOCKS:
+                return "SOCKS " + proxy.address().toString();
         }
+
         return "DIRECT";
     }
 }

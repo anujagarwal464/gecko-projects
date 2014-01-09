@@ -70,6 +70,9 @@ typedef struct _nsCocoaWindowList {
   // Shadow
   BOOL mScheduledShadowInvalidation;
 
+  // Invalidation disabling
+  BOOL mDisabledNeedsDisplay;
+
   // DPI cache. Getting the physical screen size (CGDisplayScreenSize)
   // is ridiculously slow, so we cache it in the toplevel window for all
   // descendants to use.
@@ -78,6 +81,7 @@ typedef struct _nsCocoaWindowList {
   NSTrackingArea* mTrackingArea;
 
   BOOL mBeingShown;
+  BOOL mDrawTitle;
 }
 
 - (void)importState:(NSDictionary*)aState;
@@ -103,6 +107,12 @@ typedef struct _nsCocoaWindowList {
 - (ChildView*)mainChildView;
 
 - (NSArray*)titlebarControls;
+
+- (void)setWantsTitleDrawn:(BOOL)aDrawTitle;
+- (BOOL)wantsTitleDrawn;
+
+- (void)disableSetNeedsDisplay;
+- (void)enableSetNeedsDisplay;
 
 @end
 
@@ -294,6 +304,7 @@ public:
     virtual void SetShowsToolbarButton(bool aShow);
     virtual void SetShowsFullScreenButton(bool aShow);
     virtual void SetWindowAnimationType(WindowAnimationType aType);
+    virtual void SetDrawsTitle(bool aDrawTitle);
     NS_IMETHOD SetNonClientMargins(nsIntMargin &margins);
     NS_IMETHOD SetWindowTitlebarColor(nscolor aColor, bool aActive);
     virtual void SetDrawsInTitlebar(bool aState);
@@ -348,8 +359,7 @@ protected:
                                               nsDeviceContext *aContext);
   void                 DestroyNativeWindow();
   void                 AdjustWindowShadow();
-  void                 SetUpWindowFilter();
-  void                 CleanUpWindowFilter();
+  void                 SetWindowBackgroundBlur();
   void                 UpdateBounds();
 
   nsresult             DoResize(double aX, double aY, double aWidth, double aHeight,
@@ -370,7 +380,6 @@ protected:
   NSWindow*            mSheetWindowParent; // if this is a sheet, this is the NSWindow it's attached to
   nsChildView*         mPopupContentView; // if this is a popup, this is its content widget
   int32_t              mShadowStyle;
-  NSUInteger           mWindowFilter;
 
   CGFloat              mBackingScaleFactor;
 

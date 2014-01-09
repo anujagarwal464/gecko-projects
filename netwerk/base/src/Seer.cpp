@@ -292,7 +292,7 @@ Seer::RemoveObserver()
 
 NS_IMETHODIMP
 Seer::Observe(nsISupports *subject, const char *topic,
-              const PRUnichar *data_unicode)
+              const char16_t *data_unicode)
 {
   nsresult rv = NS_OK;
 
@@ -903,7 +903,7 @@ Seer::PredictForLink(nsIURI *targetURI, nsIURI *sourceURI,
     }
   }
 
-  mSpeculativeService->SpeculativeConnect(targetURI, this);
+  mSpeculativeService->SpeculativeConnect(targetURI, nullptr);
   if (verifier) {
     verifier->OnPredictPreconnect(targetURI);
   }

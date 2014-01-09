@@ -379,22 +379,21 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
             }
             return false;
         }
-        if (fun->atom())
+        if (fun->atom() || fun->hasGuessedAtom())
             firstword |= HasAtom;
         if (fun->isStarGenerator())
             firstword |= IsStarGenerator;
         script = fun->getOrCreateScript(cx);
         if (!script)
             return false;
-        atom = fun->atom();
+        atom = fun->displayAtom();
         flagsword = (fun->nargs() << 16) | fun->flags();
+    }
 
-        if (!xdr->codeUint32(&firstword))
-            return false;
-    } else {
-        if (!xdr->codeUint32(&firstword))
-            return false;
+    if (!xdr->codeUint32(&firstword))
+        return false;
 
+    if (mode == XDR_DECODE) {
         JSObject *proto = nullptr;
         if (firstword & IsStarGenerator) {
             proto = cx->global()->getOrCreateStarGeneratorFunctionPrototype(cx);
@@ -427,8 +426,6 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
         if (!JSFunction::setTypeForScriptedFunction(cx, fun))
             return false;
         JS_ASSERT(fun->nargs() == fun->nonLazyScript()->bindings.numArgs());
-        RootedScript script(cx, fun->nonLazyScript());
-        CallNewScriptHook(cx, script, fun);
         objp.set(fun);
     }
 
@@ -1113,7 +1110,7 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
 {
     JS_ASSERT(fun->isInterpretedLazy());
 
-    LazyScript *lazy = fun->lazyScriptOrNull();
+    Rooted<LazyScript*> lazy(cx, fun->lazyScriptOrNull());
     if (lazy) {
         // Trigger a pre barrier on the lazy script being overwritten.
         if (cx->zone()->needsBarrier())
@@ -1124,25 +1121,21 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         // THING_ROOT_LAZY_SCRIPT).
         AutoSuppressGC suppressGC(cx);
 
-        fun->flags_ &= ~INTERPRETED_LAZY;
-        fun->flags_ |= INTERPRETED;
-
         RootedScript script(cx, lazy->maybeScript());
 
         if (script) {
-            fun->initScript(script);
+            AutoLockForCompilation lock(cx);
+            fun->setUnlazifiedScript(script);
             return true;
         }
 
-        fun->initScript(nullptr);
-
         if (fun != lazy->function()) {
             script = lazy->function()->getOrCreateScript(cx);
-            if (!script) {
-                fun->initLazyScript(lazy);
+            if (!script)
                 return false;
-            }
-            fun->initScript(script);
+
+            AutoLockForCompilation lock(cx);
+            fun->setUnlazifiedScript(script);
             return true;
         }
 
@@ -1162,16 +1155,18 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         if (script) {
             RootedObject enclosingScope(cx, lazy->enclosingScope());
             RootedScript clonedScript(cx, CloneScript(cx, enclosingScope, fun, script));
-            if (!clonedScript) {
-                fun->initLazyScript(lazy);
+            if (!clonedScript)
                 return false;
-            }
 
             clonedScript->setSourceObject(lazy->sourceObject());
 
             fun->initAtom(script->function()->displayAtom());
-            fun->initScript(clonedScript);
             clonedScript->setFunction(fun);
+
+            {
+                AutoLockForCompilation lock(cx);
+                fun->setUnlazifiedScript(clonedScript);
+            }
 
             CallNewScriptHook(cx, clonedScript, fun);
 
@@ -1184,18 +1179,14 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         // Parse and compile the script from source.
         SourceDataCache::AutoSuppressPurge asp(cx);
         const jschar *chars = lazy->source()->chars(cx, asp);
-        if (!chars) {
-            fun->initLazyScript(lazy);
+        if (!chars)
             return false;
-        }
 
         const jschar *lazyStart = chars + lazy->begin();
         size_t lazyLength = lazy->end() - lazy->begin();
 
-        if (!frontend::CompileLazyFunction(cx, lazy, lazyStart, lazyLength)) {
-            fun->initLazyScript(lazy);
+        if (!frontend::CompileLazyFunction(cx, lazy, lazyStart, lazyLength))
             return false;
-        }
 
         script = fun->nonLazyScript();
 

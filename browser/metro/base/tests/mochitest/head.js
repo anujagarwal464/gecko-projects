@@ -556,28 +556,30 @@ function waitForObserver(aObsEvent, aTimeoutMs) {
   }
 }
 
+
+/*=============================================================================
+ * Input mode helpers - these helpers notify observers to metro_precise_input
+ * and metro_imprecise_input respectively, triggering the same behaviour as user touch or mouse input
+ *
+ * Usage: let promise = waitForObservers("metro_imprecise_input");
+ *        notifyImprecise();
+ *        yield promise; // you are now in imprecise mode
+ *===========================================================================*/
+function notifyPrecise()
+{
+  Services.obs.notifyObservers(null, "metro_precise_input", null);
+}
+
+function notifyImprecise()
+{
+  Services.obs.notifyObservers(null, "metro_imprecise_input", null);
+}
+
 /*=============================================================================
  * Native input helpers - these helpers send input directly to the os
  * generating os level input events that get processed by widget and
  * apzc logic.
  *===========================================================================*/
-
-// Keyboard layouts for use with synthesizeNativeKey
-const usEnglish = 0x409;
-const arSpanish = 0x2C0A;
-
-// Modifiers for use with synthesizeNativeKey
-const leftShift = 0x100;
-const rightShift = 0x200;
-const leftControl = 0x400;
-const rightControl = 0x800;
-const leftAlt = 0x1000;
-const rightAlt = 0x2000;
-
-function synthesizeNativeKey(aKbLayout, aVKey, aModifiers) {
-  Browser.windowUtils.sendNativeKeyEvent(aKbLayout, aVKey, aModifiers, '', '');
-}
-
 function synthesizeNativeMouse(aElement, aOffsetX, aOffsetY, aMsg) {
   let x = aOffsetX;
   let y = aOffsetY;

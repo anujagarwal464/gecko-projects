@@ -552,7 +552,7 @@ OperatorInI(JSContext *cx, uint32_t index, HandleObject obj, bool *out)
 bool
 GetIntrinsicValue(JSContext *cx, HandlePropertyName name, MutableHandleValue rval)
 {
-    if (!cx->global()->getIntrinsicValue(cx, name, rval))
+    if (!GlobalObject::getIntrinsicValue(cx, cx->global(), name, rval))
         return false;
 
     // This function is called when we try to compile a cold getintrinsic
@@ -913,6 +913,19 @@ JSObject *CreateDerivedTypedObj(JSContext *cx, HandleObject type,
     return TypedObject::createDerived(cx, type, owner, offset);
 }
 
+JSString *
+regexp_replace(JSContext *cx, HandleString string, HandleObject regexp, HandleString repl)
+{
+    JS_ASSERT(!!string);
+    JS_ASSERT(!!repl);
+
+    RootedValue rval(cx);
+    if (!str_replace_regexp_raw(cx, string, regexp, repl, &rval))
+        return nullptr;
+
+    return rval.toString();
+}
+
 bool
 Recompile(JSContext *cx)
 {
@@ -927,11 +940,12 @@ Recompile(JSContext *cx)
     RootedScript script(cx, iter.script());
     JS_ASSERT(script->hasIonScript());
 
+    if (!IsIonEnabled(cx))
+        return true;
+
     MethodStatus status = Recompile(cx, script, nullptr, nullptr, isConstructing);
     if (status == Method_Error)
         return false;
-
-    JS_ASSERT(script->hasIonScript());
 
     return true;
 }
@@ -946,7 +960,7 @@ AssertValidObjectPtr(JSContext *cx, JSObject *obj)
     JS_ASSERT(obj->runtimeFromMainThread() == cx->runtime());
 
     JS_ASSERT_IF(!obj->hasLazyType(),
-                 obj->type()->clasp == obj->lastProperty()->getObjectClass());
+                 obj->type()->clasp() == obj->lastProperty()->getObjectClass());
 
     if (obj->isTenured()) {
         JS_ASSERT(obj->isAligned());

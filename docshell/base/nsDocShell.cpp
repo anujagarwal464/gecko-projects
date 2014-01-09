@@ -91,6 +91,7 @@
 
 // Interfaces Needed
 #include "nsIUploadChannel.h"
+#include "nsIUploadChannel2.h"
 #include "nsIWebProgress.h"
 #include "nsILayoutHistoryState.h"
 #include "nsITimer.h"
@@ -367,9 +368,9 @@ ForEachPing(nsIContent *content, ForEachPingCallback callback, void *closure)
   nsIDocument *doc = content->OwnerDoc();
 
   // value contains relative URIs split on spaces (U+0020)
-  const PRUnichar *start = value.BeginReading();
-  const PRUnichar *end   = value.EndReading();
-  const PRUnichar *iter  = start;
+  const char16_t *start = value.BeginReading();
+  const char16_t *end   = value.EndReading();
+  const char16_t *iter  = start;
   for (;;) {
     if (iter < end && *iter != ' ') {
       ++iter;
@@ -401,8 +402,8 @@ static void
 OnPingTimeout(nsITimer *timer, void *closure)
 {
   nsILoadGroup *loadGroup = static_cast<nsILoadGroup *>(closure);
-  loadGroup->Cancel(NS_ERROR_ABORT);
-  loadGroup->Release();
+  if (loadGroup)
+    loadGroup->Cancel(NS_ERROR_ABORT);
 }
 
 // Check to see if two URIs have the same host or not
@@ -426,18 +427,51 @@ public:
   NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSICHANNELEVENTSINK
 
-  nsPingListener(bool requireSameHost, nsIContent* content)
+  nsPingListener(bool requireSameHost, nsIContent* content, nsILoadGroup* loadGroup)
     : mRequireSameHost(requireSameHost),
-      mContent(content)
+      mContent(content),
+      mLoadGroup(loadGroup)
   {}
+
+  ~nsPingListener();
+
+  nsresult StartTimeout();
 
 private:
   bool mRequireSameHost;
   nsCOMPtr<nsIContent> mContent;
+  nsCOMPtr<nsILoadGroup> mLoadGroup;
+  nsCOMPtr<nsITimer> mTimer;
 };
 
 NS_IMPL_ISUPPORTS4(nsPingListener, nsIStreamListener, nsIRequestObserver,
                    nsIInterfaceRequestor, nsIChannelEventSink)
+
+nsPingListener::~nsPingListener()
+{
+  if (mTimer) {
+    mTimer->Cancel();
+    mTimer = nullptr;
+  }
+}
+
+nsresult
+nsPingListener::StartTimeout()
+{
+  nsCOMPtr<nsITimer> timer = do_CreateInstance(NS_TIMER_CONTRACTID);
+
+  if (timer) {
+    nsresult rv = timer->InitWithFuncCallback(OnPingTimeout, mLoadGroup,
+                                              PING_TIMEOUT,
+                                              nsITimer::TYPE_ONE_SHOT);
+    if (NS_SUCCEEDED(rv)) {
+      mTimer = timer;
+      return NS_OK;
+    }
+  }
+
+  return NS_ERROR_OUT_OF_MEMORY;
+}
 
 NS_IMETHODIMP
 nsPingListener::OnStartRequest(nsIRequest *request, nsISupports *context)
@@ -458,6 +492,13 @@ NS_IMETHODIMP
 nsPingListener::OnStopRequest(nsIRequest *request, nsISupports *context,
                               nsresult status)
 {
+  mLoadGroup = nullptr;
+
+  if (mTimer) {
+    mTimer->Cancel();
+    mTimer = nullptr;
+  }
+
   return NS_OK;
 }
 
@@ -506,6 +547,7 @@ struct SendPingInfo {
   int32_t numPings;
   int32_t maxPings;
   bool    requireSameHost;
+  nsIURI *target;
   nsIURI *referrer;
 };
 
@@ -542,8 +584,6 @@ SendPing(void *closure, nsIContent *content, nsIURI *uri, nsIIOService *ios)
   if (httpInternal)
     httpInternal->SetDocumentURI(doc->GetDocumentURI());
 
-  if (info->referrer)
-    httpChan->SetReferrer(info->referrer);
 
   httpChan->SetRequestMethod(NS_LITERAL_CSTRING("POST"));
 
@@ -555,20 +595,56 @@ SendPing(void *closure, nsIContent *content, nsIURI *uri, nsIIOService *ios)
   httpChan->SetRequestHeader(NS_LITERAL_CSTRING("accept-encoding"),
                              EmptyCString(), false);
 
-  nsCOMPtr<nsIUploadChannel> uploadChan = do_QueryInterface(httpChan);
+  // Always send a Ping-To header.
+  nsAutoCString pingTo;
+  if (NS_SUCCEEDED(info->target->GetSpec(pingTo)))
+    httpChan->SetRequestHeader(NS_LITERAL_CSTRING("Ping-To"), pingTo, false);
+
+  nsCOMPtr<nsIScriptSecurityManager> sm =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+
+  if (sm && info->referrer) {
+    bool referrerIsSecure;
+    uint32_t flags = nsIProtocolHandler::URI_SAFE_TO_LOAD_IN_SECURE_CONTEXT;
+    nsresult rv = NS_URIChainHasFlags(info->referrer, flags, &referrerIsSecure);
+
+    // Default to sending less data if NS_URIChainHasFlags() fails.
+    referrerIsSecure = NS_FAILED(rv) || referrerIsSecure;
+
+    bool sameOrigin =
+      NS_SUCCEEDED(sm->CheckSameOriginURI(info->referrer, uri, false));
+
+    // If both the address of the document containing the hyperlink being
+    // audited and "ping URL" have the same origin or the document containing
+    // the hyperlink being audited was not retrieved over an encrypted
+    // connection, send a Ping-From header.
+    if (sameOrigin || !referrerIsSecure) {
+      nsAutoCString pingFrom;
+      if (NS_SUCCEEDED(info->referrer->GetSpec(pingFrom)))
+        httpChan->SetRequestHeader(NS_LITERAL_CSTRING("Ping-From"), pingFrom, false);
+    }
+
+    // If the document containing the hyperlink being audited was not retrieved
+    // over an encrypted connection and its address does not have the same
+    // origin as "ping URL", send a referrer.
+    if (!sameOrigin && !referrerIsSecure)
+      httpChan->SetReferrer(info->referrer);
+  }
+
+  nsCOMPtr<nsIUploadChannel2> uploadChan = do_QueryInterface(httpChan);
   if (!uploadChan)
     return;
 
-  // To avoid sending an unnecessary Content-Type header, we encode the
-  // closing portion of the headers in the POST body.
-  NS_NAMED_LITERAL_CSTRING(uploadData, "Content-Length: 0\r\n\r\n");
+  NS_NAMED_LITERAL_CSTRING(uploadData, "PING");
 
   nsCOMPtr<nsIInputStream> uploadStream;
   NS_NewPostDataStream(getter_AddRefs(uploadStream), false, uploadData);
   if (!uploadStream)
     return;
 
-  uploadChan->SetUploadStream(uploadStream, EmptyCString(), -1);
+  uploadChan->ExplicitSetUploadStream(uploadStream,
+    NS_LITERAL_CSTRING("text/ping"), uploadData.Length(),
+    NS_LITERAL_CSTRING("POST"), false);
 
   // The channel needs to have a loadgroup associated with it, so that we can
   // cancel the channel and any redirected channels it may create.
@@ -581,10 +657,12 @@ SendPing(void *closure, nsIContent *content, nsIURI *uri, nsIIOService *ios)
   // Construct a listener that merely discards any response.  If successful at
   // opening the channel, then it is not necessary to hold a reference to the
   // channel.  The networking subsystem will take care of that for us.
-  nsCOMPtr<nsIStreamListener> listener =
-      new nsPingListener(info->requireSameHost, content);
-  if (!listener)
+  nsPingListener *pingListener =
+      new nsPingListener(info->requireSameHost, content, loadGroup);
+  if (!pingListener)
     return;
+
+  nsCOMPtr<nsIStreamListener> listener(pingListener);
 
   // Observe redirects as well:
   nsCOMPtr<nsIInterfaceRequestor> callbacks = do_QueryInterface(listener);
@@ -599,29 +677,16 @@ SendPing(void *closure, nsIContent *content, nsIURI *uri, nsIIOService *ios)
   info->numPings++;
 
   // Prevent ping requests from stalling and never being garbage collected...
-  nsCOMPtr<nsITimer> timer =
-      do_CreateInstance(NS_TIMER_CONTRACTID);
-  if (timer) {
-    nsresult rv = timer->InitWithFuncCallback(OnPingTimeout, loadGroup,
-                                              PING_TIMEOUT,
-                                              nsITimer::TYPE_ONE_SHOT);
-    if (NS_SUCCEEDED(rv)) {
-      // When the timer expires, the callback function will release this
-      // reference to the loadgroup.
-      static_cast<nsILoadGroup *>(loadGroup.get())->AddRef();
-      loadGroup = 0;
-    }
-  }
-  
-  // If we failed to setup the timer, then we should just cancel the channel
-  // because we won't be able to ensure that it goes away in a timely manner.
-  if (loadGroup)
+  if (NS_FAILED(pingListener->StartTimeout())) {
+    // If we failed to setup the timer, then we should just cancel the channel
+    // because we won't be able to ensure that it goes away in a timely manner.
     chan->Cancel(NS_ERROR_ABORT);
+  }
 }
 
 // Spec: http://whatwg.org/specs/web-apps/current-work/#ping
 static void
-DispatchPings(nsIContent *content, nsIURI *referrer)
+DispatchPings(nsIContent *content, nsIURI *target, nsIURI *referrer)
 {
   SendPingInfo info;
 
@@ -631,6 +696,7 @@ DispatchPings(nsIContent *content, nsIURI *referrer)
     return;
 
   info.numPings = 0;
+  info.target = target;
   info.referrer = referrer;
 
   ForEachPing(content, SendPing, &info);
@@ -2775,7 +2841,7 @@ nsDocShell::SetName(const nsAString& aName)
 }
 
 NS_IMETHODIMP
-nsDocShell::NameEquals(const PRUnichar *aName, bool *_retval)
+nsDocShell::NameEquals(const char16_t *aName, bool *_retval)
 {
     NS_ENSURE_ARG_POINTER(aName);
     NS_ENSURE_ARG_POINTER(_retval);
@@ -3162,7 +3228,7 @@ ItemIsActive(nsIDocShellTreeItem *aItem)
 }
 
 NS_IMETHODIMP
-nsDocShell::FindItemWithName(const PRUnichar * aName,
+nsDocShell::FindItemWithName(const char16_t * aName,
                              nsISupports * aRequestor,
                              nsIDocShellTreeItem * aOriginalRequestor,
                              nsIDocShellTreeItem ** _retval)
@@ -3260,7 +3326,7 @@ nsDocShell::FindItemWithName(const PRUnichar * aName,
 }
 
 nsresult
-nsDocShell::DoFindItemWithName(const PRUnichar* aName,
+nsDocShell::DoFindItemWithName(const char16_t* aName,
                                nsISupports* aRequestor,
                                nsIDocShellTreeItem* aOriginalRequestor,
                                nsIDocShellTreeItem** _retval)
@@ -3703,7 +3769,7 @@ nsDocShell::GetChildAt(int32_t aIndex, nsIDocShellTreeItem ** aChild)
 }
 
 NS_IMETHODIMP
-nsDocShell::FindChildWithName(const PRUnichar * aName,
+nsDocShell::FindChildWithName(const char16_t * aName,
                               bool aRecurse, bool aSameType,
                               nsIDocShellTreeItem * aRequestor,
                               nsIDocShellTreeItem * aOriginalRequestor,
@@ -4171,7 +4237,7 @@ NS_IMETHODIMP nsDocShell::GotoIndex(int32_t aIndex)
 }
 
 NS_IMETHODIMP
-nsDocShell::LoadURI(const PRUnichar * aURI,
+nsDocShell::LoadURI(const char16_t * aURI,
                     uint32_t aLoadFlags,
                     nsIURI * aReferringURI,
                     nsIInputStream * aPostStream,
@@ -4278,7 +4344,7 @@ nsDocShell::LoadURI(const PRUnichar * aURI,
 
 NS_IMETHODIMP
 nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
-                             const PRUnichar *aURL,
+                             const char16_t *aURL,
                              nsIChannel* aFailedChannel)
 {
     // Get prompt and string bundle servcies
@@ -4585,7 +4651,7 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
         rv = NS_OK;
         ++formatStrCount;
 
-        const PRUnichar *strs[kMaxFormatStrArgs];
+        const char16_t *strs[kMaxFormatStrArgs];
         for (uint32_t i = 0; i < formatStrCount; i++) {
             strs[i] = formatStrs[i].get();
         }
@@ -4623,10 +4689,10 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
 
 
 NS_IMETHODIMP
-nsDocShell::LoadErrorPage(nsIURI *aURI, const PRUnichar *aURL,
+nsDocShell::LoadErrorPage(nsIURI *aURI, const char16_t *aURL,
                           const char *aErrorPage,
-                          const PRUnichar *aErrorType,
-                          const PRUnichar *aDescription,
+                          const char16_t *aErrorType,
+                          const char16_t *aDescription,
                           const char *aCSSClass,
                           nsIChannel* aFailedChannel)
 {
@@ -5683,7 +5749,7 @@ nsDocShell::GetMainWidget(nsIWidget ** aMainWidget)
 }
 
 NS_IMETHODIMP
-nsDocShell::GetTitle(PRUnichar ** aTitle)
+nsDocShell::GetTitle(char16_t ** aTitle)
 {
     NS_ENSURE_ARG_POINTER(aTitle);
 
@@ -5692,7 +5758,7 @@ nsDocShell::GetTitle(PRUnichar ** aTitle)
 }
 
 NS_IMETHODIMP
-nsDocShell::SetTitle(const PRUnichar * aTitle)
+nsDocShell::SetTitle(const char16_t * aTitle)
 {
     // Store local title
     mTitle = aTitle;
@@ -5730,11 +5796,7 @@ nsDocShell::SetTitle(const PRUnichar * aTitle)
     return NS_OK;
 }
 
-//*****************************************************************************
-// nsDocShell::nsIScrollable
-//*****************************************************************************   
-
-NS_IMETHODIMP
+nsresult
 nsDocShell::GetCurScrollPos(int32_t scrollOrientation, int32_t * curPos)
 {
     NS_ENSURE_ARG_POINTER(curPos);
@@ -5758,32 +5820,7 @@ nsDocShell::GetCurScrollPos(int32_t scrollOrientation, int32_t * curPos)
     }
 }
 
-NS_IMETHODIMP
-nsDocShell::SetCurScrollPos(int32_t scrollOrientation, int32_t curPos)
-{
-    nsIScrollableFrame* sf = GetRootScrollFrame();
-    NS_ENSURE_TRUE(sf, NS_ERROR_FAILURE);
-
-    nsPoint pt = sf->GetScrollPosition();
-
-    switch (scrollOrientation) {
-    case ScrollOrientation_X:
-        pt.x = curPos;
-        break;
-
-    case ScrollOrientation_Y:
-        pt.y = curPos;
-        break;
-
-    default:
-        NS_ENSURE_TRUE(false, NS_ERROR_INVALID_ARG);
-    }
-
-    sf->ScrollTo(pt, nsIScrollableFrame::INSTANT);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
+nsresult
 nsDocShell::SetCurScrollPosEx(int32_t curHorizontalPos, int32_t curVerticalPos)
 {
     nsIScrollableFrame* sf = GetRootScrollFrame();
@@ -5794,69 +5831,10 @@ nsDocShell::SetCurScrollPosEx(int32_t curHorizontalPos, int32_t curVerticalPos)
     return NS_OK;
 }
 
-// XXX This is wrong
-NS_IMETHODIMP
-nsDocShell::GetScrollRange(int32_t scrollOrientation,
-                           int32_t * minPos, int32_t * maxPos)
-{
-    NS_ENSURE_ARG_POINTER(minPos && maxPos);
+//*****************************************************************************
+// nsDocShell::nsIScrollable
+//*****************************************************************************   
 
-    nsIScrollableFrame* sf = GetRootScrollFrame();
-    NS_ENSURE_TRUE(sf, NS_ERROR_FAILURE);
-
-    nsSize portSize = sf->GetScrollPortRect().Size();
-    nsRect range = sf->GetScrollRange();
-
-    switch (scrollOrientation) {
-    case ScrollOrientation_X:
-        *minPos = range.x;
-        *maxPos = range.XMost() + portSize.width;
-        return NS_OK;
-
-    case ScrollOrientation_Y:
-        *minPos = range.y;
-        *maxPos = range.YMost() + portSize.height;
-        return NS_OK;
-
-    default:
-        NS_ENSURE_TRUE(false, NS_ERROR_INVALID_ARG);
-    }
-}
-
-NS_IMETHODIMP
-nsDocShell::SetScrollRange(int32_t scrollOrientation,
-                           int32_t minPos, int32_t maxPos)
-{
-    //XXX First Check
-    /*
-       Retrieves or Sets the valid ranges for the thumb.  When maxPos is set to 
-       something less than the current thumb position, curPos is set = to maxPos.
-
-       @return NS_OK - Setting or Getting completed successfully.
-       NS_ERROR_INVALID_ARG - returned when curPos is not within the
-       minPos and maxPos.
-     */
-    return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-nsDocShell::SetScrollRangeEx(int32_t minHorizontalPos,
-                             int32_t maxHorizontalPos, int32_t minVerticalPos,
-                             int32_t maxVerticalPos)
-{
-    //XXX First Check
-    /*
-       Retrieves or Sets the valid ranges for the thumb.  When maxPos is set to 
-       something less than the current thumb position, curPos is set = to maxPos.
-
-       @return NS_OK - Setting or Getting completed successfully.
-       NS_ERROR_INVALID_ARG - returned when curPos is not within the
-       minPos and maxPos.
-     */
-    return NS_ERROR_FAILURE;
-}
-
-// This returns setting for all documents in this docshell
 NS_IMETHODIMP
 nsDocShell::GetDefaultScrollbarPreferences(int32_t scrollOrientation,
                                            int32_t * scrollbarPref)
@@ -5877,15 +5855,6 @@ nsDocShell::GetDefaultScrollbarPreferences(int32_t scrollOrientation,
     return NS_ERROR_FAILURE;
 }
 
-// Set scrolling preference for all documents in this shell
-//
-// There are three possible values stored in the shell:
-//  1) nsIScrollable::Scrollbar_Never = no scrollbar
-//  2) nsIScrollable::Scrollbar_Auto = scrollbar appears if the document
-//     being displayed would normally have scrollbar
-//  3) nsIScrollable::Scrollbar_Always = scrollbar always appears
-//
-// One important client is nsHTMLFrameInnerFrame::CreateWebShell()
 NS_IMETHODIMP
 nsDocShell::SetDefaultScrollbarPreferences(int32_t scrollOrientation,
                                            int32_t scrollbarPref)
@@ -6822,7 +6791,7 @@ nsDocShell::OnRedirectStateChange(nsIChannel* aOldChannel,
 NS_IMETHODIMP
 nsDocShell::OnStatusChange(nsIWebProgress * aWebProgress,
                            nsIRequest * aRequest,
-                           nsresult aStatus, const PRUnichar * aMessage)
+                           nsresult aStatus, const char16_t * aMessage)
 {
     NS_NOTREACHED("notification excluded in AddProgressListener(...)");
     return NS_OK;
@@ -8763,7 +8732,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                          nsIURI * aReferrer,
                          nsISupports * aOwner,
                          uint32_t aFlags,
-                         const PRUnichar *aWindowTarget,
+                         const char16_t *aWindowTarget,
                          const char* aTypeHint,
                          const nsAString& aFileName,
                          nsIInputStream * aPostData,
@@ -11703,25 +11672,25 @@ nsDocShell::ConfirmRepost(bool * aRepost)
                "Unable to set up repost prompter.");
 
   nsXPIDLString brandName;
-  rv = brandBundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(),
+  rv = brandBundle->GetStringFromName(MOZ_UTF16("brandShortName"),
                                       getter_Copies(brandName));
 
   nsXPIDLString msgString, button0Title;
   if (NS_FAILED(rv)) { // No brand, use the generic version.
-    rv = appBundle->GetStringFromName(NS_LITERAL_STRING("confirmRepostPrompt").get(),
+    rv = appBundle->GetStringFromName(MOZ_UTF16("confirmRepostPrompt"),
                                       getter_Copies(msgString));
   }
   else {
     // Brand available - if the app has an override file with formatting, the app name will
     // be included. Without an override, the prompt will look like the generic version.
-    const PRUnichar *formatStrings[] = { brandName.get() };
-    rv = appBundle->FormatStringFromName(NS_LITERAL_STRING("confirmRepostPrompt").get(),
+    const char16_t *formatStrings[] = { brandName.get() };
+    rv = appBundle->FormatStringFromName(MOZ_UTF16("confirmRepostPrompt"),
                                          formatStrings, ArrayLength(formatStrings),
                                          getter_Copies(msgString));
   }
   if (NS_FAILED(rv)) return rv;
 
-  rv = appBundle->GetStringFromName(NS_LITERAL_STRING("resendButton.label").get(),
+  rv = appBundle->GetStringFromName(MOZ_UTF16("resendButton.label"),
                                     getter_Copies(button0Title));
   if (NS_FAILED(rv)) return rv;
 
@@ -12326,7 +12295,7 @@ class OnLinkClickEvent : public nsRunnable {
 public:
   OnLinkClickEvent(nsDocShell* aHandler, nsIContent* aContent,
                    nsIURI* aURI,
-                   const PRUnichar* aTargetSpec,
+                   const char16_t* aTargetSpec,
                    const nsAString& aFileName,
                    nsIInputStream* aPostDataStream,
                    nsIInputStream* aHeadersDataStream,
@@ -12360,7 +12329,7 @@ private:
 OnLinkClickEvent::OnLinkClickEvent(nsDocShell* aHandler,
                                    nsIContent *aContent,
                                    nsIURI* aURI,
-                                   const PRUnichar* aTargetSpec,
+                                   const char16_t* aTargetSpec,
                                    const nsAString& aFileName,
                                    nsIInputStream* aPostDataStream,
                                    nsIInputStream* aHeadersDataStream,
@@ -12382,7 +12351,7 @@ OnLinkClickEvent::OnLinkClickEvent(nsDocShell* aHandler,
 NS_IMETHODIMP
 nsDocShell::OnLinkClick(nsIContent* aContent,
                         nsIURI* aURI,
-                        const PRUnichar* aTargetSpec,
+                        const char16_t* aTargetSpec,
                         const nsAString& aFileName,
                         nsIInputStream* aPostDataStream,
                         nsIInputStream* aHeadersDataStream,
@@ -12431,7 +12400,7 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
 NS_IMETHODIMP
 nsDocShell::OnLinkClickSync(nsIContent *aContent,
                             nsIURI* aURI,
-                            const PRUnichar* aTargetSpec,
+                            const char16_t* aTargetSpec,
                             const nsAString& aFileName,
                             nsIInputStream* aPostDataStream,
                             nsIInputStream* aHeadersDataStream,
@@ -12543,7 +12512,7 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
                              aDocShell,                 // DocShell out-param
                              aRequest);                 // Request out-param
   if (NS_SUCCEEDED(rv)) {
-    DispatchPings(aContent, referer);
+    DispatchPings(aContent, aURI, referer);
   }
   return rv;
 }
@@ -12551,7 +12520,7 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
 NS_IMETHODIMP
 nsDocShell::OnOverLink(nsIContent* aContent,
                        nsIURI* aURI,
-                       const PRUnichar* aTargetSpec)
+                       const char16_t* aTargetSpec)
 {
   if (aContent->IsEditable()) {
     return NS_OK;

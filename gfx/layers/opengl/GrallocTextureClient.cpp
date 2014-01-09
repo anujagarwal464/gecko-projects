@@ -16,6 +16,7 @@
 namespace mozilla {
 namespace layers {
 
+using namespace mozilla::gfx;
 using namespace android;
 
 class GraphicBufferLockedTextureClientData : public TextureClientData {
@@ -61,7 +62,8 @@ public:
     // We just need to wrap the actor in a SurfaceDescriptor because that's what
     // ISurfaceAllocator uses as input, we don't care about the other parameters.
     SurfaceDescriptor sd = SurfaceDescriptorGralloc(nullptr, mGrallocActor,
-                                                    nsIntSize(0,0), false, false);
+                                                    IntSize(0, 0),
+                                                    false, false);
     allocator->DestroySharedSurface(&sd);
     mGrallocActor = nullptr;
   }
@@ -121,7 +123,8 @@ GrallocTextureClientOGL::~GrallocTextureClientOGL()
       // We just need to wrap the actor in a SurfaceDescriptor because that's what
       // ISurfaceAllocator uses as input, we don't care about the other parameters.
       SurfaceDescriptor sd = SurfaceDescriptorGralloc(nullptr, mGrallocActor,
-                                                      nsIntSize(0,0), false, false);
+                                                      IntSize(0, 0),
+                                                      false, false);
       mCompositable->GetForwarder()->DestroySharedSurface(&sd);
     }
   }
@@ -168,11 +171,13 @@ GrallocTextureClientOGL::Lock(OpenMode aMode)
     NS_WARNING("Couldn't lock graphic buffer");
     return false;
   }
-  return true;
+  return BufferTextureClient::Lock(aMode);
 }
+
 void
 GrallocTextureClientOGL::Unlock()
 {
+  BufferTextureClient::Unlock();
   mMappedBuffer = nullptr;
   mGraphicBuffer->unlock();
 }
@@ -243,7 +248,7 @@ GrallocTextureClientOGL::AllocateGralloc(gfx::IntSize aSize,
 
   MaybeMagicGrallocBufferHandle handle;
   PGrallocBufferChild* actor =
-    allocator->AllocGrallocBuffer(gfx::ThebesIntSize(aSize),
+    allocator->AllocGrallocBuffer(aSize,
                                   aAndroidFormat,
                                   aUsage,
                                   &handle);

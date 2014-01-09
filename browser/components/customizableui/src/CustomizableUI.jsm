@@ -150,7 +150,8 @@ let CustomizableUIInternal = {
       "fullscreen-button",
       "find-button",
       "preferences-button",
-      "add-ons-button"
+      "add-ons-button",
+      "developer-button",
     ];
 
     if (gPalette.has("switch-to-metro-button")) {
@@ -184,7 +185,6 @@ let CustomizableUIInternal = {
         "downloads-button",
         "home-button",
         "social-share-button",
-        "social-toolbar-item",
       ]
     });
 #ifndef XP_MACOSX
@@ -884,7 +884,7 @@ let CustomizableUIInternal = {
     }
     let nextNode = null;
     if (aNextNodeId) {
-      nextNode = aAreaNode.customizationTarget.querySelector(idToSelector(aNextNodeId));
+      nextNode = aAreaNode.customizationTarget.getElementsByAttribute("id", aNextNodeId)[0];
     }
     return [aAreaNode.customizationTarget, nextNode];
   },
@@ -1005,7 +1005,7 @@ let CustomizableUIInternal = {
       if (toolbox.palette) {
         // Attempt to locate a node with a matching ID within
         // the palette.
-        let node = toolbox.palette.querySelector(idToSelector(aId));
+        let node = toolbox.palette.getElementsByAttribute("id", aId)[0];
         if (node) {
           // Normalize the removable attribute. For backwards compat, this
           // is optional if the widget is located in the toolbox palette,
@@ -1253,6 +1253,8 @@ let CustomizableUIInternal = {
   },
 
   getUnusedWidgets: function(aWindowPalette) {
+    let window = aWindowPalette.ownerDocument.defaultView;
+    let isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
     // We use a Set because there can be overlap between the widgets in
     // gPalette and the items in the palette, especially after the first
     // customization, since programmatically generated widgets will remain
@@ -1264,7 +1266,9 @@ let CustomizableUIInternal = {
     // gPalette.
     for (let [id, widget] of gPalette) {
       if (!widget.currentArea) {
-        widgets.add(id);
+        if (widget.showInPrivateBrowsing || !isWindowPrivate) {
+          widgets.add(id);
+        }
       }
     }
 
@@ -1691,7 +1695,10 @@ let CustomizableUIInternal = {
 
       // If the widget doesn't have an existing placement, and it hasn't been
       // seen before, then add it to its default area so it can be used.
-      if (autoAdd && !widget.currentArea && !gSeenWidgets.has(widget.id)) {
+      // If the widget is not removable, we *have* to add it to its default
+      // area here.
+      let canBeAutoAdded = autoAdd && !gSeenWidgets.has(widget.id);
+      if (!widget.currentArea && (!widget.removable || canBeAutoAdded)) {
         this.beginBatchUpdate();
         try {
           gSeenWidgets.add(widget.id);
@@ -1878,7 +1885,7 @@ let CustomizableUIInternal = {
         windowCache.delete(aWidgetId);
       }
       let widgetNode = window.document.getElementById(aWidgetId) ||
-                       window.gNavToolbox.palette.querySelector(idToSelector(aWidgetId));
+                       window.gNavToolbox.palette.getElementsByAttribute("id", aWidgetId)[0];
       if (widgetNode) {
         widgetNode.remove();
       }
@@ -2011,7 +2018,7 @@ let CustomizableUIInternal = {
     if (!container.length) {
       return false;
     }
-    let existingNode = container[0].querySelector(idToSelector(aWidgetId));
+    let existingNode = container[0].getElementsByAttribute("id", aWidgetId)[0];
     if (existingNode) {
       return true;
     }
@@ -2055,7 +2062,7 @@ let CustomizableUIInternal = {
           // Clone the array so we don't modify the actual placements...
           currentPlacements = [...currentPlacements];
           currentPlacements = currentPlacements.filter((item) => {
-            let itemNode = container.querySelector(idToSelector(item));
+            let itemNode = container.getElementsByAttribute("id", item)[0];
             return itemNode && removableOrDefault(itemNode || item);
           });
         }
@@ -2082,25 +2089,71 @@ let CustomizableUIInternal = {
 Object.freeze(CustomizableUIInternal);
 
 this.CustomizableUI = {
+  /**
+   * Constant reference to the ID of the menu panel.
+   */
   get AREA_PANEL() "PanelUI-contents",
+  /**
+   * Constant reference to the ID of the navigation toolbar.
+   */
   get AREA_NAVBAR() "nav-bar",
+  /**
+   * Constant reference to the ID of the menubar's toolbar.
+   */
   get AREA_MENUBAR() "toolbar-menubar",
+  /**
+   * Constant reference to the ID of the tabstrip toolbar.
+   */
   get AREA_TABSTRIP() "TabsToolbar",
+  /**
+   * Constant reference to the ID of the bookmarks toolbar.
+   */
   get AREA_BOOKMARKS() "PersonalToolbar",
+  /**
+   * Constant reference to the ID of the addon-bar toolbar shim.
+   * Do not use, this will be removed as soon as reasonably possible.
+   * @deprecated
+   */
   get AREA_ADDONBAR() "addon-bar",
-
-  get PROVIDER_XUL() "xul",
-  get PROVIDER_API() "api",
-  get PROVIDER_SPECIAL() "special",
-
-  get SOURCE_BUILTIN() "builtin",
-  get SOURCE_EXTERNAL() "external",
-
-  get TYPE_BUTTON() "button",
+  /**
+   * Constant indicating the area is a menu panel.
+   */
   get TYPE_MENU_PANEL() "menu-panel",
+  /**
+   * Constant indicating the area is a toolbar.
+   */
   get TYPE_TOOLBAR() "toolbar",
 
+  /**
+   * Constant indicating a XUL-type provider.
+   */
+  get PROVIDER_XUL() "xul",
+  /**
+   * Constant indicating an API-type provider.
+   */
+  get PROVIDER_API() "api",
+  /**
+   * Constant indicating dynamic (special) widgets: spring, spacer, and separator.
+   */
+  get PROVIDER_SPECIAL() "special",
+
+  /**
+   * Constant indicating the widget is built-in
+   */
+  get SOURCE_BUILTIN() "builtin",
+  /**
+   * Constant indicating the widget is externally provided
+   * (e.g. by add-ons or other items not part of the builtin widget set).
+   */
+  get SOURCE_EXTERNAL() "external",
+
+  /**
+   * The class used to distinguish items that span the entire menu panel.
+   */
   get WIDE_PANEL_CLASS() "panel-wide-item",
+  /**
+   * The (constant) number of columns in the menu panel.
+   */
   get PANEL_COLUMN_COUNT() 3,
 
   /**
@@ -2674,7 +2727,9 @@ this.CustomizableUI = {
     return CustomizableUIInternal.canWidgetMoveToArea(aWidgetId, aArea);
   },
   /**
-   * Whether we're in a default state.
+   * Whether we're in a default state. Note that non-removable non-default
+   * widgets and non-existing widgets are not taken into account in determining
+   * whether we're in the default state.
    *
    * NB: this is a property with a getter. The getter is NOT cheap, because
    * it does smart things with non-removable non-default items, non-existent
@@ -2882,7 +2937,8 @@ function WidgetGroupWrapper(aWidget) {
   });
 
   this.__defineGetter__("areaType", function() {
-    return gAreas.get(aWidget.currentArea).get("type");
+    let areaProps = gAreas.get(aWidget.currentArea);
+    return areaProps && areaProps.get("type");
   });
 
   Object.freeze(this);
@@ -2969,7 +3025,7 @@ function XULWidgetGroupWrapper(aWidgetId) {
     if (!instance) {
       // Toolbar palettes aren't part of the document, so elements in there
       // won't be found via document.getElementById().
-      instance = aWindow.gNavToolbox.palette.querySelector(idToSelector(aWidgetId));
+      instance = aWindow.gNavToolbox.palette.getElementsByAttribute("id", aWidgetId)[0];
     }
 
     let wrapper = new XULWidgetSingleWrapper(aWidgetId, instance);
@@ -2983,7 +3039,8 @@ function XULWidgetGroupWrapper(aWidgetId) {
       return null;
     }
 
-    return gAreas.get(placement.area).get("type");
+    let areaProps = gAreas.get(placement.area);
+    return areaProps && areaProps.get("type");
   });
 
   this.__defineGetter__("instances", function() {
@@ -3036,6 +3093,12 @@ function OverflowableToolbar(aToolbarNode) {
   this._enabled = true;
 
   this._toolbar.setAttribute("overflowable", "true");
+  let doc = this._toolbar.ownerDocument;
+  this._target = this._toolbar.customizationTarget;
+  this._list = doc.getElementById(this._toolbar.getAttribute("overflowtarget"));
+  this._list.toolbox = this._toolbar.toolbox;
+  this._list.customizationTarget = this._list;
+
   Services.obs.addObserver(this, "browser-delayed-startup-finished", false);
 }
 
@@ -3052,12 +3115,7 @@ OverflowableToolbar.prototype = {
   },
 
   init: function() {
-    this._target = this._toolbar.customizationTarget;
     let doc = this._toolbar.ownerDocument;
-    this._list = doc.getElementById(this._toolbar.getAttribute("overflowtarget"));
-    this._list.toolbox = this._toolbar.toolbox;
-    this._list.customizationTarget = this._list;
-
     let window = doc.defaultView;
     window.addEventListener("resize", this);
     window.gNavToolbox.addEventListener("customizationstarting", this);
@@ -3218,7 +3276,7 @@ OverflowableToolbar.prototype = {
       }
       let inserted = false;
       for (; beforeNodeIndex < placements.length; beforeNodeIndex++) {
-        let beforeNode = this._target.querySelector(idToSelector(placements[beforeNodeIndex]));
+        let beforeNode = this._target.getElementsByAttribute("id", placements[beforeNodeIndex])[0];
         if (beforeNode) {
           this._target.insertBefore(child, beforeNode);
           inserted = true;
@@ -3351,7 +3409,7 @@ OverflowableToolbar.prototype = {
       return [this._list, null];
     }
 
-    let nextNode = this._list.querySelector(idToSelector(aNextNodeId));
+    let nextNode = this._list.getElementsByAttribute("id", aNextNodeId)[0];
     // If this is the first item, we can actually just append the node
     // to the end of the toolbar.  If it results in an overflow event, we'll move
     // the new node to the overflow target.
@@ -3368,10 +3426,5 @@ OverflowableToolbar.prototype = {
     return this._target;
   },
 };
-
-// When IDs contain special characters, we need to escape them for use with querySelector:
-function idToSelector(aId) {
-  return "#" + aId.replace(/[ !"'#$%&\(\)*+\-,.\/:;<=>?@\[\\\]^`{|}~]/g, '\\$&');
-}
 
 CustomizableUIInternal.initialize();

@@ -273,7 +273,7 @@ TokenStream::TokenStream(ExclusiveContext *cx, const ReadOnlyCompileOptions &opt
     prevLinebase(nullptr),
     userbuf(cx, base - options.column, length + options.column), // See comment below
     filename(options.filename()),
-    sourceURL_(nullptr),
+    displayURL_(nullptr),
     sourceMapURL_(nullptr),
     tokenbuf(cx),
     cx(cx),
@@ -333,7 +333,7 @@ TokenStream::TokenStream(ExclusiveContext *cx, const ReadOnlyCompileOptions &opt
 
 TokenStream::~TokenStream()
 {
-    js_free(sourceURL_);
+    js_free(displayURL_);
     js_free(sourceMapURL_);
 
     JS_ASSERT_IF(originPrincipals, originPrincipals->refcount);
@@ -579,18 +579,8 @@ CompileError::throwError(JSContext *cx)
     // as the non-top-level "load", "eval", or "compile" native function
     // returns false, the top-level reporter will eventually receive the
     // uncaught exception report.
-    if (!js_ErrorToException(cx, message, &report, nullptr, nullptr)) {
-        // If debugErrorHook is present then we give it a chance to veto
-        // sending the error on to the regular error reporter.
-        bool reportError = true;
-        if (JSDebugErrorHook hook = cx->runtime()->debugHooks.debugErrorHook) {
-            reportError = hook(cx, message, &report, cx->runtime()->debugHooks.debugErrorHookData);
-        }
-
-        // Report the error.
-        if (reportError && cx->errorReporter)
-            cx->errorReporter(cx, message, &report);
-    }
+    if (!js_ErrorToException(cx, message, &report, nullptr, nullptr))
+        CallErrorReporter(cx, message, &report);
 }
 
 CompileError::~CompileError()
@@ -818,7 +808,7 @@ TokenStream::getDirectives(bool isMultiline, bool shouldWarnDeprecated)
     // comment. To avoid potentially expensive lookahead and backtracking, we
     // only check for this case if we encounter a '#' character.
 
-    if (!getSourceURL(isMultiline, shouldWarnDeprecated))
+    if (!getDisplayURL(isMultiline, shouldWarnDeprecated))
         return false;
     if (!getSourceMappingURL(isMultiline, shouldWarnDeprecated))
         return false;
@@ -874,13 +864,18 @@ TokenStream::getDirective(bool isMultiline, bool shouldWarnDeprecated,
 }
 
 bool
-TokenStream::getSourceURL(bool isMultiline, bool shouldWarnDeprecated)
+TokenStream::getDisplayURL(bool isMultiline, bool shouldWarnDeprecated)
 {
     // Match comments of the form "//# sourceURL=<url>" or
     // "/\* //# sourceURL=<url> *\/"
+    //
+    // Note that while these are labeled "sourceURL" in the source text,
+    // internally we refer to it as a "displayURL" to distinguish what the
+    // developer would like to refer to the source as from the source's actual
+    // URL.
 
     return getDirective(isMultiline, shouldWarnDeprecated, " sourceURL=", 11,
-                        "sourceURL", &sourceURL_);
+                        "sourceURL", &displayURL_);
 }
 
 bool

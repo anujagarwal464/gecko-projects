@@ -123,6 +123,7 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 #include "mozilla/ipc/BrowserProcessSubThread.h"
 #include "mozilla/AvailableMemoryTracker.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/SystemMemoryReporter.h"
 
 #ifdef MOZ_VISUAL_EVENT_TRACER
 #include "mozilla/VisualEventTracer.h"
@@ -336,12 +337,12 @@ NS_InitXPCOM(nsIServiceManager* *result,
     return NS_InitXPCOM2(result, binDirectory, nullptr);
 }
 
-class ICUReporter MOZ_FINAL : public MemoryUniReporter
+class ICUReporter MOZ_FINAL : public nsIMemoryReporter
 {
 public:
+    NS_DECL_ISUPPORTS
+
     ICUReporter()
-      : MemoryUniReporter("explicit/icu", KIND_HEAP, UNITS_BYTES,
-"Memory used by ICU, a Unicode and globalization support library.")
     {
 #ifdef DEBUG
         // There must be only one instance of this class, due to |sAmount|
@@ -384,8 +385,20 @@ private:
     // must be thread-safe.
     static Atomic<size_t> sAmount;
 
-    int64_t Amount() MOZ_OVERRIDE { return sAmount; }
+    MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
+    MOZ_DEFINE_MALLOC_SIZE_OF_ON_ALLOC(MallocSizeOfOnAlloc)
+    MOZ_DEFINE_MALLOC_SIZE_OF_ON_FREE(MallocSizeOfOnFree)
+
+    NS_IMETHODIMP
+    CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData)
+    {
+        return MOZ_COLLECT_REPORT(
+            "explicit/icu", KIND_HEAP, UNITS_BYTES, sAmount,
+            "Memory used by ICU, a Unicode and globalization support library.");
+    }
 };
+
+NS_IMPL_ISUPPORTS1(ICUReporter, nsIMemoryReporter)
 
 /* static */ Atomic<size_t> ICUReporter::sAmount;
 
@@ -580,6 +593,13 @@ NS_InitXPCOM2(nsIServiceManager* *result,
 #ifdef XP_WIN
     CreateAnonTempFileRemover();
 #endif
+
+    // We only want the SystemMemoryReporter running in one process, because it
+    // profiles the entire system.  The main process is the obvious place for
+    // it.
+    if (XRE_GetProcessType() == GeckoProcessType_Default) {
+        mozilla::SystemMemoryReporter::Init();
+    }
 
     // The memory reporter manager is up and running -- register a reporter for
     // ICU's memory usage.

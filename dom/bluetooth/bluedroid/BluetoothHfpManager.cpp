@@ -8,7 +8,6 @@
 
 #include "BluetoothHfpManager.h"
 #include "BluetoothProfileController.h"
-#include "BluetoothServiceBluedroid.h"
 #include "BluetoothUtils.h"
 
 #include "jsapi.h"
@@ -491,7 +490,7 @@ BluetoothHfpManager::Get()
 NS_IMETHODIMP
 BluetoothHfpManager::Observe(nsISupports* aSubject,
                              const char* aTopic,
-                             const PRUnichar* aData)
+                             const char16_t* aData)
 {
   if (!strcmp(aTopic, MOZSETTINGS_CHANGED_ID)) {
     HandleVolumeChanged(nsDependentString(aData));
@@ -1047,6 +1046,7 @@ BluetoothHfpManager::HandleCallStateChanged(uint32_t aCallIndex,
                                             const nsAString& aError,
                                             const nsAString& aNumber,
                                             const bool aIsOutgoing,
+                                            const bool aIsConference,
                                             bool aSend)
 {
   if (!IsConnected()) {

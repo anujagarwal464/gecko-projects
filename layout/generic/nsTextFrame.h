@@ -129,9 +129,13 @@ public:
   virtual void InvalidateFrame(uint32_t aDisplayItemKey = 0) MOZ_OVERRIDE;
   virtual void InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey = 0) MOZ_OVERRIDE;
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
   void List(FILE* out, int32_t aIndent, uint32_t aFlags = 0) const MOZ_OVERRIDE;
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE;
+  void ToCString(nsCString& aBuf, int32_t* aTotalContentLength) const;
+#endif
+
+#ifdef DEBUG
   NS_IMETHOD_(nsFrameState) GetDebugStateBits() const MOZ_OVERRIDE;
 #endif
   
@@ -183,11 +187,7 @@ public:
   virtual bool IsSelfEmpty() MOZ_OVERRIDE { return IsEmpty(); }
   virtual nscoord GetBaseline() const MOZ_OVERRIDE;
   
-  /**
-   * @return true if this text frame ends with a newline character.  It
-   * should return false if this is not a text frame.
-   */
-  virtual bool HasTerminalNewline() const MOZ_OVERRIDE;
+  virtual bool HasSignificantTerminalNewline() const MOZ_OVERRIDE;
 
   /**
    * Returns true if this text frame is logically adjacent to the end of the
@@ -434,10 +434,6 @@ public:
   virtual nscolor GetCaretColorAt(int32_t aOffset) MOZ_OVERRIDE;
 
   int16_t GetSelectionStatus(int16_t* aSelectionFlags);
-
-#ifdef DEBUG
-  void ToCString(nsCString& aBuf, int32_t* aTotalContentLength) const;
-#endif
 
   int32_t GetContentOffset() const { return mContentOffset; }
   int32_t GetContentLength() const

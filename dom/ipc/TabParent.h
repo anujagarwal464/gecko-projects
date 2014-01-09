@@ -168,10 +168,7 @@ public:
     virtual bool RecvUpdateZoomConstraints(const uint32_t& aPresShellId,
                                            const ViewID& aViewId,
                                            const bool& aIsRoot,
-                                           const bool& aAllowZoom,
-                                           const CSSToScreenScale& aMinZoom,
-                                           const CSSToScreenScale& aMaxZoom);
-    virtual bool RecvUpdateScrollOffset(const uint32_t& aPresShellId, const ViewID& aViewId, const CSSIntPoint& aScrollOffset);
+                                           const ZoomConstraints& aConstraints);
     virtual bool RecvContentReceivedTouch(const ScrollableLayerGuid& aGuid,
                                           const bool& aPreventDefault);
     virtual PContentDialogParent* AllocPContentDialogParent(const uint32_t& aType,
@@ -222,7 +219,7 @@ public:
     bool SendHandleDoubleTap(const CSSIntPoint& aPoint);
 
     virtual PDocumentRendererParent*
-    AllocPDocumentRendererParent(const nsRect& documentRect, const gfxMatrix& transform,
+    AllocPDocumentRendererParent(const nsRect& documentRect, const gfx::Matrix& transform,
                                  const nsString& bgcolor,
                                  const uint32_t& renderFlags, const bool& flushLayout,
                                  const nsIntSize& renderSize);
@@ -237,6 +234,7 @@ public:
             const URIParams& aDocumentURI,
             const bool& stickDocument) MOZ_OVERRIDE;
     virtual bool DeallocPOfflineCacheUpdateParent(POfflineCacheUpdateParent* actor);
+    virtual bool RecvSetOfflinePermission(const IPC::Principal& principal);
 
     bool GetGlobalJSObject(JSContext* cx, JSObject** globalp);
 

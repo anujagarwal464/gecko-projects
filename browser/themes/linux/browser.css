@@ -1233,15 +1233,6 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
   transition: height 100ms ease-out, width 100ms ease-out;
 }
 
-#social-share-button {
-  list-style-image: url("chrome://browser/skin/social/share-button.png");
-}
-
-#social-share-button[open],
-#social-share-button:hover:active {
-  list-style-image: url("chrome://browser/skin/social/share-button-active.png");
-}
-
 .social-share-toolbar {
   border-right: 1px solid #dedede;
   background: linear-gradient(to bottom, rgba(247,247,247,.99), rgba(247,247,247,.95));
@@ -1839,7 +1830,7 @@ chatbox {
 
 %include ../shared/customizableui/customizeMode.inc.css
 
-#main-window[customizing] #tab-view-deck {
+#main-window[customize-entered] #tab-view-deck {
   background-image: url("chrome://browser/skin/customizableui/customizeMode-gridTexture.png"),
                     url("chrome://browser/skin/customizableui/background-noise-toolbar.png"),
                     linear-gradient(to bottom, #bcbcbc, #b5b5b5);

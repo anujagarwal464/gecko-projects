@@ -44,6 +44,16 @@ var httpserver = new HttpServer();
 var serverStarted = false;
 var gFinished = false;
 
+function test_expired_histogram() {
+  var histogram_id = "FOOBAR";
+  var dummy = Telemetry.newHistogram(histogram_id, "30", 1, 2, 3, Telemetry.HISTOGRAM_EXPONENTIAL);
+
+  dummy.add(1);
+
+  do_check_eq(TelemetryPing.getPayload()["histograms"][histogram_id], undefined);
+  do_check_eq(TelemetryPing.getPayload()["histograms"]["TELEMETRY_TEST_EXPIRED"], undefined);
+}
+
 function telemetry_ping () {
   TelemetryPing.gatherStartup();
   TelemetryPing.enableLoadSaveNotifications();
@@ -98,7 +108,7 @@ function nonexistentServerObserver(aSubject, aTopic, aData) {
 }
 
 function setupTestData() {
-  Telemetry.newHistogram(IGNORE_HISTOGRAM, 1, 2, 3, Telemetry.HISTOGRAM_BOOLEAN);
+  Telemetry.newHistogram(IGNORE_HISTOGRAM, "never", 1, 2, 3, Telemetry.HISTOGRAM_BOOLEAN);
   Telemetry.histogramFrom(IGNORE_CLONED_HISTOGRAM, IGNORE_HISTOGRAM_TO_CLONE);
   Services.startup.interrupted = true;
   Telemetry.registerAddonHistogram(ADDON_NAME, ADDON_HISTOGRAM, 1, 5, 6,
@@ -142,7 +152,7 @@ function decodeRequestPayload(request) {
     let observer = {
       buffer: "",
       onStreamComplete: function(loader, context, status, length, result) {
-	this.buffer = String.fromCharCode.apply(this, result);
+        this.buffer = String.fromCharCode.apply(this, result);
       }
     };
 
@@ -363,7 +373,7 @@ function runOldPingFileTest() {
   do_check_true(histogramsFile.exists());
 
   let mtime = histogramsFile.lastModifiedTime;
-  histogramsFile.lastModifiedTime = mtime - 8 * 24 * 60 * 60 * 1000; // 8 days.
+  histogramsFile.lastModifiedTime = mtime - (14 * 24 * 60 * 60 * 1000 + 60000); // 14 days, 1m
   TelemetryPing.testLoadHistograms(histogramsFile, true);
   do_check_false(histogramsFile.exists());
 }
@@ -499,6 +509,7 @@ function actualTest() {
   registerFakePluginHost();
 
   runInvalidJSONTest();
+  test_expired_histogram();
 
   addWrappedObserver(nonexistentServerObserver, "telemetry-test-xhr-complete");
   telemetry_ping();

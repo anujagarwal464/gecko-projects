@@ -9,9 +9,6 @@ DOMCI_CLASS(Location)
 DOMCI_CLASS(DOMPrototype)
 DOMCI_CLASS(DOMConstructor)
 
-DOMCI_CLASS(DeviceAcceleration)
-DOMCI_CLASS(DeviceRotationRate)
-
 // CSS classes
 DOMCI_CLASS(CSSStyleRule)
 DOMCI_CLASS(CSSCharsetRule)
@@ -21,9 +18,6 @@ DOMCI_CLASS(CSSNameSpaceRule)
 DOMCI_CLASS(CSSRuleList)
 DOMCI_CLASS(StyleSheetList)
 DOMCI_CLASS(CSSStyleSheet)
-
-// Range classes
-DOMCI_CLASS(Selection)
 
 // XUL classes
 #ifdef MOZ_XUL
@@ -83,8 +77,6 @@ DOMCI_CLASS(File)
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
 
-DOMCI_CLASS(MozWakeLock)
-
 DOMCI_CLASS(MozMobileMessageManager)
 DOMCI_CLASS(MozSmsMessage)
 DOMCI_CLASS(MozMmsMessage)
@@ -112,8 +104,6 @@ DOMCI_CLASS(MozCSSKeyframeRule)
 DOMCI_CLASS(MozCSSKeyframesRule)
 
 DOMCI_CLASS(CSSPageRule)
-
-DOMCI_CLASS(MediaQueryList)
 
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozIccManager)

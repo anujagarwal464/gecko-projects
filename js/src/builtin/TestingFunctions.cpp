@@ -116,14 +116,6 @@ GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
     if (!JS_SetProperty(cx, info, "threadsafe", value))
         return false;
 
-#ifdef JS_WORKER_THREADS
-    value = BooleanValue(true);
-#else
-    value = BooleanValue(false);
-#endif
-    if (!JS_SetProperty(cx, info, "worker-threads", value))
-        return false;
-
 #ifdef JS_MORE_DETERMINISTIC
     value = BooleanValue(true);
 #else
@@ -957,7 +949,7 @@ static bool
 EnableOsiPointRegisterChecks(JSContext *, unsigned, jsval *vp)
 {
 #if defined(JS_ION) && defined(CHECK_OSIPOINT_REGISTERS)
-    jit::js_IonOptions.checkOsiPointRegisters = true;
+    jit::js_JitOptions.checkOsiPointRegisters = true;
 #endif
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return true;
@@ -1131,7 +1123,31 @@ SetJitCompilerOption(JSContext *cx, unsigned argc, jsval *vp)
 
     JS_SetGlobalJitCompilerOption(cx, opt, uint32_t(number));
 
-    args.rval().setBoolean(true);
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+GetJitCompilerOptions(JSContext *cx, unsigned argc, jsval *vp)
+{
+    RootedObject info(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
+    if (!info)
+        return false;
+
+    RootedValue value(cx);
+
+#define JIT_COMPILER_MATCH(key, string)                         \
+    opt = JSJITCOMPILER_ ## key;                                \
+    value.setInt32(JS_GetGlobalJitCompilerOption(cx, opt));     \
+    if (!JS_SetProperty(cx, info, string, value))               \
+        return false;
+
+    JSJitCompilerOption opt = JSJITCOMPILER_NOT_AN_OPTION;
+    JIT_COMPILER_OPTIONS(JIT_COMPILER_MATCH);
+#undef JIT_COMPILER_MATCH
+
+    *vp = ObjectValue(*info);
+
     return true;
 }
 
@@ -1140,7 +1156,7 @@ SetIonCheckGraphCoherency(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_ION
-    jit::js_IonOptions.checkGraphConsistency = ToBoolean(args.get(0));
+    jit::js_JitOptions.checkGraphConsistency = ToBoolean(args.get(0));
 #endif
     args.rval().setUndefined();
     return true;
@@ -1554,13 +1570,17 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Returns whether asm.js compilation is currently available or whether it is disabled\n"
 "  (e.g., by the debugger)."),
 
+    JS_FN_HELP("getJitCompilerOptions", GetJitCompilerOptions, 0, 0,
+"getCompilerOptions()",
+"Return an object describing some of the JIT compiler options.\n"),
+
     JS_FN_HELP("isAsmJSModule", IsAsmJSModule, 1, 0,
 "isAsmJSModule(fn)",
 "  Returns whether the given value is a function containing \"use asm\" that has been\n"
 "  validated according to the asm.js spec."),
 
     JS_FN_HELP("isAsmJSModuleLoadedFromCache", IsAsmJSModuleLoadedFromCache, 1, 0,
-"isAsmJSModule(fn)",
+"isAsmJSModuleLoadedFromCache(fn)",
 "  Return whether the given asm.js module function has been loaded directly\n"
 "  from the cache. This function throws an error if fn is not a validated asm.js\n"
 "  module."),
