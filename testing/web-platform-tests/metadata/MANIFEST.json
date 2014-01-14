@@ -368,6 +368,12 @@
         "ref_url": "/html/rendering/non-replaced-elements/tables/table-width-150percent-ref.html"
       }, 
       {
+        "url": "/html/semantics/embedded-content-0/the-video-element/video_initially_paused.html", 
+        "path": "html/semantics/embedded-content-0/the-video-element/video_initially_paused.html", 
+        "ref_type": "==", 
+        "ref_url": "/html/semantics/embedded-content-0/the-video-element/video_initially_paused-ref.html"
+      }, 
+      {
         "url": "/html/semantics/forms/the-textarea-element/textarea-newline-bidi.html", 
         "path": "html/semantics/forms/the-textarea-element/textarea-newline-bidi.html", 
         "ref_type": "==", 
@@ -5566,6 +5572,426 @@
         "path": "IndexedDB/string-list-ordering.htm"
       }, 
       {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idb_webworkers.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idb_webworkers.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_advance_index.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_advance_index.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_advance_objectstore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_advance_objectstore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_index4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_continue_objectstore4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_index3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_delete_objectstore3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_index3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbcursor_update_objectstore3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore6.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_createObjectStore6.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_deleteObjectStore3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbdatabase_transaction3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_cmp.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_cmp.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_deleteDatabase.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_deleteDatabase.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_deleteDatabase2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_deleteDatabase2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open6.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open6.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open7.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open7.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open8.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbfactory_open8.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_count.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_count.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_count2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_count2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_get.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_get.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_get2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_get2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_get3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_get3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_get4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_get4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbindex_getKey4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbkeyrange.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbkeyrange.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add10.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add10.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add11.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add11.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add12.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add12.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add13.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add13.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add14.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add14.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add6.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add6.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add7.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add7.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add8.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add8.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add9.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_add9.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_clear.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_clear.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_clear2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_clear2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_count.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_count.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_count2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_count2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_createIndex.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_createIndex.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_createIndex2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_createIndex2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_delete5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_deleteIndex.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_deleteIndex.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_get5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_index.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_index.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put10.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put10.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put11.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put11.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put12.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put12.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put13.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put13.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put14.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put14.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put2.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put2.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put3.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put3.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put4.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put4.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put5.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put5.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put6.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put6.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put7.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put7.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put8.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put8.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put9.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbobjectstore_put9.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/index_sort_order.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/index_sort_order.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/objectstore_keyorder.htm", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/objectstore_keyorder.htm"
+      }, 
+      {
         "url": "/IndexedDB/submissions/Opera/idbcursor-advance-continue-async.htm", 
         "path": "IndexedDB/submissions/Opera/idbcursor-advance-continue-async.htm"
       }, 
@@ -5616,6 +6042,10 @@
       {
         "url": "/IndexedDB/submissions/Opera/idbcursor-source.htm", 
         "path": "IndexedDB/submissions/Opera/idbcursor-source.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/idbcursor_advance_index.htm", 
+        "path": "IndexedDB/submissions/Opera/idbcursor_advance_index.htm"
       }, 
       {
         "url": "/IndexedDB/submissions/Opera/idbcursor_advance_index2.htm", 
@@ -5710,6 +6140,10 @@
         "path": "IndexedDB/submissions/Opera/idbfactory_open11.htm"
       }, 
       {
+        "url": "/IndexedDB/submissions/Opera/idbfactory_open9.htm", 
+        "path": "IndexedDB/submissions/Opera/idbfactory_open9.htm"
+      }, 
+      {
         "url": "/IndexedDB/submissions/Opera/idbindex-multientry-arraykeypath.htm", 
         "path": "IndexedDB/submissions/Opera/idbindex-multientry-arraykeypath.htm"
       }, 
@@ -5796,8 +6230,20 @@
         "path": "IndexedDB/submissions/Opera/invalid/idbcursor_continue_index-duplicate.htm"
       }, 
       {
+        "url": "/IndexedDB/submissions/Opera/invalid/idbfactory_deleteDatabase.htm", 
+        "path": "IndexedDB/submissions/Opera/invalid/idbfactory_deleteDatabase.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/invalid/idbfactory_deleteDatabase2.htm", 
+        "path": "IndexedDB/submissions/Opera/invalid/idbfactory_deleteDatabase2.htm"
+      }, 
+      {
         "url": "/IndexedDB/submissions/Opera/invalid/throw.htm", 
         "path": "IndexedDB/submissions/Opera/invalid/throw.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/key_invalid.htm", 
+        "path": "IndexedDB/submissions/Opera/key_invalid.htm"
       }, 
       {
         "url": "/IndexedDB/submissions/Opera/key_valid.htm", 
@@ -5814,6 +6260,21 @@
       {
         "url": "/IndexedDB/submissions/Opera/keygenerator.htm", 
         "path": "IndexedDB/submissions/Opera/keygenerator.htm"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/keyorder.htm", 
+        "path": "IndexedDB/submissions/Opera/keyorder.htm", 
+        "timeout": "long"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/keypath.htm", 
+        "path": "IndexedDB/submissions/Opera/keypath.htm", 
+        "timeout": "long"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/keypath_invalid.htm", 
+        "path": "IndexedDB/submissions/Opera/keypath_invalid.htm", 
+        "timeout": "long"
       }, 
       {
         "url": "/IndexedDB/submissions/Opera/list_ordering.htm", 
@@ -5881,6 +6342,10 @@
         "url": "/IndexedDB/submissions/Opera/writer-starvation.htm", 
         "path": "IndexedDB/submissions/Opera/writer-starvation.htm", 
         "timeout": "long"
+      }, 
+      {
+        "url": "/XMLHttpRequest/FormData-append.html", 
+        "path": "XMLHttpRequest/FormData-append.html"
       }, 
       {
         "url": "/XMLHttpRequest/abort-after-receive.htm", 
@@ -6017,6 +6482,10 @@
       {
         "url": "/XMLHttpRequest/getresponseheader-unsent-opened-state.htm", 
         "path": "XMLHttpRequest/getresponseheader-unsent-opened-state.htm"
+      }, 
+      {
+        "url": "/XMLHttpRequest/interfaces.html", 
+        "path": "XMLHttpRequest/interfaces.html"
       }, 
       {
         "url": "/XMLHttpRequest/open-after-abort.htm", 
@@ -6436,6 +6905,10 @@
         "path": "XMLHttpRequest/setrequestheader-header-forbidden.htm"
       }, 
       {
+        "url": "/XMLHttpRequest/setrequestheader-invalid-arguments.htm", 
+        "path": "XMLHttpRequest/setrequestheader-invalid-arguments.htm"
+      }, 
+      {
         "url": "/XMLHttpRequest/status-async.htm", 
         "path": "XMLHttpRequest/status-async.htm"
       }, 
@@ -6446,14 +6919,6 @@
       {
         "url": "/XMLHttpRequest/status-error.htm", 
         "path": "XMLHttpRequest/status-error.htm"
-      }, 
-      {
-        "url": "/XMLHttpRequest/tests/submissions/Ms2ger/FormData-append.html", 
-        "path": "XMLHttpRequest/tests/submissions/Ms2ger/FormData-append.html"
-      }, 
-      {
-        "url": "/XMLHttpRequest/tests/submissions/Ms2ger/interfaces.html", 
-        "path": "XMLHttpRequest/tests/submissions/Ms2ger/interfaces.html"
       }, 
       {
         "url": "/XMLHttpRequest/timeout-cors-async.htm", 
@@ -7714,6 +8179,10 @@
         "path": "html/browsers/history/the-location-interface/location-stringifier.html"
       }, 
       {
+        "url": "/html/browsers/history/the-location-interface/security_location_0.htm", 
+        "path": "html/browsers/history/the-location-interface/security_location_0.htm"
+      }, 
+      {
         "url": "/html/browsers/the-window-object/named-access-on-the-window-object/window-null-names.html", 
         "path": "html/browsers/the-window-object/named-access-on-the-window-object/window-null-names.html"
       }, 
@@ -8425,6 +8894,26 @@
       {
         "url": "/html/obsolete/requirements-for-implementations/the-marquee-element-0/marquee-scrolldelay.html", 
         "path": "html/obsolete/requirements-for-implementations/the-marquee-element-0/marquee-scrolldelay.html"
+      }, 
+      {
+        "url": "/html/rendering/bindings/the-progress-element-0/progress.html", 
+        "path": "html/rendering/bindings/the-progress-element-0/progress.html"
+      }, 
+      {
+        "url": "/html/semantics/document-metadata/the-base-element/base_href_empty.html", 
+        "path": "html/semantics/document-metadata/the-base-element/base_href_empty.html"
+      }, 
+      {
+        "url": "/html/semantics/document-metadata/the-base-element/base_href_specified.html", 
+        "path": "html/semantics/document-metadata/the-base-element/base_href_specified.html"
+      }, 
+      {
+        "url": "/html/semantics/document-metadata/the-base-element/base_href_unspecified.html", 
+        "path": "html/semantics/document-metadata/the-base-element/base_href_unspecified.html"
+      }, 
+      {
+        "url": "/html/semantics/document-metadata/the-base-element/base_multiple.html", 
+        "path": "html/semantics/document-metadata/the-base-element/base_multiple.html"
       }, 
       {
         "url": "/html/semantics/document-metadata/the-link-element/link-rellist.html", 
@@ -9448,6 +9937,10 @@
         "path": "html/semantics/embedded-content-0/the-video-element/video-tabindex.html"
       }, 
       {
+        "url": "/html/semantics/embedded-content-0/the-video-element/video_007.htm", 
+        "path": "html/semantics/embedded-content-0/the-video-element/video_007.htm"
+      }, 
+      {
         "url": "/html/semantics/embedded-content-0/the-video-element/video_attributes.html", 
         "path": "html/semantics/embedded-content-0/the-video-element/video_attributes.html"
       }, 
@@ -9707,6 +10200,10 @@
       {
         "url": "/html/semantics/tabular-data/attributes-common-to-td-and-th-elements/cellIndex.html", 
         "path": "html/semantics/tabular-data/attributes-common-to-td-and-th-elements/cellIndex.html"
+      }, 
+      {
+        "url": "/html/semantics/tabular-data/the-caption-element/caption_001.html", 
+        "path": "html/semantics/tabular-data/the-caption-element/caption_001.html"
       }, 
       {
         "url": "/html/semantics/tabular-data/the-table-element/border.html", 
@@ -10525,10 +11022,6 @@
         "path": "old-tests/submission/Microsoft/apis/getElementsByClassName_012.htm"
       }, 
       {
-        "url": "/old-tests/submission/Microsoft/appcache/appcache_000.htm", 
-        "path": "old-tests/submission/Microsoft/appcache/appcache_000.htm"
-      }, 
-      {
         "url": "/old-tests/submission/Microsoft/async/async_001.htm", 
         "path": "old-tests/submission/Microsoft/async/async_001.htm"
       }, 
@@ -10571,10 +11064,6 @@
       {
         "url": "/old-tests/submission/Microsoft/async/async_011.htm", 
         "path": "old-tests/submission/Microsoft/async/async_011.htm"
-      }, 
-      {
-        "url": "/old-tests/submission/Microsoft/attribute/anchor_href.htm", 
-        "path": "old-tests/submission/Microsoft/attribute/anchor_href.htm"
       }, 
       {
         "url": "/old-tests/submission/Microsoft/audio/audio_003.htm", 
@@ -10677,10 +11166,6 @@
         "path": "old-tests/submission/Microsoft/history/history_000.htm"
       }, 
       {
-        "url": "/old-tests/submission/Microsoft/progress/progress.htm", 
-        "path": "old-tests/submission/Microsoft/progress/progress.htm"
-      }, 
-      {
         "url": "/old-tests/submission/Microsoft/range/range.htm", 
         "path": "old-tests/submission/Microsoft/range/range.htm"
       }, 
@@ -10777,10 +11262,6 @@
         "path": "old-tests/submission/Microsoft/structuredclone/structuredclone_0.html"
       }, 
       {
-        "url": "/old-tests/submission/Microsoft/table/table_001.htm", 
-        "path": "old-tests/submission/Microsoft/table/table_001.htm"
-      }, 
-      {
         "url": "/old-tests/submission/Microsoft/video/video_001.htm", 
         "path": "old-tests/submission/Microsoft/video/video_001.htm"
       }, 
@@ -10799,11 +11280,6 @@
       {
         "url": "/old-tests/submission/Microsoft/video/video_006.htm", 
         "path": "old-tests/submission/Microsoft/video/video_006.htm"
-      }, 
-      {
-        "url": "/old-tests/submission/Microsoft/video/video_007.htm", 
-        "path": "old-tests/submission/Microsoft/video/video_007.htm", 
-        "timeout": "long"
       }, 
       {
         "url": "/old-tests/submission/Microsoft/video/video_008.htm", 
@@ -10850,10 +11326,6 @@
         "path": "old-tests/submission/Microsoft/video/video_022.htm"
       }, 
       {
-        "url": "/old-tests/submission/Microsoft/video/video_023.htm", 
-        "path": "old-tests/submission/Microsoft/video/video_023.htm"
-      }, 
-      {
         "url": "/old-tests/submission/Microsoft/video/video_024.htm", 
         "path": "old-tests/submission/Microsoft/video/video_024.htm"
       }, 
@@ -10868,10 +11340,6 @@
       {
         "url": "/old-tests/submission/Microsoft/video/video_027.htm", 
         "path": "old-tests/submission/Microsoft/video/video_027.htm"
-      }, 
-      {
-        "url": "/old-tests/submission/Microsoft/windowobject/security_location_0.htm", 
-        "path": "old-tests/submission/Microsoft/windowobject/security_location_0.htm"
       }, 
       {
         "url": "/old-tests/submission/Opera/dnd/dom/draggable.html", 
@@ -16042,12 +16510,24 @@
         "path": "IndexedDB/manifest.txt"
       }, 
       {
+        "url": "/IndexedDB/submissions/Opera/Microsoft-port/idbworker.js", 
+        "path": "IndexedDB/submissions/Opera/Microsoft-port/idbworker.js"
+      }, 
+      {
         "url": "/IndexedDB/submissions/Opera/TODO", 
         "path": "IndexedDB/submissions/Opera/TODO"
       }, 
       {
         "url": "/IndexedDB/submissions/Opera/checkpatch.sh", 
         "path": "IndexedDB/submissions/Opera/checkpatch.sh"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/non-finished/support.js", 
+        "path": "IndexedDB/submissions/Opera/non-finished/support.js"
+      }, 
+      {
+        "url": "/IndexedDB/submissions/Opera/support.js", 
+        "path": "IndexedDB/submissions/Opera/support.js"
       }, 
       {
         "url": "/IndexedDB/support.js", 
@@ -16660,10 +17140,6 @@
       {
         "url": "/XMLHttpRequest/resources/xmlhttprequest-timeout.js", 
         "path": "XMLHttpRequest/resources/xmlhttprequest-timeout.js"
-      }, 
-      {
-        "url": "/XMLHttpRequest/tests/submissions/Ms2ger/manifest.txt", 
-        "path": "XMLHttpRequest/tests/submissions/Ms2ger/manifest.txt"
       }, 
       {
         "url": "/ambient-light/DeviceLight_tests.js", 
@@ -20550,6 +21026,10 @@
         "path": "html/rendering/replaced-elements/attributes-for-embedded-content-and-images/object_border-ref.xhtml"
       }, 
       {
+        "url": "html/semantics/embedded-content-0/the-video-element/video_initially_paused-ref.html", 
+        "path": "html/semantics/embedded-content-0/the-video-element/video_initially_paused-ref.html"
+      }, 
+      {
         "url": "html/semantics/forms/the-textarea-element/textarea-newline-bidi-ref.html", 
         "path": "html/semantics/forms/the-textarea-element/textarea-newline-bidi-ref.html"
       }, 
@@ -21672,5 +22152,5 @@
     ]
   }, 
   "local_changes": [], 
-  "rev": "cc96f051bc10479cd5b99f7a04a604b145ddece8"
+  "rev": "f7abd19d58649006b1839b3717a4758e27e4e089"
 }
