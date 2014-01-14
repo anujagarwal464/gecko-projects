@@ -56,6 +56,8 @@ def do_test_relative_imports(test_root):
     sys.path.insert(0, os.path.join(test_root, "tools", "scripts"))
     import manifest
 
+def files_in_repo(repo_root):
+    return git("ls-tree", "-r", "--name-only", "HEAD").split("\n")
 
 def rev_range(rev_old, rev_new, symmetric=False):
     joiner = ".." if not symmetric else ".."
@@ -153,6 +155,21 @@ def load_results(tests, log_data):
                                                                        item.get("expected", None))
     return rv
 
+def delete_old_expected(metadata_root, manifest):
+    possible_paths = set()
+    for test_type, items in manifest:
+        for item in items:
+            if item.item_type not in ("helper", "manual"):
+                possible_paths.add(os.path.join(metadata_root, item.path + ".ini"))
+            
+    for path, dirnames, filenames in os.walk(metadata_root):
+        for filename in filenames:
+            if filename.endswith(".ini"):
+                file_path = os.path.join(path, filename)
+                if file_path not in possible_paths:
+                    logger.info("Deleting old expected file %s" % file_path)
+                    os.unlink(file_path)
+
 def update_expected(run_info, change_data, tests, results):
     tests_needing_review = set()
 
@@ -205,7 +222,8 @@ def get_new_expected(test, run_info, result, change_status):
         raise ValueError, "Unexpected change status " + change_status
 
     if change_status == "new":
-        assert test.expected.empty()
+        if not test.expected.empty():
+            logger.error("%r had status new, but already has expected data" % test.id)
 
     new_expected = test.expected.copy()
 
@@ -294,6 +312,8 @@ def update(test_root, metadata_root, log, rev_old=None, rev_new="HEAD"):
     tests = load_tests(tests_metadata)
 
     test_results = load_results(tests, structuredlog.read_logs(log))
+
+    delete_old_expected(metadata_root, tests_metadata.manifest)
 
     tests_needing_review = update_expected(run_info, change_data, tests, test_results)
     return tests_needing_review

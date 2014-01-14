@@ -287,7 +287,6 @@ def main(**kwargs):
                   "logfile": ExistingLogRunner}[config["command-args"]["run"]](config, bug)
 
         with tempfile.TemporaryFile() as log_file:
-            print 8
             runner.do_run(mozilla_tree, log_file)
             log_file.seek(0)
             mozilla_tree.create_patch("web-platform-tests_update_%s_metadata"  % wpt.rev,
@@ -316,7 +315,7 @@ def main(**kwargs):
             pass
     except Exception as e:
         #bug.comment("Update failed with error:\n %s" % traceback.format_exc())
-        print traceback.format_exc()
+        sys.stderr.write(traceback.format_exc())
         raise
     finally:
         pass#wpt.clean()

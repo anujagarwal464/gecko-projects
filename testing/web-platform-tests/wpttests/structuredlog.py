@@ -202,7 +202,6 @@ class StreamHandler(StructuredHandler):
             try:
                 self.stream.write(("%s\n" % formatted).encode("utf8"))
             except:
-                print repr(formatted[70:80])
                 raise
             self.stream.flush()
 

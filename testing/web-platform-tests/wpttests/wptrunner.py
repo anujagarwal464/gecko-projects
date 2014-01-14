@@ -21,7 +21,8 @@ import traceback
 
 import marionette
 import mozprocess
-from mozprofile.profile import Profile
+from mozprofile.profile import FirefoxProfile
+from mozprofile.permissions import ServerLocations
 from mozrunner import FirefoxRunner
 
 import structuredlog
@@ -97,13 +98,12 @@ class TestEnvironment(object):
         """Context manager that owns the test environment i.e. the http and
         websockets servers"""
         self.test_path = test_path
-        self.config_path = os.path.join(self.test_path, "config.json")
         self.server = None
         self.config = None
 
     def __enter__(self):
-        with open(self.config_path) as f:
-            config = json.load(f)
+        config = serve.load_config(os.path.join(self.test_path, "config.default.json"),
+                                   os.path.join(here, "config.json"))
         serve.logger = serve.default_logger("info")
         self.config, self.servers = serve.start(config)
         return self
@@ -471,7 +471,8 @@ class FirefoxBrowser(Browser):
         env = os.environ.copy()
         env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
 
-        profile = Profile()
+        locations = ServerLocations(os.path.join(here, "server-locations.txt"))
+        profile = FirefoxProfile(locations=locations)
         profile.set_preferences({"marionette.defaultPrefs.enabled": True,
                                  "marionette.defaultPrefs.port": self.marionette_port,
                                  "dom.disable_open_during_load": False,
@@ -879,47 +880,49 @@ def run_tests(binary, tests_root, metadata_root, test_types,
               log_stdout=False, capture_stdio=True, product="firefox"):
     setup_logging(output_file, log_stdout)
 
+    original_stdio = (sys.stdout, sys.stderr)
     if capture_stdio:
-        original_stdio = (sys.stdout, sys.stderr)
-
         sys.stdout = LoggingWrapper(logger, prefix="STDOUT")
         sys.stderr = LoggingWrapper(logger, level="info", prefix="STDERR")
 
-    do_test_relative_imports(tests_root)
+    try:
+        do_test_relative_imports(tests_root)
 
-    run_info = wpttest.RunInfo(False)
+        run_info = wpttest.RunInfo(False)
 
-    logger.info("Using %i client processes" % processes)
+        logger.info("Using %i client processes" % processes)
 
-    browser_cls = browser_classes[product]
+        browser_cls = browser_classes[product]
 
-    with TestEnvironment(tests_root) as test_environment:
-        base_server = "http://%s:%i" % (test_environment.config["host"],
-                                        test_environment.config["ports"]["http"][0])
-        test_ids, test_queues = queue_tests(tests_root, metadata_root,
-                                            test_types, run_info, include)
-        logger.suite_start(test_ids)
-        for test_type in test_types:
-            tests_queue = test_queues[test_type]
-            runner_cls = test_runner_classes[product].get(test_type)
+        with TestEnvironment(tests_root) as test_environment:
+            base_server = "http://%s:%i" % (test_environment.config["host"],
+                                            test_environment.config["ports"]["http"][0])
+            test_ids, test_queues = queue_tests(tests_root, metadata_root,
+                                                test_types, run_info, include)
+            logger.suite_start(test_ids)
+            for test_type in test_types:
+                tests_queue = test_queues[test_type]
+                runner_cls = test_runner_classes[product].get(test_type)
 
-            if runner_cls is None:
-                logger.error("Unsupported test type %s for product %s" % (test_type, product))
-                continue
+                if runner_cls is None:
+                    logger.error("Unsupported test type %s for product %s" % (test_type, product))
+                    continue
 
-            if xvfb:
-                #XXX this is broken
-                browser_cls = XvfbWrapped(browser_cls)
+                if xvfb:
+                    #XXX this is broken
+                    browser_cls = XvfbWrapped(browser_cls)
 
-            with ManagerGroup(runner_cls,
-                              run_info,
-                              processes,
-                              base_server,
-                              binary,
-                              browser_cls=browser_cls) as manager_group:
-                manager_group.start(tests_queue)
-                manager_group.wait()
-        logger.suite_end()
+                with ManagerGroup(runner_cls,
+                                  run_info,
+                                  processes,
+                                  base_server,
+                                  binary,
+                                  browser_cls=browser_cls) as manager_group:
+                    manager_group.start(tests_queue)
+                    manager_group.wait()
+            logger.suite_end()
+    finally:
+        sys.stdout, sys.stderr = original_stdio
 
     logger.info("Got %i unexpected results" % manager_group.unexpected_count())
 
