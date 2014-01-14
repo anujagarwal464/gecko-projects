@@ -337,7 +337,6 @@ DIST_FILES += \
   chrome.manifest \
   update.locale \
   removed-files \
-  recommended-addons.json \
   distribution \
   $(NULL)
 
@@ -382,8 +381,11 @@ RELEASE_SIGN_ANDROID_APK = \
   $(RM) $(2)-unaligned.apk
 
 ROBOCOP_PATH = $(abspath $(_ABS_DIST)/../build/mobile/robocop)
+# Normally, $(NSINSTALL) would be used instead of cp, but INNER_ROBOCOP_PACKAGE
+# is used in a series of commands that run under a "cd something", while
+# $(NSINSTALL) is relative.
 INNER_ROBOCOP_PACKAGE= \
-  $(NSINSTALL) $(GECKO_APP_AP_PATH)/fennec_ids.txt $(_ABS_DIST) && \
+  cp $(GECKO_APP_AP_PATH)/fennec_ids.txt $(_ABS_DIST) && \
   $(call RELEASE_SIGN_ANDROID_APK,$(ROBOCOP_PATH)/robocop-debug-unsigned-unaligned.apk,$(_ABS_DIST)/robocop.apk)
 
 BACKGROUND_TESTS_PATH = $(abspath $(_ABS_DIST)/../mobile/android/tests/background/junit3)
@@ -408,7 +410,8 @@ INNER_MAKE_GECKOVIEW_LIBRARY=echo 'GeckoView library packaging is only enabled o
 endif
 
 ifdef MOZ_OMX_PLUGIN
-DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginfroyo.so
+DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so \
+              libomxpluginhc.so libomxpluginfroyo.so libomxpluginkk.so
 endif
 
 SO_LIBRARIES := $(filter %.so,$(DIST_FILES))

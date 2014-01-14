@@ -1749,7 +1749,8 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
 #endif
 
         // Monitor changes to cache entry.
-        types::TypeScript::Monitor(cx, script, pc, vp);
+        if (!cache.monitoredResult())
+            types::TypeScript::Monitor(cx, script, pc, vp);
     }
 
     return true;
@@ -3416,7 +3417,8 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
     if (cache.isDisabled()) {
         if (!GetObjectElementOperation(cx, JSOp(*pc), obj, /* wasObject = */true, idval, res))
             return false;
-        types::TypeScript::Monitor(cx, script, pc, res);
+        if (!cache.monitoredResult())
+            types::TypeScript::Monitor(cx, script, pc, res);
         return true;
     }
 
@@ -3472,7 +3474,8 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         cache.resetFailedUpdates();
     }
 
-    types::TypeScript::Monitor(cx, script, pc, res);
+    if (!cache.monitoredResult())
+        types::TypeScript::Monitor(cx, script, pc, res);
     return true;
 }
 
@@ -3985,9 +3988,14 @@ GenerateScopeChainGuard(MacroAssembler &masm, JSObject *scopeObj,
         CallObject *callObj = &scopeObj->as<CallObject>();
         if (!callObj->isForEval()) {
             JSFunction *fun = &callObj->callee();
-            JSScript *script = fun->nonLazyScript();
-            if (!script->funHasExtensibleScope())
-                return;
+            // The function might have been relazified under rare conditions.
+            // In that case, we pessimistically create the guard, as we'd
+            // need to root various pointers to delazify,
+            if (fun->hasScript()) {
+                JSScript *script = fun->nonLazyScript();
+                if (!script->funHasExtensibleScope())
+                    return;
+            }
         }
     } else if (scopeObj->is<GlobalObject>()) {
         // If this is the last object on the scope walk, and the property we've
