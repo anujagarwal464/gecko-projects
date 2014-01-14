@@ -27,15 +27,17 @@ public:
   virtual ~CacheIOThread();
 
   enum ELevel {
+    IMMEDIATE,
+    DOOM_PRIORITY,
     OPEN_PRIORITY,
     READ_PRIORITY,
+    DOOM,
     OPEN,
     READ,
     OPEN_TRUNCATE,
     WRITE,
     CLOSE,
     EVICT,
-    BUILD_OR_UPDATE_INDEX,
     LAST_LEVEL
   };
 
