@@ -1001,11 +1001,15 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting)
 
   bool crlDownloading = Preferences::GetBool("security.CRL_download.enabled",
                                              false);
+
+  // This preference controls whether we do OCSP fetching and does not affect
+  // OCSP stapling.
   // 0 = disabled, 1 = enabled
   int32_t ocspEnabled = Preferences::GetInt("security.OCSP.enabled",
                                             OCSP_ENABLED_DEFAULT);
 
-  bool ocspRequired = Preferences::GetBool("security.OCSP.require", false);
+  bool ocspRequired = ocspEnabled &&
+    Preferences::GetBool("security.OCSP.require", false);
 
   // We measure the setting of the pref at startup only to minimize noise by
   // addons that may muck with the settings, though it probably doesn't matter.
@@ -1019,11 +1023,8 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting)
 
   bool ocspStaplingEnabled = Preferences::GetBool("security.ssl.enable_ocsp_stapling",
                                                   true);
-  if (!ocspEnabled) {
-    ocspStaplingEnabled = false;
-  }
-  PublicSSLState()->SetOCSPStaplingEnabled(ocspStaplingEnabled);
-  PrivateSSLState()->SetOCSPStaplingEnabled(ocspStaplingEnabled);
+  PublicSSLState()->SetOCSPOptions(ocspEnabled, ocspStaplingEnabled);
+  PrivateSSLState()->SetOCSPOptions(ocspEnabled, ocspStaplingEnabled);
 
   setNonPkixOcspEnabled(ocspEnabled);
 
@@ -1270,6 +1271,15 @@ nsNSSComponent::InitializeNSS()
     SSL_OptionSetDefault(SSL_ENABLE_FALSE_START,
                          Preferences::GetBool("security.ssl.enable_false_start",
                                               FALSE_START_ENABLED_DEFAULT));
+
+    /* SSL_ENABLE_NPN and SSL_ENABLE_ALPN also require calling
+       SSL_SetNextProtoNego in order for the extensions to be negotiated.
+       WebRTC does not do that so it will not use NPN or ALPN even when these
+       preferences are true. */
+    SSL_OptionSetDefault(SSL_ENABLE_NPN,
+                         Preferences::GetBool("security.ssl.enable_npn", true));
+    SSL_OptionSetDefault(SSL_ENABLE_ALPN,
+                         Preferences::GetBool("security.ssl.enable_alpn", false));
 
     if (NS_FAILED(InitializeCipherSuite())) {
       PR_LOG(gPIPNSSLog, PR_LOG_ERROR, ("Unable to initialize cipher suite settings\n"));

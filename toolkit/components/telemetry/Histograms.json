@@ -1448,6 +1448,12 @@
     "n_values": 5,
     "description": "HTTP Disk Cache Hit, Reval, Failed-Reval, Miss"
   },
+  "HTTP_CACHE_MISS_HALFLIFE_EXPERIMENT": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 4,
+    "description": "HTTP Cache v2 Miss by half-life value (6h, 1d, 7d, 50d)"
+  },
   "HTTP_MEMORY_CACHE_DISPOSITION_2": {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -5583,6 +5589,12 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "Status of OCSP stapling on this handshake (1=present, good; 2=none; 3=present, expired; 4=present, other error)"
+  },
+  "SSL_OCSP_MAY_FETCH": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 8,
+    "description": "For non-stapling cases, is OCSP fetching a possibility? (0=yes, 1=no because missing/invalid OCSP URI, 2=no because fetching disabled, 3=no because both)"
   },
   "TELEMETRY_TEST_EXPIRED": {
     "expires_in_version": "4.0a1",

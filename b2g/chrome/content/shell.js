@@ -683,6 +683,10 @@ Services.obs.addObserver(function onBluetoothVolumeChange(subject, topic, data) 
   });
 }, 'bluetooth-volume-change', false);
 
+Services.obs.addObserver(function(subject, topic, data) {
+  shell.sendCustomEvent('mozmemorypressure');
+}, 'memory-pressure', false);
+
 var CustomEventManager = {
   init: function custevt_init() {
     window.addEventListener("ContentStart", (function(evt) {
@@ -812,7 +816,7 @@ var AlertsHelper = {
     this._listeners[uid] = listener;
 
     let app = DOMApplicationRegistry.getAppByManifestURL(listener.manifestURL);
-    DOMApplicationRegistry.getManifestFor(app.manifestURL, function(manifest) {
+    DOMApplicationRegistry.getManifestFor(app.manifestURL).then((manifest) => {
       let helper = new ManifestHelper(manifest, app.origin);
       let getNotificationURLFor = function(messages) {
         if (!messages)
@@ -869,7 +873,7 @@ var AlertsHelper = {
     // If we have a manifest URL, get the icon and title from the manifest
     // to prevent spoofing.
     let app = DOMApplicationRegistry.getAppByManifestURL(manifestUrl);
-    DOMApplicationRegistry.getManifestFor(manifestUrl, function(aManifest) {
+    DOMApplicationRegistry.getManifestFor(manifestUrl).then((aManifest) => {
       let helper = new ManifestHelper(aManifest, app.origin);
       send(helper.name, helper.iconURLForSize(128));
     });
@@ -968,7 +972,7 @@ var WebappsHelper = {
 
     switch(topic) {
       case "webapps-launch":
-        DOMApplicationRegistry.getManifestFor(json.manifestURL, function(aManifest) {
+        DOMApplicationRegistry.getManifestFor(json.manifestURL).then((aManifest) => {
           if (!aManifest)
             return;
 
@@ -1080,9 +1084,9 @@ let RemoteDebugger = {
       DebuggerServer.init(this.prompt.bind(this));
       DebuggerServer.chromeWindowType = "navigator:browser";
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
-      // Until we implement unix domain socket, we enable content actors
-      // only on development devices
-      if (Services.prefs.getBoolPref("devtools.debugger.enable-content-actors")) {
+      // Prevent tab actors to be loaded in parent process,
+      // unless we enable certified apps debugging
+      if (!Services.prefs.getBoolPref("devtools.debugger.forbid-certified-apps")) {
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
         DebuggerServer.addGlobalActor(DebuggerServer.ChromeDebuggerActor, "chromeDebugger");
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
@@ -1093,7 +1097,6 @@ let RemoteDebugger = {
         DebuggerServer.registerModule("devtools/server/actors/inspector");
         DebuggerServer.registerModule("devtools/server/actors/styleeditor");
         DebuggerServer.registerModule("devtools/server/actors/stylesheets");
-        DebuggerServer.enableWebappsContentActor = true;
       }
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webapps.js");

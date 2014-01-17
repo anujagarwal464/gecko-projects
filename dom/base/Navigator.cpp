@@ -1265,13 +1265,14 @@ Navigator::GetGamepads(nsTArray<nsRefPtr<Gamepad> >& aGamepads,
 //*****************************************************************************
 
 NS_IMETHODIMP
-Navigator::GetMozConnection(nsIDOMMozConnection** aConnection)
+Navigator::GetMozConnection(nsISupports** aConnection)
 {
-  NS_IF_ADDREF(*aConnection = GetMozConnection());
+  nsCOMPtr<nsINetworkProperties> properties = GetMozConnection();
+  properties.forget(aConnection);
   return NS_OK;
 }
 
-nsIDOMMozConnection*
+network::Connection*
 Navigator::GetMozConnection()
 {
   if (!mConnection) {
@@ -1321,7 +1322,7 @@ Navigator::EnsureMessagesManager()
   // We don't do anything with the return value.
   AutoJSContext cx;
   JS::Rooted<JS::Value> prop_val(cx);
-  rv = gpi->Init(mWindow, prop_val.address());
+  rv = gpi->Init(mWindow, &prop_val);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mMessagesManager = messageManager.forget();
@@ -1578,7 +1579,7 @@ Navigator::DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
       return Throw(aCx, NS_ERROR_UNEXPECTED);
     }
 
-    rv = gpi->Init(mWindow, prop_val.address());
+    rv = gpi->Init(mWindow, &prop_val);
     if (NS_FAILED(rv)) {
       return Throw(aCx, rv);
     }
@@ -1815,8 +1816,15 @@ Navigator::HasNfcSupport(JSContext* /* unused */, JSObject* aGlobal)
   return win && (CheckPermission(win, "nfc-read") ||
                  CheckPermission(win, "nfc-write"));
 }
-#endif // MOZ_NFC
 
+/* static */
+bool
+Navigator::HasNfcPeerSupport(JSContext* /* unused */, JSObject* aGlobal)
+{
+  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
+  return win && CheckPermission(win, "nfc-write");
+}
+#endif // MOZ_NFC
 
 #ifdef MOZ_TIME_MANAGER
 /* static */
@@ -1830,8 +1838,9 @@ Navigator::HasTimeSupport(JSContext* /* unused */, JSObject* aGlobal)
 
 #ifdef MOZ_MEDIA_NAVIGATOR
 /* static */
-bool Navigator::HasUserMediaSupport(JSContext* /* unused */,
-                                    JSObject* /* unused */)
+bool
+Navigator::HasUserMediaSupport(JSContext* /* unused */,
+                               JSObject* /* unused */)
 {
   // Make enabling peerconnection enable getUserMedia() as well
   return Preferences::GetBool("media.navigator.enabled", false) ||
@@ -1840,21 +1849,27 @@ bool Navigator::HasUserMediaSupport(JSContext* /* unused */,
 #endif // MOZ_MEDIA_NAVIGATOR
 
 /* static */
-bool Navigator::HasPushNotificationsSupport(JSContext* /* unused */,
-                                            JSObject* aGlobal)
+bool
+Navigator::HasPushNotificationsSupport(JSContext* /* unused */,
+                                       JSObject* aGlobal)
 {
   nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
-  return win && Preferences::GetBool("services.push.enabled", false) && CheckPermission(win, "push");
+  return Preferences::GetBool("services.push.enabled", false) &&
+         win && CheckPermission(win, "push");
 }
 
 /* static */
-bool Navigator::HasInputMethodSupport(JSContext* /* unused */,
-                                      JSObject* aGlobal)
+bool
+Navigator::HasInputMethodSupport(JSContext* /* unused */,
+                                 JSObject* aGlobal)
 {
   nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
-  return Preferences::GetBool("dom.mozInputMethod.testing", false) ||
-         (Preferences::GetBool("dom.mozInputMethod.enabled", false) &&
-          win && CheckPermission(win, "input"));
+  if (Preferences::GetBool("dom.mozInputMethod.testing", false)) {
+    return true;
+  }
+
+  return Preferences::GetBool("dom.mozInputMethod.enabled", false) &&
+         win && CheckPermission(win, "input");
 }
 
 /* static */
