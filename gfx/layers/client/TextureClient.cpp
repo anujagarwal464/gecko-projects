@@ -319,7 +319,7 @@ bool
 ShmemTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aDescriptor)
 {
   MOZ_ASSERT(IsValid());
-  if (!IsAllocated() || GetFormat() == gfx::FORMAT_UNKNOWN) {
+  if (!IsAllocated() || GetFormat() == gfx::SurfaceFormat::UNKNOWN) {
     return false;
   }
 
@@ -383,7 +383,7 @@ bool
 MemoryTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aDescriptor)
 {
   MOZ_ASSERT(IsValid());
-  if (!IsAllocated() || GetFormat() == gfx::FORMAT_UNKNOWN) {
+  if (!IsAllocated() || GetFormat() == gfx::SurfaceFormat::UNKNOWN) {
     return false;
   }
   aDescriptor = SurfaceDescriptorMemory(reinterpret_cast<uintptr_t>(mBuffer),
@@ -499,7 +499,7 @@ bool
 BufferTextureClient::AllocateForSurface(gfx::IntSize aSize, TextureAllocationFlags aFlags)
 {
   MOZ_ASSERT(IsValid());
-  MOZ_ASSERT(mFormat != gfx::FORMAT_YUV, "This textureClient cannot use YCbCr data");
+  MOZ_ASSERT(mFormat != gfx::SurfaceFormat::YUV, "This textureClient cannot use YCbCr data");
   MOZ_ASSERT(aSize.width * aSize.height);
 
   int bufSize
@@ -522,8 +522,8 @@ TemporaryRef<gfx::DrawTarget>
 BufferTextureClient::GetAsDrawTarget()
 {
   MOZ_ASSERT(IsValid());
-  // XXX - uncomment when ContentClient's locking is fixed
-  // MOZ_ASSERT(mLocked);
+  // XXX - Turn this into a fatal assertion as soon as Bug 952507 is fixed
+  NS_WARN_IF_FALSE(mLocked, "GetAsDrawTarget should be called on locked textures only");
 
   if (mDrawTarget) {
     return mDrawTarget;
@@ -560,7 +560,8 @@ BufferTextureClient::GetAsDrawTarget()
 bool
 BufferTextureClient::Lock(OpenMode aMode)
 {
-  MOZ_ASSERT(!mLocked);
+  // XXX - Turn this into a fatal assertion as soon as Bug 952507 is fixed
+  NS_WARN_IF_FALSE(!mLocked, "The TextureClient is already Locked!");
   mOpenMode = aMode;
   mLocked = true;
   return true;
@@ -569,7 +570,8 @@ BufferTextureClient::Lock(OpenMode aMode)
 void
 BufferTextureClient::Unlock()
 {
-  MOZ_ASSERT(mLocked);
+  // XXX - Turn this into a fatal assertion as soon as Bug 952507 is fixed
+  NS_WARN_IF_FALSE(mLocked, "The TextureClient is already Unlocked!");
   mLocked = false;
   if (!mDrawTarget) {
     mUsingFallbackDrawTarget = false;
@@ -607,7 +609,7 @@ BufferTextureClient::Unlock()
 bool
 BufferTextureClient::UpdateYCbCr(const PlanarYCbCrData& aData)
 {
-  MOZ_ASSERT(mFormat == gfx::FORMAT_YUV, "This textureClient can only use YCbCr data");
+  MOZ_ASSERT(mFormat == gfx::SurfaceFormat::YUV, "This textureClient can only use YCbCr data");
   MOZ_ASSERT(!IsImmutable());
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(aData.mCbSkip == aData.mCrSkip);

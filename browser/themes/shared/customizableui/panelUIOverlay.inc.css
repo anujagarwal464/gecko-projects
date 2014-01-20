@@ -126,8 +126,8 @@ toolbarpaletteitem[place="palette"] > toolbaritem > toolbarbutton,
   -moz-box-orient: vertical;
   min-width: 7em;
   max-width: 7em;
-  height: 6em;
-  max-height: 6em;
+  height: calc(40px + 2.4em);
+  max-height: calc(40px + 2.4em);
 }
 
 .panel-customization-placeholder[expand],
@@ -155,7 +155,7 @@ toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"]:not(.panel-wide-wi
 }
 
 toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"] > iframe {
-  margin: calc(5em / 12) auto;
+  margin: 4px auto;
 }
 
 toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"]:not(.panel-wide-item) > .toolbarbutton-text {
@@ -169,9 +169,9 @@ toolbaritem[cui-areatype="menu-panel"] > toolbarbutton > .toolbarbutton-icon,
 toolbarpaletteitem[place="palette"] > #bookmarks-menu-button > .toolbarbutton-menubutton-button > .toolbarbutton-icon,
 toolbarpaletteitem[place="palette"] > toolbarbutton > .toolbarbutton-icon,
 toolbarpaletteitem[place="palette"] > toolbaritem > toolbarbutton > .toolbarbutton-icon {
-  min-width: calc(8em / 3);
-  min-height: calc(8em / 3);
-  margin: calc(5em / 12);
+  min-width: 32px;
+  min-height: 32px;
+  margin: 4px;
 }
 
 toolbarpaletteitem[place="palette"] > toolbaritem > toolbarbutton {
@@ -282,6 +282,14 @@ toolbarpaletteitem[place="palette"] > toolbaritem > toolbarbutton {
   box-shadow: none;
 }
 
+#PanelUI-quit:not([disabled]):hover {
+  background-color: #d94141;
+}
+
+#PanelUI-quit:not([disabled]):hover:active {
+  background-color: #ad3434;
+}
+
 #main-window[customize-entered] #PanelUI-customize {
   color: white;
   background-image: linear-gradient(rgb(41,123,204), rgb(40,133,203));
@@ -325,11 +333,15 @@ panelview toolbarbutton@buttonStateHover@,
 .customizationmode-button,
 #edit-controls@inAnyPanel@ > toolbarbutton@buttonStateHover@,
 #zoom-controls@inAnyPanel@ > toolbarbutton@buttonStateHover@,
-#edit-controls@inAnyPanel@@buttonStateHover@,
-#zoom-controls@inAnyPanel@@buttonStateHover@,
 #BMB_bookmarksPopup > menu@buttonStateHover@,
 #BMB_bookmarksPopup > menuitem@buttonStateHover@ {
   background-color: hsla(210,4%,10%,.08);
+  border-color: hsla(210,4%,10%,.1);
+}
+
+
+#edit-controls@inAnyPanel@@buttonStateHover@,
+#zoom-controls@inAnyPanel@@buttonStateHover@ {
   border-color: hsla(210,4%,10%,.1);
 }
 

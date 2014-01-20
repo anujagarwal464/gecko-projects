@@ -296,7 +296,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #ifdef DEBUG
     noGCOrAllocationCheck(0),
 #endif
-    jitHardening(false),
     jitSupportsFloatingPoint(false),
     ionPcScriptCache(nullptr),
     threadPool(this),
@@ -382,6 +381,9 @@ JSRuntime::init(uint32_t maxbytes)
 
     js::TlsPerThreadData.set(&mainThread);
     mainThread.addToThreadList();
+
+    if (!threadPool.init())
+        return false;
 
     if (!js_InitGC(this, maxbytes))
         return false;
@@ -657,23 +659,13 @@ JSRuntime::triggerOperationCallback(OperationCallbackTrigger trigger)
 #endif
 }
 
-void
-JSRuntime::setJitHardening(bool enabled)
-{
-    jitHardening = enabled;
-    if (execAlloc_)
-        execAlloc_->setRandomize(enabled);
-}
-
 JSC::ExecutableAllocator *
 JSRuntime::createExecutableAllocator(JSContext *cx)
 {
     JS_ASSERT(!execAlloc_);
     JS_ASSERT(cx->runtime() == this);
 
-    JSC::AllocationBehavior randomize =
-        jitHardening ? JSC::AllocationCanRandomize : JSC::AllocationDeterministic;
-    execAlloc_ = js_new<JSC::ExecutableAllocator>(randomize);
+    execAlloc_ = js_new<JSC::ExecutableAllocator>();
     if (!execAlloc_)
         js_ReportOutOfMemory(cx);
     return execAlloc_;

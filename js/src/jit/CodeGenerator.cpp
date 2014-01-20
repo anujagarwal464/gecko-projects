@@ -1496,7 +1496,7 @@ CodeGenerator::visitForkJoinSlice(LForkJoinSlice *lir)
 }
 
 bool
-CodeGenerator::visitGuardThreadLocalObject(LGuardThreadLocalObject *lir)
+CodeGenerator::visitGuardThreadExclusive(LGuardThreadExclusive *lir)
 {
     JS_ASSERT(gen->info().executionMode() == ParallelExecution);
 
@@ -1504,7 +1504,7 @@ CodeGenerator::visitGuardThreadLocalObject(LGuardThreadLocalObject *lir)
     masm.setupUnalignedABICall(2, tempReg);
     masm.passABIArg(ToRegister(lir->forkJoinSlice()));
     masm.passABIArg(ToRegister(lir->object()));
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, IsThreadLocalObject));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParallelWriteGuard));
 
     OutOfLineAbortPar *bail = oolAbortPar(ParallelBailoutIllegalWrite, lir);
     if (!bail)
@@ -3401,7 +3401,8 @@ CodeGenerator::visitNewDeclEnvObject(LNewDeclEnvObject *lir)
 
     // If we have a template object, we can inline call object creation.
     OutOfLineCode *ool = oolCallVM(NewDeclEnvObjectInfo, lir,
-                                   (ArgList(), ImmGCPtr(info.fun()), Imm32(gc::DefaultHeap)),
+                                   (ArgList(), ImmGCPtr(info.funMaybeLazy()),
+                                    Imm32(gc::DefaultHeap)),
                                    StoreRegisterTo(obj));
     if (!ool)
         return false;
@@ -6411,11 +6412,11 @@ CodeGenerator::visitNameIC(OutOfLineUpdateCache *ool, DataPtr<NameIC> &ic)
 bool
 CodeGenerator::addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
                                    PropertyName *name, TypedOrValueRegister output,
-                                   bool allowGetters)
+                                   bool allowGetters, bool monitoredResult)
 {
     switch (gen->info().executionMode()) {
       case SequentialExecution: {
-        GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
+        GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters, monitoredResult);
         return addCache(ins, allocateCache(cache));
       }
       case ParallelExecution: {
@@ -6474,9 +6475,10 @@ CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
     bool allowGetters = ins->mir()->allowGetters();
+    bool monitoredResult = ins->mir()->monitoredResult();
     TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
 
-    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters, monitoredResult);
 }
 
 bool
@@ -6486,9 +6488,10 @@ CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins)
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
     bool allowGetters = ins->mir()->allowGetters();
+    bool monitoredResult = ins->mir()->monitoredResult();
     TypedOrValueRegister output(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
 
-    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters);
+    return addGetPropertyCache(ins, liveRegs, objReg, name, output, allowGetters, monitoredResult);
 }
 
 typedef bool (*GetPropertyICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
@@ -7423,11 +7426,11 @@ CodeGenerator::visitInstanceOfV(LInstanceOfV *ins)
     return emitInstanceOf(ins, ins->mir()->prototypeObject());
 }
 
-// Wrap IsDelegate, which takes a Value for the lhs of an instanceof.
+// Wrap IsDelegateOfObject, which takes a JSObject*, not a HandleObject
 static bool
 IsDelegateObject(JSContext *cx, HandleObject protoObj, HandleObject obj, bool *res)
 {
-    return IsDelegate(cx, protoObj, ObjectValue(*obj), res);
+    return IsDelegateOfObject(cx, protoObj, obj, res);
 }
 
 typedef bool (*IsDelegateObjectFn)(JSContext *, HandleObject, HandleObject, bool *);

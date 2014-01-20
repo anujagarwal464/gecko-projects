@@ -18,7 +18,6 @@
 #include "mozilla/TouchEvents.h"
 #include "nsDebug.h"                    // for NS_WARNING
 #include "nsPoint.h"                    // for nsIntPoint
-#include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
 #include "nsThreadUtils.h"              // for NS_IsMainThread
 
 #include <algorithm>                    // for std::stable_sort
@@ -41,6 +40,38 @@ APZCTreeManager::APZCTreeManager()
 
 APZCTreeManager::~APZCTreeManager()
 {
+}
+
+void
+APZCTreeManager::GetAllowedTouchBehavior(WidgetInputEvent* aEvent,
+                                         nsTArray<TouchBehaviorFlags>& aOutValues)
+{
+  WidgetTouchEvent *touchEvent = aEvent->AsTouchEvent();
+
+  aOutValues.Clear();
+
+  for (size_t i = 0; i < touchEvent->touches.Length(); i++) {
+    // If aEvent wasn't transformed previously we might need to
+    // add transforming of the spt here.
+    mozilla::ScreenIntPoint spt;
+    spt.x = touchEvent->touches[i]->mRefPoint.x;
+    spt.y = touchEvent->touches[i]->mRefPoint.y;
+
+    nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(spt);
+    aOutValues.AppendElement(apzc
+      ? apzc->GetAllowedTouchBehavior(spt)
+      : AllowedTouchBehavior::UNKNOWN);
+  }
+}
+
+void
+APZCTreeManager::SetAllowedTouchBehavior(const ScrollableLayerGuid& aGuid,
+                                         const nsTArray<TouchBehaviorFlags> &aValues)
+{
+  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aGuid);
+  if (apzc) {
+    apzc->SetAllowedTouchBehavior(aValues);
+  }
 }
 
 void
@@ -172,7 +203,17 @@ APZCTreeManager::UpdatePanZoomControllerTree(CompositorParent* aCompositor,
         apzc->NotifyLayersUpdated(container->GetFrameMetrics(),
                                   aIsFirstPaint && (aLayersId == aFirstPaintLayersId));
 
+        // Use the composition bounds as the hit test region.
+        // Optionally, the GeckoContentController can provide a touch-sensitive
+        // region that constrains all frames associated with the controller.
+        // In this case we intersect the composition bounds with that region.
         ScreenRect visible(container->GetFrameMetrics().mCompositionBounds);
+        CSSRect touchSensitiveRegion;
+        if (state->mController->GetTouchSensitiveRegion(&touchSensitiveRegion)) {
+          visible = visible.Intersect(touchSensitiveRegion
+                                      * container->GetFrameMetrics().LayersPixelsPerCSSPixel()
+                                      * LayerToScreenScale(1.0));
+        }
         apzc->SetLayerHitTestData(visible, aTransform, aLayer->GetTransform());
         APZC_LOG("Setting rect(%f %f %f %f) as visible region for APZC %p\n", visible.x, visible.y,
                                                                               visible.width, visible.height,
@@ -296,10 +337,13 @@ APZCTreeManager::ReceiveInputEvent(const InputData& aEvent,
           APZC_LOG("Using APZC %p as the root APZC for multi-touch\n", mApzcForInputBlock.get());
         }
 
-        // Cache transformToApzc so it can be used for future events in this block.
         if (mApzcForInputBlock) {
+          // Cache transformToApzc so it can be used for future events in this block.
           GetInputTransforms(mApzcForInputBlock, transformToApzc, transformToGecko);
           mCachedTransformToApzcForInputBlock = transformToApzc;
+        } else {
+          // Reset the cached apz transform
+          mCachedTransformToApzcForInputBlock = gfx3DMatrix();
         }
       } else if (mApzcForInputBlock) {
         APZC_LOG("Re-using APZC %p as continuation of event block\n", mApzcForInputBlock.get());
@@ -360,35 +404,24 @@ APZCTreeManager::ReceiveInputEvent(const InputData& aEvent,
 }
 
 already_AddRefed<AsyncPanZoomController>
-APZCTreeManager::GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent,
-                                        ScreenPoint aPoint)
+APZCTreeManager::GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent)
 {
-  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(aPoint);
+  ScreenPoint point = ScreenPoint(aEvent.touches[0]->mRefPoint.x, aEvent.touches[0]->mRefPoint.y);
+  nsRefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(point);
   if (aEvent.touches.Length() == 1) {
     // If we have one touch point, this might be the start of a pan.
     // Prepare for possible overscroll handoff.
     BuildOverscrollHandoffChain(apzc);
   }
-  gfx3DMatrix transformToApzc, transformToGecko;
-  // Reset the cached apz transform
-  mCachedTransformToApzcForInputBlock = transformToApzc;
-  if (!apzc) {
-    return apzc.forget();
-  }
   for (size_t i = 1; i < aEvent.touches.Length(); i++) {
-    nsIntPoint point = aEvent.touches[i]->mRefPoint;
-    nsRefPtr<AsyncPanZoomController> apzc2 =
-      GetTargetAPZC(ScreenPoint(point.x, point.y));
+    point = ScreenPoint(aEvent.touches[i]->mRefPoint.x, aEvent.touches[i]->mRefPoint.y);
+    nsRefPtr<AsyncPanZoomController> apzc2 = GetTargetAPZC(point);
     apzc = CommonAncestor(apzc.get(), apzc2.get());
     APZC_LOG("Using APZC %p as the common ancestor\n", apzc.get());
     // For now, we only ever want to do pinching on the root APZC for a given layers id. So
     // when we find the common ancestor of multiple points, also walk up to the root APZC.
     apzc = RootAPZCForLayersId(apzc);
     APZC_LOG("Using APZC %p as the root APZC for multi-touch\n", apzc.get());
-  }
-  if (apzc) {
-    // Cache apz transform so it can be used for future events in this block.
-    GetInputTransforms(apzc, mCachedTransformToApzcForInputBlock, transformToGecko);
   }
   return apzc.forget();
 }
@@ -406,8 +439,15 @@ APZCTreeManager::ProcessTouchEvent(const WidgetTouchEvent& aEvent,
   }
   if (aEvent.message == NS_TOUCH_START) {
     mTouchCount++;
-    ScreenPoint point = ScreenPoint(aEvent.touches[0]->mRefPoint.x, aEvent.touches[0]->mRefPoint.y);
-    mApzcForInputBlock = GetTouchInputBlockAPZC(aEvent, point);
+    mApzcForInputBlock = GetTouchInputBlockAPZC(aEvent);
+    if (mApzcForInputBlock) {
+      // Cache apz transform so it can be used for future events in this block.
+      gfx3DMatrix transformToGecko;
+      GetInputTransforms(mApzcForInputBlock, mCachedTransformToApzcForInputBlock, transformToGecko);
+    } else {
+      // Reset the cached apz transform
+      mCachedTransformToApzcForInputBlock = gfx3DMatrix();
+    }
   }
 
   if (mApzcForInputBlock) {

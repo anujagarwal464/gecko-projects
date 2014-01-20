@@ -59,6 +59,9 @@ public class Favicons {
     // The density-adjusted default Favicon dimensions.
     public static int sDefaultFaviconSize;
 
+    // The density-adjusted maximum Favicon dimensions.
+    public static int sLargestFaviconSize;
+
     private static final Map<Integer, LoadFaviconTask> sLoadTasks = Collections.synchronizedMap(new HashMap<Integer, LoadFaviconTask>());
 
     // Cache to hold mappings between page URLs and Favicon URLs. Used to avoid going to the DB when
@@ -111,7 +114,7 @@ public class Favicons {
      *
      * Returns null otherwise.
      */
-    public static Bitmap getCachedFaviconForSize(final String pageURL, int targetSize) {
+    public static Bitmap getSizedFaviconForPageFromCache(final String pageURL, int targetSize) {
         final String faviconURL = sPageURLMappings.get(pageURL);
         if (faviconURL == null) {
             return null;
@@ -134,7 +137,7 @@ public class Favicons {
      * @return The id of the asynchronous task created, NOT_LOADING if none is created, or
      *         LOADED if the value could be dispatched on the current thread.
      */
-    public static int getFaviconForSize(String pageURL, String faviconURL, int targetSize, int flags, OnFaviconLoadedListener listener) {
+    public static int getSizedFavicon(String pageURL, String faviconURL, int targetSize, int flags, OnFaviconLoadedListener listener) {
         // Do we know the favicon URL for this page already?
         String cacheURL = faviconURL;
         if (cacheURL == null) {
@@ -222,6 +225,7 @@ public class Favicons {
     public static int getSizedFaviconForPageFromLocal(final String pageURL, final OnFaviconLoadedListener callback) {
         return getSizedFaviconForPageFromLocal(pageURL, sDefaultFaviconSize, callback);
     }
+
     /**
      * Helper method to determine the URL of the Favicon image for a given page URL by querying the
      * history database. Should only be called from the background thread - does database access.
@@ -230,7 +234,7 @@ public class Favicons {
      * @return The URL of the Favicon used by that webpage, according to either the History database
      *         or a somewhat educated guess.
      */
-    public static String getFaviconUrlForPageUrl(String pageURL) {
+    public static String getFaviconURLForPageURL(String pageURL) {
         // Attempt to determine the Favicon URL from the Tabs datastructure. Can dodge having to use
         // the database sometimes by doing this.
         String targetURL;
@@ -289,8 +293,20 @@ public class Favicons {
         sFaviconsCache.putSingleFavicon(pageUrl, image);
     }
 
+    /**
+     * Adds the bitmaps given by the specified iterator to the cache associated with the url given.
+     * Future requests for images will be able to select the least larger image than the target
+     * size from this new set of images.
+     *
+     * @param pageUrl The URL to associate the new favicons with.
+     * @param images An iterator over the new favicons to put in the cache.
+     */
     public static void putFaviconsInMemCache(String pageUrl, Iterator<Bitmap> images, boolean permanently) {
         sFaviconsCache.putFavicons(pageUrl, images, permanently);
+    }
+
+    public static void putFaviconsInMemCache(String pageUrl, Iterator<Bitmap> images) {
+        putFaviconsInMemCache(pageUrl, images, false);
     }
 
     public static void clearMemCache() {
@@ -365,7 +381,11 @@ public class Favicons {
         }
 
         sDefaultFaviconSize = res.getDimensionPixelSize(R.dimen.favicon_bg);
-        sFaviconsCache = new FaviconCache(FAVICON_CACHE_SIZE_BYTES, res.getDimensionPixelSize(R.dimen.favicon_largest_interesting_size));
+
+        // Screen-density-adjusted upper limit on favicon size. Favicons larger than this are
+        // downscaled to this size or discarded.
+        sLargestFaviconSize = context.getResources().getDimensionPixelSize(R.dimen.favicon_largest_interesting_size);
+        sFaviconsCache = new FaviconCache(FAVICON_CACHE_SIZE_BYTES, sLargestFaviconSize);
 
         // Initialize page mappings for each of our special pages.
         for (String url : AboutPages.getDefaultIconPages()) {

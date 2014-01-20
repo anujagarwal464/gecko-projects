@@ -41,20 +41,20 @@ InnermostStaticScope(JSScript *script, jsbytecode *pc)
     StaticBlockObject *block = script->getBlockScope(pc);
     if (block)
         return block;
-    return script->function();
+    return script->functionNonDelazifying();
 }
 
 Shape *
 js::ScopeCoordinateToStaticScopeShape(JSScript *script, jsbytecode *pc)
 {
     StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
-    ScopeCoordinate sc(pc);
+    uint32_t hops = ScopeCoordinate(pc).hops();
     while (true) {
         JS_ASSERT(!ssi.done());
         if (ssi.hasDynamicScopeObject()) {
-            if (!sc.hops)
+            if (!hops)
                 break;
-            sc.hops--;
+            hops--;
         }
         ssi++;
     }
@@ -93,11 +93,11 @@ js::ScopeCoordinateName(ScopeCoordinateNameCache &cache, JSScript *script, jsbyt
     jsid id;
     ScopeCoordinate sc(pc);
     if (shape == cache.shape) {
-        ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot);
+        ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot());
         id = p->value();
     } else {
         Shape::Range<NoGC> r(shape);
-        while (r.front().slot() != sc.slot)
+        while (r.front().slot() != sc.slot())
             r.popFront();
         id = r.front().propidRaw();
     }
@@ -112,12 +112,12 @@ JSScript *
 js::ScopeCoordinateFunctionScript(JSScript *script, jsbytecode *pc)
 {
     StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
-    ScopeCoordinate sc(pc);
+    uint32_t hops = ScopeCoordinate(pc).hops();
     while (true) {
         if (ssi.hasDynamicScopeObject()) {
-            if (!sc.hops)
+            if (!hops)
                 break;
-            sc.hops--;
+            hops--;
         }
         ssi++;
     }
@@ -655,9 +655,10 @@ StaticBlockObject::create(ExclusiveContext *cx)
 
 /* static */ Shape *
 StaticBlockObject::addVar(ExclusiveContext *cx, Handle<StaticBlockObject*> block, HandleId id,
-                          int index, bool *redeclared)
+                          unsigned index, bool *redeclared)
 {
-    JS_ASSERT(JSID_IS_ATOM(id) || (JSID_IS_INT(id) && JSID_TO_INT(id) == index));
+    JS_ASSERT(JSID_IS_ATOM(id) || (JSID_IS_INT(id) && JSID_TO_INT(id) == (int)index));
+    JS_ASSERT(index < VAR_INDEX_LIMIT);
 
     *redeclared = false;
 
@@ -1148,7 +1149,7 @@ class DebugScopeProxy : public BaseProxyHandler
                 return false;
 
             if (bi->kind() == VARIABLE || bi->kind() == CONSTANT) {
-                unsigned i = bi.frameIndex();
+                uint32_t i = bi.frameIndex();
                 if (script->varIsAliased(i))
                     return false;
 
@@ -1219,7 +1220,7 @@ class DebugScopeProxy : public BaseProxyHandler
             if (maybeLiveScope) {
                 AbstractFramePtr frame = maybeLiveScope->frame();
                 JSScript *script = frame.script();
-                unsigned local = block->slotToLocalIndex(script->bindings, shape->slot());
+                uint32_t local = block->slotToLocalIndex(script->bindings, shape->slot());
                 if (action == GET)
                     vp.set(frame.unaliasedLocal(local));
                 else
@@ -1693,7 +1694,7 @@ DebugScopes::sweep(JSRuntime *rt)
     }
 }
 
-#if defined(DEBUG) && defined(JSGC_GENERATIONAL)
+#if defined(JSGC_GENERATIONAL) and defined(JS_GC_ZEAL)
 void
 DebugScopes::checkHashTablesAfterMovingGC(JSRuntime *runtime)
 {
@@ -2300,14 +2301,14 @@ AnalyzeEntrainedVariablesInScript(JSContext *cx, HandleScript script, HandleScri
 
         buf.printf("Script ");
 
-        if (JSAtom *name = script->function()->displayAtom()) {
+        if (JSAtom *name = script->functionNonDelazifying()->displayAtom()) {
             buf.putString(name);
             buf.printf(" ");
         }
 
         buf.printf("(%s:%d) has variables entrained by ", script->filename(), script->lineno());
 
-        if (JSAtom *name = innerScript->function()->displayAtom()) {
+        if (JSAtom *name = innerScript->functionNonDelazifying()->displayAtom()) {
             buf.putString(name);
             buf.printf(" ");
         }
@@ -2328,9 +2329,12 @@ AnalyzeEntrainedVariablesInScript(JSContext *cx, HandleScript script, HandleScri
             JSObject *obj = objects->vector[i];
             if (obj->is<JSFunction>() && obj->as<JSFunction>().isInterpreted()) {
                 JSFunction *fun = &obj->as<JSFunction>();
-                RootedScript innerInnerScript(cx, fun->nonLazyScript());
-                if (!AnalyzeEntrainedVariablesInScript(cx, script, innerInnerScript))
+                RootedScript innerInnerScript(cx, fun->getOrCreateScript(cx));
+                if (!innerInnerScript ||
+                    !AnalyzeEntrainedVariablesInScript(cx, script, innerInnerScript))
+                {
                     return false;
+                }
             }
         }
     }
@@ -2364,7 +2368,7 @@ js::AnalyzeEntrainedVariables(JSContext *cx, HandleScript script)
             if (!innerScript)
                 return false;
 
-            if (script->function() && script->function()->isHeavyweight()) {
+            if (script->functionDelazifying() && script->functionDelazifying()->isHeavyweight()) {
                 if (!AnalyzeEntrainedVariablesInScript(cx, script, innerScript))
                     return false;
             }

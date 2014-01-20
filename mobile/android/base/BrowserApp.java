@@ -12,6 +12,7 @@ import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.favicons.LoadFaviconTask;
+import org.mozilla.gecko.favicons.decoders.IconDirectoryEntry;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
@@ -121,6 +122,7 @@ abstract public class BrowserApp extends GeckoApp
     private View mHomePagerContainer;
     protected Telemetry.Timer mAboutHomeStartupTimer = null;
     private ActionModeCompat mActionMode;
+    private boolean mShowActionModeEndAnimation = false;
 
     private static final int GECKO_TOOLS_MENU = -1;
     private static final int ADDON_MENU_OFFSET = 1000;
@@ -594,6 +596,9 @@ abstract public class BrowserApp extends GeckoApp
                 return true;
             }
         });
+
+        // Set the maximum bits-per-pixel the favicon system cares about.
+        IconDirectoryEntry.setMaxBPP(GeckoAppShell.getScreenDepth());
     }
 
     @Override
@@ -786,11 +791,11 @@ abstract public class BrowserApp extends GeckoApp
             }
 
             final OnFaviconLoadedListener listener = new GeckoAppShell.CreateShortcutFaviconLoadedListener(url, title);
-            Favicons.getFaviconForSize(url,
-                                       tab.getFaviconURL(),
-                                       Integer.MAX_VALUE,
-                                       LoadFaviconTask.FLAG_PERSIST,
-                                       listener);
+            Favicons.getSizedFavicon(url,
+                    tab.getFaviconURL(),
+                    Integer.MAX_VALUE,
+                    LoadFaviconTask.FLAG_PERSIST,
+                    listener);
             return true;
         }
 
@@ -1382,8 +1387,6 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     private void openUrlAndStopEditing(String url, String searchEngine, boolean newTab) {
-        mBrowserToolbar.setProgressVisibility(true);
-
         int flags = Tabs.LOADURL_NONE;
         if (newTab) {
             flags |= Tabs.LOADURL_NEW_TAB;
@@ -1415,16 +1418,9 @@ abstract public class BrowserApp extends GeckoApp
         final int tabFaviconSize = getResources().getDimensionPixelSize(R.dimen.browser_toolbar_favicon_size);
 
         int flags = (tab.isPrivate() || tab.getErrorType() != Tab.ErrorType.NONE) ? 0 : LoadFaviconTask.FLAG_PERSIST;
-        int id = Favicons.getFaviconForSize(tab.getURL(), tab.getFaviconURL(), tabFaviconSize, flags, sFaviconLoadedListener);
+        int id = Favicons.getSizedFavicon(tab.getURL(), tab.getFaviconURL(), tabFaviconSize, flags, sFaviconLoadedListener);
 
         tab.setFaviconLoadId(id);
-        if (id != Favicons.LOADED &&
-            Tabs.getInstance().isSelectedTab(tab)) {
-            // We're loading the current tab's favicon from somewhere
-            // other than the cache.
-            // Display the globe favicon until then.
-            mBrowserToolbar.showDefaultFavicon();
-        }
     }
 
     private void maybeCancelFaviconLoad(Tab tab) {
@@ -2050,6 +2046,8 @@ abstract public class BrowserApp extends GeckoApp
                     if (isDynamicToolbarEnabled()) {
                         mLayerView.getLayerMarginsAnimator().hideMargins(true);
                         mLayerView.getLayerMarginsAnimator().setMaxMargins(0, 0, 0, 0);
+                    } else {
+                        setToolbarMargin(0);
                     }
                 } else {
                     mViewFlipper.setVisibility(View.VISIBLE);
@@ -2514,7 +2512,7 @@ abstract public class BrowserApp extends GeckoApp
     @Override
     protected String getDefaultProfileName() {
         String profile = GeckoProfile.findDefaultProfile(this);
-        return (profile != null ? profile : "default");
+        return (profile != null ? profile : GeckoProfile.DEFAULT_PROFILE);
     }
 
     /**
@@ -2557,6 +2555,7 @@ abstract public class BrowserApp extends GeckoApp
             if (isDynamicToolbarEnabled() && !margins.areMarginsShown()) {
                 margins.setMaxMargins(0, mViewFlipper.getHeight(), 0, 0);
                 margins.showMargins(false);
+                mShowActionModeEndAnimation = true;
             } else {
                 // Otherwise, we animate the actionbar itself
                 mActionBar.animateIn();
@@ -2583,7 +2582,16 @@ abstract public class BrowserApp extends GeckoApp
 
         mActionMode.finish();
         mActionMode = null;
-        mLayerView.getLayerMarginsAnimator().setMarginsPinned(false);
+        final LayerMarginsAnimator margins = mLayerView.getLayerMarginsAnimator();
+        margins.setMarginsPinned(false);
+
         mViewFlipper.showPrevious();
+
+        // Only slide the urlbar out if it was hidden when the action mode started
+        // Don't animate hiding it so that there's no flash as we switch back to url mode
+        if (mShowActionModeEndAnimation) {
+            margins.hideMargins(true);
+            mShowActionModeEndAnimation = false;
+        }
     }
 }

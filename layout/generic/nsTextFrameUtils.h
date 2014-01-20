@@ -45,7 +45,7 @@ public:
     TEXT_HAS_TRAILING_BREAK  = 0x4000000,
 
     // This is set if the textrun was created for a textframe whose
-    // TEXT_IS_IN_SINGLE_CHAR_MI flag is set.  This occurs if the textframe
+    // NS_FRAME_IS_IN_SINGLE_CHAR_MI flag is set.  This occurs if the textframe
     // belongs to a MathML <mi> element whose embedded text consists of a
     // single character.
     TEXT_IS_SINGLE_CHAR_MI   = 0x8000000
@@ -100,14 +100,14 @@ public:
                                   char16_t* aOutput,
                                   CompressionMode aCompression,
                                   uint8_t * aIncomingFlags,
-                                  gfxSkipCharsBuilder* aSkipChars,
+                                  gfxSkipChars* aSkipChars,
                                   uint32_t* aAnalysisFlags);
 
   static uint8_t* TransformText(const uint8_t* aText, uint32_t aLength,
                                 uint8_t* aOutput,
                                 CompressionMode aCompression,
                                 uint8_t * aIncomingFlags,
-                                gfxSkipCharsBuilder* aSkipChars,
+                                gfxSkipChars* aSkipChars,
                                 uint32_t* aAnalysisFlags);
 
   static void

@@ -30,7 +30,7 @@ specialpowers.specialPowersObserver = new specialpowers.SpecialPowersObserver();
 specialpowers.specialPowersObserver.init();
 
 Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");  
+Cu.import("resource://gre/modules/NetUtil.jsm");
 
 dump("module");
 
@@ -310,7 +310,7 @@ MarionetteServerConnection.prototype = {
 
   /**
    * Send ack to client
-   * 
+   *
    * @param string command_id
    *        Unique identifier assigned to the client's request.
    *        Used to distinguish the asynchronous responses.
@@ -339,7 +339,7 @@ MarionetteServerConnection.prototype = {
 
   /**
    * Gets the current active window
-   * 
+   *
    * @return nsIDOMWindow
    */
   getCurrentWindow: function MDA_getCurrentWindow() {
@@ -375,7 +375,7 @@ MarionetteServerConnection.prototype = {
 
   /**
    * Create a new BrowserObj for window and add to known browsers
-   * 
+   *
    * @param nsIDOMWindow win
    *        Window for which we will create a BrowserObj
    *
@@ -396,10 +396,10 @@ MarionetteServerConnection.prototype = {
   },
 
   /**
-   * Start a new session in a new browser. 
+   * Start a new session in a new browser.
    *
-   * If newSession is true, we will switch focus to the start frame 
-   * when it registers. Also, if it is in desktop, then a new tab 
+   * If newSession is true, we will switch focus to the start frame
+   * when it registers. Also, if it is in desktop, then a new tab
    * with the start page uri (about:blank) will be opened.
    *
    * @param nsIDOMWindow win
@@ -493,7 +493,7 @@ MarionetteServerConnection.prototype = {
   /**
    * Create a new session. This creates a BrowserObj.
    *
-   * In a desktop environment, this opens a new 'about:blank' tab for 
+   * In a desktop environment, this opens a new 'about:blank' tab for
    * the client to test in.
    *
    */
@@ -508,7 +508,7 @@ MarionetteServerConnection.prototype = {
       let win = this.getCurrentWindow();
       if (!win ||
           (appName == "Firefox" && !win.gBrowser) ||
-          (appName == "Fennec" && !win.BrowserApp)) { 
+          (appName == "Fennec" && !win.BrowserApp)) {
         checkTimer.initWithCallback(waitForWindow.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
       }
       else {
@@ -546,9 +546,13 @@ MarionetteServerConnection.prototype = {
           'javascriptEnabled': true,
           'nativeEvents': false,
           'platform': Services.appinfo.OS,
+          'platformName': Services.appinfo.OS,
+          'platformVersion': Services.appinfo.platformVersion,
+          'secureSsl': false,
           'device': qemu == "1" ? "qemu" : (!device ? "desktop" : device),
           'rotatable': rotatable,
-          'takesScreenshot': false,
+          'takesScreenshot': true,
+          'takesElementScreenshot': true,
           'version': Services.appinfo.version
     };
 
@@ -697,7 +701,7 @@ MarionetteServerConnection.prototype = {
     }
 
     if (this.importedScripts.exists()) {
-      let stream = Cc["@mozilla.org/network/file-input-stream;1"].  
+      let stream = Cc["@mozilla.org/network/file-input-stream;1"].
                     createInstance(Ci.nsIFileInputStream);
       stream.init(this.importedScripts, -1, 0, 0);
       let data = NetUtil.readInputStreamToString(stream, stream.available());
@@ -726,7 +730,7 @@ MarionetteServerConnection.prototype = {
    *        'script' member is the script to run
    *        'args' member holds the arguments to the script
    * @param boolean directInject
-   *        if true, it will be run directly and not as a 
+   *        if true, it will be run directly and not as a
    *        function body
    */
   execute: function MDA_execute(aRequest, directInject) {
@@ -736,7 +740,7 @@ MarionetteServerConnection.prototype = {
     let script;
     this.logRequest("execute", aRequest);
     if (aRequest.parameters.newSandbox == undefined) {
-      //if client does not send a value in newSandbox, 
+      //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
       aRequest.parameters.newSandbox = true;
     }
@@ -803,7 +807,7 @@ MarionetteServerConnection.prototype = {
       }
       else {
         script = "let func = function() {" +
-                       aRequest.parameters.script + 
+                       aRequest.parameters.script +
                      "};" +
                      "func.apply(null, __marionetteParams);";
       }
@@ -852,7 +856,7 @@ MarionetteServerConnection.prototype = {
 
     //all pure JS scripts will need to call Marionette.finish() to complete the test.
     if (aRequest.newSandbox == undefined) {
-      //if client does not send a value in newSandbox, 
+      //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
       aRequest.newSandbox = true;
     }
@@ -883,17 +887,17 @@ MarionetteServerConnection.prototype = {
 
   /**
    * This function is used by executeAsync and executeJSScript to execute a script
-   * in a sandbox. 
-   * 
+   * in a sandbox.
+   *
    * For executeJSScript, it will return a message only when the finish() method is called.
-   * For executeAsync, it will return a response when marionetteScriptFinished/arguments[arguments.length-1] 
+   * For executeAsync, it will return a response when marionetteScriptFinished/arguments[arguments.length-1]
    * method is called, or if it times out.
    *
    * @param object aRequest
    *        'script' member holds the script to execute
    *        'args' member holds the arguments for the script
    * @param boolean directInject
-   *        if true, it will be run directly and not as a 
+   *        if true, it will be run directly and not as a
    *        function body
    */
   executeWithCallback: function MDA_executeWithCallback(aRequest, directInject) {
@@ -903,7 +907,7 @@ MarionetteServerConnection.prototype = {
     let script;
     this.logRequest("executeWithCallback", aRequest);
     if (aRequest.parameters.newSandbox == undefined) {
-      //if client does not send a value in newSandbox, 
+      //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
       aRequest.parameters.newSandbox = true;
     }
@@ -1064,7 +1068,7 @@ MarionetteServerConnection.prototype = {
           sendOk(command_id);
           return;
         }
-        else{ 
+        else{
           checkTimer.initWithCallback(checkLoad, 100, Ci.nsITimer.TYPE_ONE_SHOT);
         }
       }
@@ -1121,7 +1125,7 @@ MarionetteServerConnection.prototype = {
     this.command_id = this.getCommandId();
     if (this.context == "chrome"){
       let curWindow = this.getCurrentWindow();
-      let XMLSerializer = curWindow.XMLSerializer; 
+      let XMLSerializer = curWindow.XMLSerializer;
       let pageSource = new XMLSerializer().serializeToString(curWindow.document);
       this.sendResponse(pageSource, this.command_id);
     }
@@ -1172,7 +1176,7 @@ MarionetteServerConnection.prototype = {
   getWindows: function MDA_getWindows() {
     this.command_id = this.getCommandId();
     let res = [];
-    let winEn = this.getWinEnumerator(); 
+    let winEn = this.getWinEnumerator();
     while(winEn.hasMoreElements()) {
       let foundWin = winEn.getNext();
       let winId = foundWin.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).outerWindowID;
@@ -1191,7 +1195,7 @@ MarionetteServerConnection.prototype = {
    */
   switchToWindow: function MDA_switchToWindow(aRequest) {
     let command_id = this.command_id = this.getCommandId();
-    let winEn = this.getWinEnumerator(); 
+    let winEn = this.getWinEnumerator();
     while(winEn.hasMoreElements()) {
       let foundWin = winEn.getNext();
       let winId = foundWin.QueryInterface(Ci.nsIInterfaceRequestor)
@@ -1238,7 +1242,7 @@ MarionetteServerConnection.prototype = {
    * @param object aRequest
    *        'element' is the element to switch to
    *        'id' if element is not set, then this
-   *                holds either the id, name or index 
+   *                holds either the id, name or index
    *                of the frame to switch to
    */
   switchToFrame: function MDA_switchToFrame(aRequest) {
@@ -1275,7 +1279,7 @@ MarionetteServerConnection.prototype = {
           let numFrames = curWindow.frames.length;
           for (let i = 0; i < numFrames; i++) {
             if (curWindow.frames[i].frameElement == wantedFrame) {
-              curWindow = curWindow.frames[i]; 
+              curWindow = curWindow.frames[i];
               this.curFrame = curWindow;
               if (aRequest.parameters.focus) {
                 this.curFrame.focus();
@@ -1617,7 +1621,7 @@ MarionetteServerConnection.prototype = {
    *
    * @param object aRequest
    *        'id' member holds the reference id to
-   *        the element that will be inspected 
+   *        the element that will be inspected
    */
   getElementText: function MDA_getElementText(aRequest) {
     let command_id = this.command_id = this.getCommandId();
@@ -1647,7 +1651,7 @@ MarionetteServerConnection.prototype = {
    *
    * @param object aRequest
    *        'id' member holds the reference id to
-   *        the element that will be inspected 
+   *        the element that will be inspected
    */
   getElementTagName: function MDA_getElementTagName(aRequest) {
     let command_id = this.command_id = this.getCommandId();
@@ -1673,7 +1677,7 @@ MarionetteServerConnection.prototype = {
    *
    * @param object aRequest
    *        'id' member holds the reference id to
-   *        the element that will be checked 
+   *        the element that will be checked
    */
   isElementDisplayed: function MDA_isElementDisplayed(aRequest) {
     let command_id = this.command_id = this.getCommandId();
@@ -1864,7 +1868,7 @@ MarionetteServerConnection.prototype = {
    *
    * @param object aRequest
    *        'id' member holds the reference id to
-   *        the element that will be cleared 
+   *        the element that will be cleared
    */
   clearElement: function MDA_clearElement(aRequest) {
     let command_id = this.command_id = this.getCommandId();
@@ -1936,14 +1940,12 @@ MarionetteServerConnection.prototype = {
   },
 
   /**
-   * Closes the Browser Window.
+   * Close the current window, ending the session if it's the last
+   * window currently open.
    *
-   * If it is B2G it returns straight away and does not do anything
-   *
-   * If is desktop it calculates how many windows are open and if there is only 
-   * 1 then it deletes the session otherwise it closes the window
+   * On B2G this method is a noop and will return immediately.
    */
-  closeWindow: function MDA_closeWindow() {
+  close: function MDA_close() {
     let command_id = this.command_id = this.getCommandId();
     if (appName == "B2G") {
       // We can't close windows so just return
@@ -1959,20 +1961,21 @@ MarionetteServerConnection.prototype = {
       }
 
       // if there is only 1 window left, delete the session
-      if (numOpenWindows === 1){
+      if (numOpenWindows === 1) {
         try {
           this.sessionTearDown();
         }
         catch (e) {
-          this.sendError("Could not clear session", 500, e.name + ": " + e.message, command_id);
+          this.sendError("Could not clear session", 500,
+                         e.name + ": " + e.message, command_id);
           return;
         }
         this.sendOk(command_id);
         return;
       }
 
-      try{
-        this.messageManager.removeDelayedFrameScript(FRAME_SCRIPT); 
+      try {
+        this.messageManager.removeDelayedFrameScript(FRAME_SCRIPT);
         this.getCurrentWindow().close();
         this.sendOk(command_id);
       }
@@ -1981,11 +1984,11 @@ MarionetteServerConnection.prototype = {
                        command_id);
       }
     }
-  }, 
+  },
 
   /**
    * Deletes the session.
-   * 
+   *
    * If it is a desktop environment, it will close the session's tab and close all listeners
    *
    * If it is a B2G environment, it will make the main content listener sleep, and close
@@ -2013,7 +2016,7 @@ MarionetteServerConnection.prototype = {
       }
       let winEnum = this.getWinEnumerator();
       while (winEnum.hasMoreElements()) {
-        winEnum.getNext().messageManager.removeDelayedFrameScript(FRAME_SCRIPT); 
+        winEnum.getNext().messageManager.removeDelayedFrameScript(FRAME_SCRIPT);
       }
       this.curBrowser.frameManager.removeMessageManagerListeners(this.globalMessageManager);
     }
@@ -2087,7 +2090,7 @@ MarionetteServerConnection.prototype = {
       return;
     }
   },
-  
+
   importScript: function MDA_importScript(aRequest) {
     let command_id = this.command_id = this.getCommandId();
     let converter =
@@ -2279,7 +2282,7 @@ MarionetteServerConnection.prototype = {
         // This code processes the content listener's registration information
         // and either accepts the listener, or ignores it
         let nullPrevious = (this.curBrowser.curFrameId == null);
-        let listenerWindow = 
+        let listenerWindow =
                             Services.wm.getOuterWindowWithId(message.json.value);
 
         //go in here if we're already in a remote frame.
@@ -2289,7 +2292,7 @@ MarionetteServerConnection.prototype = {
           // the parent process here, since each process maintains its own
           // independent window list.  So, it will either be null (!listenerWindow)
           // if we're already in a remote frame,
-          // or it will point to some random window, which will hopefully 
+          // or it will point to some random window, which will hopefully
           // cause an href mismatch.  Currently this only happens
           // in B2G for OOP frames registered in Marionette:switchToFrame, so
           // we'll acknowledge the switchToFrame message here.
@@ -2379,7 +2382,8 @@ MarionetteServerConnection.prototype.requestTypes = {
   "importScript": MarionetteServerConnection.prototype.importScript,
   "clearImportedScripts": MarionetteServerConnection.prototype.clearImportedScripts,
   "getAppCacheStatus": MarionetteServerConnection.prototype.getAppCacheStatus,
-  "closeWindow": MarionetteServerConnection.prototype.closeWindow,
+  "close": MarionetteServerConnection.prototype.close,
+  "closeWindow": MarionetteServerConnection.prototype.close,  // deprecated
   "setTestName": MarionetteServerConnection.prototype.setTestName,
   "screenShot": MarionetteServerConnection.prototype.screenShot,
   "addCookie": MarionetteServerConnection.prototype.addCookie,
@@ -2438,7 +2442,7 @@ BrowserObj.prototype = {
   /**
    * Called when we start a session with this browser.
    *
-   * In a desktop environment, if newTab is true, it will start 
+   * In a desktop environment, if newTab is true, it will start
    * a new 'about:blank' tab and change focus to this tab.
    *
    * This will also set the active messagemanager for this object
@@ -2505,7 +2509,7 @@ BrowserObj.prototype = {
 
   /**
    * Registers a new frame, and sets its current frame id to this frame
-   * if it is not already assigned, and if a) we already have a session 
+   * if it is not already assigned, and if a) we already have a session
    * or b) we're starting a new session and it is the right start frame.
    *
    * @param string uid

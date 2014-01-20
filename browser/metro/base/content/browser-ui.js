@@ -368,12 +368,16 @@ var BrowserUI = {
 
     Task.spawn(function() {
       let postData = {};
+      let webNav = Ci.nsIWebNavigation;
+      let flags = webNav.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
+                  webNav.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
       aURI = yield Browser.getShortcutOrURI(aURI, postData);
-      Browser.loadURI(aURI, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP, postData: postData });
+      Browser.loadURI(aURI, { flags: flags, postData: postData });
 
       // Delay doing the fixup so the raw URI is passed to loadURIWithFlags
       // and the proper third-party fixup can be done
-      let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
+      let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP | 
+                       Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS;
       let uri = gURIFixup.createFixupURI(aURI, fixupFlags);
       gHistSvc.markPageAsTyped(uri);
 
@@ -970,6 +974,7 @@ var BrowserUI = {
       case "cmd_undoCloseTab":
       case "cmd_actions":
       case "cmd_panel":
+      case "cmd_reportingCrashesSubmitURLs":
       case "cmd_flyout_back":
       case "cmd_sanitize":
       case "cmd_volumeLeft":
@@ -1077,6 +1082,10 @@ var BrowserUI = {
       case "cmd_flyout_back":
         FlyoutPanelsUI.onBackButton();
         break;
+      case "cmd_reportingCrashesSubmitURLs":
+        let urlCheckbox = document.getElementById("prefs-reporting-submitURLs");
+        Services.prefs.setBoolPref('app.crashreporter.submitURLs', urlCheckbox.checked);
+        break;
       case "cmd_panel":
         PanelUI.toggle();
         break;
@@ -1095,6 +1104,9 @@ var BrowserUI = {
     let message = bundle.GetStringFromName("clearPrivateData.message");
     let clearbutton = bundle.GetStringFromName("clearPrivateData.clearButton");
 
+    let prefsClearButton = document.getElementById("prefs-clear-data");
+    prefsClearButton.disabled = true; 
+
     let buttonPressed = Services.prompt.confirmEx(
                           null,
                           title,
@@ -1111,6 +1123,8 @@ var BrowserUI = {
     if (buttonPressed === 0) {
       SanitizeUI.onSanitize();
     }
+
+    prefsClearButton.disabled = false;
   },
 };
 

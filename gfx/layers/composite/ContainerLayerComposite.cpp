@@ -176,7 +176,7 @@ static void DrawVelGraph(const nsIntRect& aClipRect,
 
   float opacity = 1.0;
   EffectChain effects;
-  effects.mPrimaryEffect = new EffectSolidColor(gfx::Color(0.2,0,0,1));
+  effects.mPrimaryEffect = new EffectSolidColor(gfx::Color(0.2f,0,0,1));
   compositor->DrawQuad(graphRect,
                        clipRect,
                        effects,
@@ -318,6 +318,12 @@ ContainerRender(ContainerT* aContainer,
       // Composer2D will compose this layer so skip GPU composition
       // this time & reset composition flag for next composition phase
       layerToRender->SetLayerComposited(false);
+      if (layerToRender->GetClearFB()) {
+        // Clear layer's visible rect on FrameBuffer with transparent pixels
+        gfx::Rect aRect(clipRect.x, clipRect.y, clipRect.width, clipRect.height);
+        compositor->clearFBRect(&aRect);
+        layerToRender->SetClearFB(false);
+      }
     } else {
       layerToRender->RenderLayer(clipRect);
     }
@@ -333,7 +339,7 @@ ContainerRender(ContainerT* aContainer,
     // Unbind the current surface and rebind the previous one.
 #ifdef MOZ_DUMP_PAINTING
     if (gfxUtils::sDumpPainting) {
-      nsRefPtr<gfxImageSurface> surf = surface->Dump(aManager->GetCompositor());
+      RefPtr<gfx::DataSourceSurface> surf = surface->Dump(aManager->GetCompositor());
       WriteSnapshotToDumpFile(aContainer, surf);
     }
 #endif

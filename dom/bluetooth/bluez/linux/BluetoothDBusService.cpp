@@ -2370,6 +2370,7 @@ BluetoothDBusService::SetProperty(BluetoothObjectType aType,
   int type;
   int tmp_int;
   void* val;
+  const char* tempStr;
   nsCString str;
   if (aValue.value().type() == BluetoothValue::Tuint32_t) {
     tmp_int = aValue.value().get_uint32_t();
@@ -2377,7 +2378,7 @@ BluetoothDBusService::SetProperty(BluetoothObjectType aType,
     type = DBUS_TYPE_UINT32;
   } else if (aValue.value().type() == BluetoothValue::TnsString) {
     str = NS_ConvertUTF16toUTF8(aValue.value().get_nsString());
-    const char* tempStr = str.get();
+    tempStr = str.get();
     val = &tempStr;
     type = DBUS_TYPE_STRING;
   } else if (aValue.value().type() == BluetoothValue::Tbool) {
@@ -2886,6 +2887,11 @@ BluetoothDBusService::GetServiceChannel(const nsAString& aDeviceAddress,
 {
   MOZ_ASSERT(NS_IsMainThread());
 
+  if (!IsReady()) {
+    NS_NAMED_LITERAL_STRING(errorStr, "Bluetooth service is not ready yet!");
+    return NS_OK;
+  }
+
   MOZ_ASSERT(!sAdapterPath.IsEmpty());
   nsString objectPath(GetObjectPathFromAddress(sAdapterPath, aDeviceAddress));
 
@@ -3113,6 +3119,13 @@ BluetoothDBusService::SendMetaData(const nsAString& aTitle,
   nsCString tempMediaNumber = EmptyCString();
   nsCString tempTotalMediaCount = EmptyCString();
   nsCString tempDuration = EmptyCString();
+
+  // We currently don't support genre field in music player.
+  // In order to send media metadata through AVRCP, we set genre to an empty
+  // string to match the BlueZ method "UpdateMetaData" with signature "sssssss",
+  // which takes genre field as the last parameter.
+  nsCString tempGenre = EmptyCString();
+
   if (aMediaNumber >= 0) {
     tempMediaNumber.AppendInt(aMediaNumber);
   }
@@ -3129,6 +3142,7 @@ BluetoothDBusService::SendMetaData(const nsAString& aTitle,
   const char* mediaNumber = tempMediaNumber.get();
   const char* totalMediaCount = tempTotalMediaCount.get();
   const char* duration = tempDuration.get();
+  const char* genre = tempGenre.get();
 
   nsAutoString prevTitle, prevAlbum;
   a2dp->GetTitle(prevTitle);
@@ -3155,6 +3169,7 @@ BluetoothDBusService::SendMetaData(const nsAString& aTitle,
     DBUS_TYPE_STRING, &mediaNumber,
     DBUS_TYPE_STRING, &totalMediaCount,
     DBUS_TYPE_STRING, &duration,
+    DBUS_TYPE_STRING, &genre,
     DBUS_TYPE_INVALID);
   NS_ENSURE_TRUE_VOID(ret);
 

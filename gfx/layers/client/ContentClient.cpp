@@ -5,7 +5,6 @@
 
 #include "mozilla/layers/ContentClient.h"
 #include "BasicLayers.h"                // for BasicLayerManager
-#include "Layers.h"                     // for ThebesLayer, Layer, etc
 #include "gfxColor.h"                   // for gfxRGBA
 #include "gfxContext.h"                 // for gfxContext, etc
 #include "gfxPlatform.h"                // for gfxPlatform
@@ -540,9 +539,36 @@ ContentClientDoubleBuffered::SwapBuffers(const nsIntRegion& aFrontUpdatedRegion)
 }
 
 void
-ContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
+ContentClientDoubleBuffered::PrepareFrame()
+{
+  mIsNewBuffer = false;
+
+  if (!mFrontAndBackBufferDiffer) {
+    return;
+  }
+
+  if (mDidSelfCopy) {
+    // We can't easily draw our front buffer into us, since we're going to be
+    // copying stuff around anyway it's easiest if we just move our situation
+    // to non-rotated while we're at it. If this situation occurs we'll have
+    // hit a self-copy path in PaintThebes before as well anyway.
+    mBufferRect.MoveTo(mFrontBufferRect.TopLeft());
+    mBufferRotation = nsIntPoint();
+    return;
+  }
+  mBufferRect = mFrontBufferRect;
+  mBufferRotation = mFrontBufferRotation;
+}
+
+// Sync front/back buffers content
+// After executing, the new back buffer has the same (interesting) pixels as
+// the new front buffer, and mValidRegion et al. are correct wrt the new
+// back buffer (i.e. as they were for the old back buffer)
+void
+ContentClientDoubleBuffered::FinalizeFrame(const nsIntRegion& aRegionToDraw)
 {
   if (!mFrontAndBackBufferDiffer) {
+    MOZ_ASSERT(!mDidSelfCopy, "If we have to copy the world, then our buffers are different, right?");
     return;
   }
   MOZ_ASSERT(mFrontClient);
@@ -554,29 +580,20 @@ ContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
                   mFrontUpdatedRegion.GetBounds().width,
                   mFrontUpdatedRegion.GetBounds().height));
 
+  mFrontAndBackBufferDiffer = false;
+
   nsIntRegion updateRegion = mFrontUpdatedRegion;
-
-  // This is a tricky trade off, we're going to get stuff out of our
-  // frontbuffer now, but the next PaintThebes might throw it all (or mostly)
-  // away if the visible region has changed. This is why in reality we want
-  // this code integrated with PaintThebes to always do the optimal thing.
-
   if (mDidSelfCopy) {
     mDidSelfCopy = false;
-    // We can't easily draw our front buffer into us, since we're going to be
-    // copying stuff around anyway it's easiest if we just move our situation
-    // to non-rotated while we're at it. If this situation occurs we'll have
-    // hit a self-copy path in PaintThebes before as well anyway.
-    mBufferRect.MoveTo(mFrontBufferRect.TopLeft());
-    mBufferRotation = nsIntPoint();
     updateRegion = mBufferRect;
-  } else {
-    mBufferRect = mFrontBufferRect;
-    mBufferRotation = mFrontBufferRotation;
   }
 
-  mIsNewBuffer = false;
-  mFrontAndBackBufferDiffer = false;
+  // No point in sync'ing what we are going to draw over anyway. And if there is
+  // nothing to sync at all, there is nothing to do and we can go home early.
+  updateRegion.Sub(updateRegion, aRegionToDraw);
+  if (updateRegion.IsEmpty()) {
+    return;
+  }
 
   // We need to ensure that we lock these two buffers in the same
   // order as the compositor to prevent deadlocks.
@@ -612,13 +629,16 @@ ContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
 {
   DrawTarget* destDT =
     BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_BLACK);
+  if (!destDT) {
+    return;
+  }
 
   bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
   if (isClippingCheap) {
     gfxUtils::ClipToRegion(destDT, aUpdateRegion);
   }
 
-  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, OP_SOURCE);
+  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, CompositionOp::OP_SOURCE);
   if (isClippingCheap) {
     destDT->PopClip();
   }
@@ -628,13 +648,16 @@ ContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
     MOZ_ASSERT(HaveBufferOnWhite());
     DrawTarget* destDT =
       BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
+    if (!destDT) {
+      return;
+    }
 
     bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
     if (isClippingCheap) {
       gfxUtils::ClipToRegion(destDT, aUpdateRegion);
     }
 
-    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, OP_SOURCE);
+    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, CompositionOp::OP_SOURCE);
     if (isClippingCheap) {
       destDT->PopClip();
     }
@@ -765,18 +788,43 @@ private:
   DeprecatedTextureClient* mTexture;
 };
 
+
 void
-DeprecatedContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
+DeprecatedContentClientDoubleBuffered::PrepareFrame()
 {
   mIsNewBuffer = false;
 
   if (!mFrontAndBackBufferDiffer) {
     return;
   }
+
+  if (mDidSelfCopy) {
+    // We can't easily draw our front buffer into us, since we're going to be
+    // copying stuff around anyway it's easiest if we just move our situation
+    // to non-rotated while we're at it. If this situation occurs we'll have
+    // hit a self-copy path in PaintThebes before as well anyway.
+    mBufferRect.MoveTo(mFrontBufferRect.TopLeft());
+    mBufferRotation = nsIntPoint();
+
+    return;
+  }
+
+  mBufferRect = mFrontBufferRect;
+  mBufferRotation = mFrontBufferRotation;
+}
+
+void
+DeprecatedContentClientDoubleBuffered::FinalizeFrame(const nsIntRegion& aRegionToDraw)
+{
+  if (!mFrontAndBackBufferDiffer) {
+    return;
+  }
+  mFrontAndBackBufferDiffer = false;
+
   MOZ_ASSERT(mFrontClient);
-  MOZ_ASSERT(mFrontClient->GetAccessMode() == DeprecatedTextureClient::ACCESS_READ_ONLY);
+  MOZ_ASSERT(mFrontClient->GetAccessMode() != DeprecatedTextureClient::ACCESS_NONE);
   MOZ_ASSERT(!mFrontClientOnWhite ||
-             mFrontClientOnWhite->GetAccessMode() == DeprecatedTextureClient::ACCESS_READ_ONLY);
+             mFrontClientOnWhite->GetAccessMode() != DeprecatedTextureClient::ACCESS_NONE);
 
   MOZ_LAYERS_LOG(("BasicShadowableThebes(%p): reading back <x=%d,y=%d,w=%d,h=%d>",
                   this,
@@ -786,24 +834,16 @@ DeprecatedContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
                   mFrontUpdatedRegion.GetBounds().height));
 
   nsIntRegion updateRegion = mFrontUpdatedRegion;
-
-  // This is a tricky trade off, we're going to get stuff out of our
-  // frontbuffer now, but the next PaintThebes might throw it all (or mostly)
-  // away if the visible region has changed. This is why in reality we want
-  // this code integrated with PaintThebes to always do the optimal thing.
-
   if (mDidSelfCopy) {
-    mDidSelfCopy = false;
-    // We can't easily draw our front buffer into us, since we're going to be
-    // copying stuff around anyway it's easiest if we just move our situation
-    // to non-rotated while we're at it. If this situation occurs we'll have
-    // hit a self-copy path in PaintThebes before as well anyway.
-    mBufferRect.MoveTo(mFrontBufferRect.TopLeft());
-    mBufferRotation = nsIntPoint();
     updateRegion = mBufferRect;
-  } else {
-    mBufferRect = mFrontBufferRect;
-    mBufferRotation = mFrontBufferRotation;
+    mDidSelfCopy = false;
+  }
+
+  // No point in sync'ing what we are going to draw over anyway. And if there is
+  // nothing to sync at all, there is nothing to do and we can go home early.
+  updateRegion.Sub(updateRegion, aRegionToDraw);
+  if (updateRegion.IsEmpty()) {
+    return;
   }
  
   AutoDeprecatedTextureClient autoTextureFront;
@@ -820,8 +860,6 @@ DeprecatedContentClientDoubleBuffered::SyncFrontBufferToBackBuffer()
 
   // We need to flush our buffers before we unlock our front textures
   FlushBuffers();
-
-  mFrontAndBackBufferDiffer = false;
 }
 
 void
@@ -839,7 +877,7 @@ DeprecatedContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer
     gfxUtils::ClipToRegion(destDT, aUpdateRegion);
   }
 
-  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, OP_SOURCE);
+  aSource.DrawBufferWithRotation(destDT, BUFFER_BLACK, 1.0, CompositionOp::OP_SOURCE);
   if (isClippingCheap) {
     destDT->PopClip();
   }
@@ -849,13 +887,16 @@ DeprecatedContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer
     MOZ_ASSERT(HaveBufferOnWhite());
     DrawTarget* destDT =
       BorrowDrawTargetForQuadrantUpdate(aUpdateRegion.GetBounds(), BUFFER_WHITE);
+    if (!destDT) {
+      return;
+    }
 
     bool isClippingCheap = IsClippingCheap(destDT, aUpdateRegion);
     if (isClippingCheap) {
       gfxUtils::ClipToRegion(destDT, aUpdateRegion);
     }
 
-    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, OP_SOURCE);
+    aSource.DrawBufferWithRotation(destDT, BUFFER_WHITE, 1.0, CompositionOp::OP_SOURCE);
     if (isClippingCheap) {
       destDT->PopClip();
     }
@@ -864,7 +905,7 @@ DeprecatedContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer
 }
 
 void
-ContentClientSingleBuffered::SyncFrontBufferToBackBuffer()
+ContentClientSingleBuffered::PrepareFrame()
 {
   if (!mFrontAndBackBufferDiffer) {
     return;
@@ -911,7 +952,7 @@ DeprecatedContentClientSingleBuffered::CreateFrontBufferAndNotify(const nsIntRec
 }
 
 void
-DeprecatedContentClientSingleBuffered::SyncFrontBufferToBackBuffer()
+DeprecatedContentClientSingleBuffered::PrepareFrame()
 {
   mIsNewBuffer = false;
   if (!mFrontAndBackBufferDiffer) {
@@ -969,7 +1010,6 @@ FillSurface(gfxASurface* aSurface, const nsIntRegion& aRegion,
 
 RotatedContentBuffer::PaintState
 ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
-                                           RotatedContentBuffer::ContentType aContentType,
                                            uint32_t aFlags)
 {
   mTextureInfo.mDeprecatedTextureHostFlags = 0;
@@ -980,15 +1020,18 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
 
   nsIntRegion validRegion = aLayer->GetValidRegion();
 
-  Layer::SurfaceMode mode;
-  ContentType contentType;
+  bool canUseOpaqueSurface = aLayer->CanUseOpaqueSurface();
+  ContentType contentType =
+    canUseOpaqueSurface ? GFX_CONTENT_COLOR :
+                          GFX_CONTENT_COLOR_ALPHA;
+
+  SurfaceMode mode;
   nsIntRegion neededRegion;
   bool canReuseBuffer;
   nsIntRect destBufferRect;
 
   while (true) {
     mode = aLayer->GetSurfaceMode();
-    contentType = aContentType;
     neededRegion = aLayer->GetVisibleRegion();
     // If we're going to resample, we need a buffer that's in clamp mode.
     canReuseBuffer = neededRegion.GetBounds().Size() <= mBufferRect.Size() &&
@@ -1009,11 +1052,11 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
       destBufferRect = neededRegion.GetBounds();
     }
 
-    if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
+    if (mode == SURFACE_COMPONENT_ALPHA) {
       if (!gfxPlatform::ComponentAlphaEnabled() ||
           !aLayer->GetParent() ||
           !aLayer->GetParent()->SupportsComponentAlphaChildren()) {
-        mode = Layer::SURFACE_SINGLE_CHANNEL_ALPHA;
+        mode = SURFACE_SINGLE_CHANNEL_ALPHA;
       } else {
         contentType = GFX_CONTENT_COLOR;
       }
@@ -1023,9 +1066,9 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
         (!neededRegion.GetBounds().IsEqualInterior(destBufferRect) ||
          neededRegion.GetNumRects() > 1)) {
       // The area we add to neededRegion might not be painted opaquely
-      if (mode == Layer::SURFACE_OPAQUE) {
+      if (mode == SURFACE_OPAQUE) {
         contentType = GFX_CONTENT_COLOR_ALPHA;
-        mode = Layer::SURFACE_SINGLE_CHANNEL_ALPHA;
+        mode = SURFACE_SINGLE_CHANNEL_ALPHA;
       }
       // For component alpha layers, we leave contentType as GFX_CONTENT_COLOR.
 
@@ -1036,7 +1079,7 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
 
     if (mHasBuffer &&
         (mContentType != contentType ||
-         (mode == Layer::SURFACE_COMPONENT_ALPHA) != mHasBufferOnWhite)) {
+         (mode == SURFACE_COMPONENT_ALPHA) != mHasBufferOnWhite)) {
       // We're effectively clearing the valid region, so we need to draw
       // the entire needed region now.
       result.mRegionToInvalidate = aLayer->GetValidRegion();
@@ -1079,7 +1122,7 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
   bool createdBuffer = false;
 
   uint32_t bufferFlags = canHaveRotation ? TEXTURE_ALLOW_REPEAT : 0;
-  if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
+  if (mode == SURFACE_COMPONENT_ALPHA) {
     bufferFlags |= TEXTURE_COMPONENT_ALPHA;
   }
   if (canReuseBuffer) {
@@ -1132,12 +1175,12 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
 
   if (createdBuffer) {
     if (mHasBuffer &&
-        (mode != Layer::SURFACE_COMPONENT_ALPHA || mHasBufferOnWhite)) {
+        (mode != SURFACE_COMPONENT_ALPHA || mHasBufferOnWhite)) {
       mTextureInfo.mDeprecatedTextureHostFlags = TEXTURE_HOST_COPY_PREVIOUS;
     }
 
     mHasBuffer = true;
-    if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
+    if (mode == SURFACE_COMPONENT_ALPHA) {
       mHasBufferOnWhite = true;
     }
     mBufferRect = destBufferRect;
@@ -1152,42 +1195,6 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
   invalidate.Sub(aLayer->GetValidRegion(), destBufferRect);
   result.mRegionToInvalidate.Or(result.mRegionToInvalidate, invalidate);
 
-  MOZ_ASSERT(!mLoanedDrawTarget);
-
-  // BeginUpdate is allowed to modify the given region,
-  // if it wants more to be repainted than we request.
-  if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
-    nsIntRegion drawRegionCopy = result.mRegionToDraw;
-    nsRefPtr<gfxASurface> onBlack = GetUpdateSurface(BUFFER_BLACK, drawRegionCopy);
-    nsRefPtr<gfxASurface> onWhite = GetUpdateSurface(BUFFER_WHITE, result.mRegionToDraw);
-    if (onBlack && onWhite) {
-      NS_ASSERTION(result.mRegionToDraw == drawRegionCopy,
-                   "BeginUpdate should always modify the draw region in the same way!");
-      FillSurface(onBlack, result.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(0.0, 0.0, 0.0, 1.0));
-      FillSurface(onWhite, result.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(1.0, 1.0, 1.0, 1.0));
-      MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
-      RefPtr<DrawTarget> onBlackDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onBlack, onBlack->GetSize().ToIntSize());
-      RefPtr<DrawTarget> onWhiteDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onWhite, onWhite->GetSize().ToIntSize());
-      mLoanedDrawTarget = Factory::CreateDualDrawTarget(onBlackDT, onWhiteDT);
-    } else {
-      mLoanedDrawTarget = nullptr;
-    }
-  } else {
-    nsRefPtr<gfxASurface> surf = GetUpdateSurface(BUFFER_BLACK, result.mRegionToDraw);
-    MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
-    mLoanedDrawTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(surf, surf->GetSize().ToIntSize());
-  }
-  if (!mLoanedDrawTarget) {
-    NS_WARNING("unable to get context for update");
-    return result;
-  }
-
-  result.mTarget = mLoanedDrawTarget;
-  mLoanedTransform = mLoanedDrawTarget->GetTransform();
-  mLoanedTransform.Translate(-drawBounds.x, -drawBounds.y);
-  result.mTarget->SetTransform(mLoanedTransform);
-  mLoanedTransform.Translate(drawBounds.x, drawBounds.y);
-
   // If we do partial updates, we have to clip drawing to the regionToDraw.
   // If we don't clip, background images will be fillrect'd to the region correctly,
   // while text or lines will paint outside of the regionToDraw. This becomes apparent
@@ -1196,11 +1203,62 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
   // newly exposed area. It would be wise to fix this glitch in any way to have simpler
   // clip and draw regions.
   result.mClip = CLIP_DRAW;
+  result.mMode = mode;
+
+  return result;
+}
+
+DrawTarget*
+ContentClientIncremental::BorrowDrawTargetForPainting(ThebesLayer* aLayer,
+                                                      const PaintState& aPaintState)
+{
+  if (!aPaintState.mMode) {
+    return nullptr;
+  }
+
+  DrawTarget* result = nullptr;
+
+  nsIntRect drawBounds = aPaintState.mRegionToDraw.GetBounds();
+  MOZ_ASSERT(!mLoanedDrawTarget);
+
+  // BeginUpdate is allowed to modify the given region,
+  // if it wants more to be repainted than we request.
+  if (aPaintState.mMode == SURFACE_COMPONENT_ALPHA) {
+    nsIntRegion drawRegionCopy = aPaintState.mRegionToDraw;
+    nsRefPtr<gfxASurface> onBlack = GetUpdateSurface(BUFFER_BLACK, drawRegionCopy);
+    nsRefPtr<gfxASurface> onWhite = GetUpdateSurface(BUFFER_WHITE, aPaintState.mRegionToDraw);
+    if (onBlack && onWhite) {
+      NS_ASSERTION(aPaintState.mRegionToDraw == drawRegionCopy,
+                   "BeginUpdate should always modify the draw region in the same way!");
+      FillSurface(onBlack, aPaintState.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(0.0, 0.0, 0.0, 1.0));
+      FillSurface(onWhite, aPaintState.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(1.0, 1.0, 1.0, 1.0));
+      MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
+      RefPtr<DrawTarget> onBlackDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onBlack, onBlack->GetSize().ToIntSize());
+      RefPtr<DrawTarget> onWhiteDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onWhite, onWhite->GetSize().ToIntSize());
+      mLoanedDrawTarget = Factory::CreateDualDrawTarget(onBlackDT, onWhiteDT);
+    } else {
+      mLoanedDrawTarget = nullptr;
+    }
+  } else {
+    nsRefPtr<gfxASurface> surf = GetUpdateSurface(BUFFER_BLACK, aPaintState.mRegionToDraw);
+    MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
+    mLoanedDrawTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(surf, surf->GetSize().ToIntSize());
+  }
+  if (!mLoanedDrawTarget) {
+    NS_WARNING("unable to get context for update");
+    return nullptr;
+  }
+
+  result = mLoanedDrawTarget;
+  mLoanedTransform = mLoanedDrawTarget->GetTransform();
+  mLoanedTransform.Translate(-drawBounds.x, -drawBounds.y);
+  result->SetTransform(mLoanedTransform);
+  mLoanedTransform.Translate(drawBounds.x, drawBounds.y);
 
   if (mContentType == GFX_CONTENT_COLOR_ALPHA) {
-    gfxUtils::ClipToRegion(result.mTarget, result.mRegionToDraw);
-    nsIntRect bounds = result.mRegionToDraw.GetBounds();
-    result.mTarget->ClearRect(Rect(bounds.x, bounds.y, bounds.width, bounds.height));
+    gfxUtils::ClipToRegion(result, aPaintState.mRegionToDraw);
+    nsIntRect bounds = aPaintState.mRegionToDraw.GetBounds();
+    result->ClearRect(Rect(bounds.x, bounds.y, bounds.width, bounds.height));
   }
 
   return result;
@@ -1238,7 +1296,7 @@ ContentClientIncremental::Updated(const nsIntRegion& aRegionToDraw,
 
 already_AddRefed<gfxASurface>
 ContentClientIncremental::GetUpdateSurface(BufferType aType,
-                                           nsIntRegion& aUpdateRegion)
+                                           const nsIntRegion& aUpdateRegion)
 {
   nsIntRect rgnSize = aUpdateRegion.GetBounds();
   if (!mBufferRect.Contains(rgnSize)) {

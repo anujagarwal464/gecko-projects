@@ -115,6 +115,7 @@ browser.jar:
         skin/classic/browser/places/query.png                        (places/query.png)
         skin/classic/browser/places/bookmarksMenu.png                (places/bookmarksMenu.png)
         skin/classic/browser/places/bookmarksToolbar.png             (places/bookmarksToolbar.png)
+        skin/classic/browser/places/bookmarksToolbar-menuPanel.png   (places/bookmarksToolbar-menuPanel.png)
         skin/classic/browser/places/calendar.png                     (places/calendar.png)
         skin/classic/browser/places/toolbarDropMarker.png            (places/toolbarDropMarker.png)
         skin/classic/browser/places/editBookmarkOverlay.css          (places/editBookmarkOverlay.css)
@@ -188,14 +189,15 @@ browser.jar:
         skin/classic/browser/devtools/command-responsivemode@2x.png (../shared/devtools/images/command-responsivemode@2x.png)
         skin/classic/browser/devtools/command-scratchpad@2x.png     (../shared/devtools/images/command-scratchpad@2x.png)
         skin/classic/browser/devtools/command-tilt@2x.png           (../shared/devtools/images/command-tilt@2x.png)
-        skin/classic/browser/devtools/command-console@2x.png         (../shared/devtools/images/command-console@2x.png)
+        skin/classic/browser/devtools/command-pick@2x.png           (../shared/devtools/images/command-pick@2x.png)
+        skin/classic/browser/devtools/command-console@2x.png        (../shared/devtools/images/command-console@2x.png)
         skin/classic/browser/devtools/markup-view.css               (../shared/devtools/markup-view.css)
-        skin/classic/browser/devtools/editor-error.png               (devtools/editor-error.png)
-        skin/classic/browser/devtools/editor-breakpoint.png          (devtools/editor-breakpoint.png)
-        skin/classic/browser/devtools/editor-debug-location.png      (devtools/editor-debug-location.png)
-*       skin/classic/browser/devtools/webconsole.css                  (devtools/webconsole.css)
-        skin/classic/browser/devtools/webconsole_networkpanel.css     (devtools/webconsole_networkpanel.css)
-        skin/classic/browser/devtools/webconsole.png                  (devtools/webconsole.png)
+        skin/classic/browser/devtools/editor-error.png              (devtools/editor-error.png)
+        skin/classic/browser/devtools/editor-breakpoint.png         (devtools/editor-breakpoint.png)
+        skin/classic/browser/devtools/editor-debug-location.png     (devtools/editor-debug-location.png)
+*       skin/classic/browser/devtools/webconsole.css                (devtools/webconsole.css)
+        skin/classic/browser/devtools/webconsole_networkpanel.css   (devtools/webconsole_networkpanel.css)
+        skin/classic/browser/devtools/webconsole.png                (devtools/webconsole.png)
         skin/classic/browser/devtools/breadcrumbs-scrollbutton.png                 (devtools/breadcrumbs-scrollbutton.png)
         skin/classic/browser/devtools/breadcrumbs/ltr-end-pressed.png              (devtools/breadcrumbs/ltr-end-pressed.png)
         skin/classic/browser/devtools/breadcrumbs/ltr-end-selected-pressed.png     (devtools/breadcrumbs/ltr-end-selected-pressed.png)
@@ -297,6 +299,7 @@ browser.jar:
         skin/classic/browser/devtools/app-manager/index-icons.svg           (../shared/devtools/app-manager/images/index-icons.svg)
         skin/classic/browser/devtools/app-manager/rocket.svg                (../shared/devtools/app-manager/images/rocket.svg)
         skin/classic/browser/devtools/app-manager/noise.png                 (../shared/devtools/app-manager/images/noise.png)
+        skin/classic/browser/devtools/app-manager/default-app-icon.png      (../shared/devtools/app-manager/images/default-app-icon.png)
 #ifdef MOZ_SERVICES_SYNC
         skin/classic/browser/sync-throbber.png
         skin/classic/browser/sync-16.png
@@ -392,7 +395,7 @@ browser.jar:
         skin/classic/aero/browser/setDesktopBackground.css
         skin/classic/aero/browser/slowStartup-16.png
         skin/classic/aero/browser/Toolbar.png                        (Toolbar-aero.png)
-        skin/classic/aero/browser/Toolbar-inverted.png               (Toolbar-inverted-aero.png)
+        skin/classic/aero/browser/Toolbar-inverted.png
         skin/classic/aero/browser/toolbarbutton-dropdown-arrow.png
         skin/classic/aero/browser/toolbarbutton-dropdown-arrow-inverted.png
         skin/classic/aero/browser/urlbar-arrow.png
@@ -429,6 +432,7 @@ browser.jar:
         skin/classic/aero/browser/places/query.png                   (places/query-aero.png)
         skin/classic/aero/browser/places/bookmarksMenu.png           (places/bookmarksMenu-aero.png)
         skin/classic/aero/browser/places/bookmarksToolbar.png        (places/bookmarksToolbar-aero.png)
+        skin/classic/aero/browser/places/bookmarksToolbar-menuPanel.png (places/bookmarksToolbar-menuPanel-aero.png)
         skin/classic/aero/browser/places/calendar.png                (places/calendar-aero.png)
         skin/classic/aero/browser/places/toolbarDropMarker.png       (places/toolbarDropMarker-aero.png)
         skin/classic/aero/browser/places/editBookmarkOverlay.css     (places/editBookmarkOverlay.css)
@@ -498,6 +502,7 @@ browser.jar:
         skin/classic/aero/browser/devtools/command-responsivemode@2x.png (../shared/devtools/images/command-responsivemode@2x.png)
         skin/classic/aero/browser/devtools/command-scratchpad@2x.png (../shared/devtools/images/command-scratchpad@2x.png)
         skin/classic/aero/browser/devtools/command-tilt@2x.png       (../shared/devtools/images/command-tilt@2x.png)
+        skin/classic/aero/browser/devtools/command-pick@2x.png       (../shared/devtools/images/command-pick@2x.png)
         skin/classic/aero/browser/devtools/command-console@2x.png    (../shared/devtools/images/command-console@2x.png)
         skin/classic/aero/browser/devtools/alerticon-warning.png     (devtools/alerticon-warning.png)
         skin/classic/aero/browser/devtools/ruleview.css              (devtools/ruleview.css)
@@ -610,6 +615,8 @@ browser.jar:
         skin/classic/aero/browser/devtools/app-manager/index-icons.svg           (../shared/devtools/app-manager/images/index-icons.svg)
         skin/classic/aero/browser/devtools/app-manager/rocket.svg                (../shared/devtools/app-manager/images/rocket.svg)
         skin/classic/aero/browser/devtools/app-manager/noise.png                 (../shared/devtools/app-manager/images/noise.png)
+        skin/classic/aero/browser/devtools/app-manager/default-app-icon.png      (../shared/devtools/app-manager/images/default-app-icon.png)
+
 #ifdef MOZ_SERVICES_SYNC
         skin/classic/aero/browser/sync-throbber.png
         skin/classic/aero/browser/sync-16.png

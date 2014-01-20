@@ -590,7 +590,7 @@ CallNewScriptHookForAllScripts(JSContext *cx, HandleScript script)
     }
 
     // The global new script hook is called on every script that was compiled.
-    RootedFunction function(cx, script->function());
+    RootedFunction function(cx, script->functionNonDelazifying());
     CallNewScriptHook(cx, script, function);
 }
 
@@ -870,7 +870,7 @@ WorkerThread::handleCompressionWorkload(WorkerThreadState &state)
 
     {
         AutoUnlockWorkerThreadState unlock(runtime);
-        if (!compressionTask->compress())
+        if (!compressionTask->work())
             compressionTask->setOOM();
     }
 

@@ -242,6 +242,21 @@
         ]]></getter>
       </property>
 
+      <field name="_loadContext">null</field>
+
+      <property name="loadContext" readonly="true">
+        <getter><![CDATA[
+          if (this._loadContext)
+            return this._loadContext;
+
+          let frameLoader = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner).frameLoader;
+          if (!frameLoader)
+            return null;
+          this._loadContext = frameLoader.loadContext;
+          return this._loadContext;
+        ]]></getter>
+      </property>
+
       <property name="docShellIsActive">
         <getter>
           <![CDATA[
@@ -406,6 +421,31 @@
                        return val;"
                 onget="return this.getAttribute('showresizer') == 'true';"/>
 
+
+      <property name="fullZoom">
+        <getter><![CDATA[
+          return this.markupDocumentViewer.fullZoom;
+        ]]></getter>
+        <setter><![CDATA[
+          this.markupDocumentViewer.fullZoom = val;
+        ]]></setter>
+      </property>
+
+      <property name="textZoom">
+        <getter><![CDATA[
+          return this.markupDocumentViewer.textZoom;
+        ]]></getter>
+        <setter><![CDATA[
+          this.markupDocumentViewer.textZoom = val;
+        ]]></setter>
+      </property>
+
+      <property name="isSyntheticDocument">
+        <getter><![CDATA[
+          return this.contentDocument.mozSyntheticDocument;
+        ]]></getter>
+      </property>
+
       <field name="mPrefs" readonly="true">
         Components.classes['@mozilla.org/preferences-service;1']
                   .getService(Components.interfaces.nsIPrefBranch);
@@ -496,7 +536,7 @@
                          .currentURI.spec == aSoughtURI.spec)
               return aDocShell;
             var node = aDocShell.QueryInterface(
-                                   Components.interfaces.nsIDocShellTreeNode);
+                                   Components.interfaces.nsIDocShellTreeItem);
             for (var i = 0; i < node.childCount; ++i) {
               var docShell = node.getChildAt(i);
               docShell = this.findChildShell(docShell, aSoughtURI);

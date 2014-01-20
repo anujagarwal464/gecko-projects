@@ -1617,6 +1617,14 @@ nsWindow::Invalidate(const nsIntRect &aRect)
     return NS_OK;
 }
 
+void
+nsWindow::Update()
+{
+    if (!ShouldUseOffMainThreadCompositing() && mGdkWindow) {
+        gdk_window_process_updates(mGdkWindow, true);
+    }
+}
+
 void*
 nsWindow::GetNativeData(uint32_t aDataType)
 {
@@ -2146,12 +2154,12 @@ nsWindow::OnExposeEvent(cairo_t *cr)
 
     nsRefPtr<gfxContext> ctx;
     if (gfxPlatform::GetPlatform()->
-            SupportsAzureContentForType(BACKEND_CAIRO)) {
+            SupportsAzureContentForType(BackendType::CAIRO)) {
         IntSize intSize(surf->GetSize().width, surf->GetSize().height);
         ctx = new gfxContext(gfxPlatform::GetPlatform()->
             CreateDrawTargetForSurface(surf, intSize));
     } else if (gfxPlatform::GetPlatform()->
-                   SupportsAzureContentForType(BACKEND_SKIA) &&
+                   SupportsAzureContentForType(BackendType::SKIA) &&
                surf->GetType() != gfxSurfaceTypeImage) {
        gfxImageSurface* imgSurf = static_cast<gfxImageSurface*>(surf);
        SurfaceFormat format = ImageFormatToSurfaceFormat(imgSurf->Format());
@@ -2273,18 +2281,18 @@ nsWindow::UpdateAlpha(gfxPattern* aPattern, nsIntRect aBoundsRect)
   if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
       // We need to create our own buffer to force the stride to match the
       // expected stride.
-      int32_t stride = GetAlignedStride<4>(BytesPerPixel(FORMAT_A8) *
+      int32_t stride = GetAlignedStride<4>(BytesPerPixel(SurfaceFormat::A8) *
                                            aBoundsRect.width);
       int32_t bufferSize = stride * aBoundsRect.height;
       nsAutoArrayPtr<uint8_t> imageBuffer(new (std::nothrow) uint8_t[bufferSize]);
       RefPtr<DrawTarget> drawTarget = gfxPlatform::GetPlatform()->
           CreateDrawTargetForData(imageBuffer, ToIntSize(aBoundsRect.Size()),
-                                  stride, FORMAT_A8);
+                                  stride, SurfaceFormat::A8);
 
       if (drawTarget) {
           drawTarget->FillRect(Rect(0, 0, aBoundsRect.width, aBoundsRect.height),
                                *aPattern->GetPattern(drawTarget),
-                               DrawOptions(1.0, OP_SOURCE));
+                               DrawOptions(1.0, CompositionOp::OP_SOURCE));
       }
       UpdateTranslucentWindowAlphaInternal(aBoundsRect, imageBuffer, stride);
   } else {
@@ -5876,6 +5884,9 @@ nsWindow::NotifyIME(NotificationToIME aNotification)
             return NS_OK;
         case NOTIFY_IME_OF_BLUR:
             mIMModule->OnFocusChangeInGecko(false);
+            return NS_OK;
+        case NOTIFY_IME_OF_COMPOSITION_UPDATE:
+            mIMModule->OnUpdateComposition();
             return NS_OK;
         default:
             return NS_ERROR_NOT_IMPLEMENTED;

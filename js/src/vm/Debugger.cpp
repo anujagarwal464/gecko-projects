@@ -879,7 +879,8 @@ Debugger::newCompletionValue(JSContext *cx, JSTrapStatus status, Value value_,
 }
 
 bool
-Debugger::receiveCompletionValue(Maybe<AutoCompartment> &ac, bool ok, Value val,
+Debugger::receiveCompletionValue(Maybe<AutoCompartment> &ac, bool ok,
+                                 HandleValue val,
                                  MutableHandleValue vp)
 {
     JSContext *cx = ac.ref().context()->asJSContext();
@@ -2736,7 +2737,7 @@ Debugger::findAllGlobals(JSContext *cx, unsigned argc, Value *vp)
             RootedValue globalValue(cx, ObjectValue(*global));
             if (!dbg->wrapDebuggeeValue(cx, &globalValue))
                 return false;
-            if (!js_NewbornArrayPush(cx, result, globalValue))
+            if (!NewbornArrayPush(cx, result, globalValue))
                 return false;
         }
     }
@@ -3027,7 +3028,7 @@ DebuggerScript_getChildScripts(JSContext *cx, unsigned argc, Value *vp)
                 if (!funScript)
                     return false;
                 s = dbg->wrapScript(cx, funScript);
-                if (!s || !js_NewbornArrayPush(cx, result, ObjectValue(*s)))
+                if (!s || !NewbornArrayPush(cx, result, ObjectValue(*s)))
                     return false;
             }
         }
@@ -3359,7 +3360,7 @@ DebuggerScript_getAllOffsets(JSContext *cx, unsigned argc, Value *vp)
             }
 
             /* Append the current offset to the offsets array. */
-            if (!js_NewbornArrayPush(cx, offsets, NumberValue(offset)))
+            if (!NewbornArrayPush(cx, offsets, NumberValue(offset)))
                 return false;
         }
     }
@@ -3412,7 +3413,7 @@ DebuggerScript_getAllColumnOffsets(JSContext *cx, unsigned argc, Value *vp)
             if (!JSObject::defineGeneric(cx, entry, id, value))
                 return false;
 
-            if (!js_NewbornArrayPush(cx, result, ObjectValue(*entry)))
+            if (!NewbornArrayPush(cx, result, ObjectValue(*entry)))
                 return false;
         }
     }
@@ -3428,16 +3429,17 @@ DebuggerScript_getLineOffsets(JSContext *cx, unsigned argc, Value *vp)
     REQUIRE_ARGC("Debugger.Script.getLineOffsets", 1);
 
     /* Parse lineno argument. */
+    RootedValue linenoValue(cx, args[0]);
     size_t lineno;
-    bool ok = false;
-    if (args[0].isNumber()) {
-        double d = args[0].toNumber();
-        lineno = size_t(d);
-        ok = (lineno == d);
-    }
-    if (!ok) {
-        JS_ReportErrorNumber(cx,  js_GetErrorMessage, nullptr, JSMSG_DEBUG_BAD_LINE);
+    if (!ToNumber(cx, &linenoValue))
         return false;
+    {
+        double d = linenoValue.toNumber();
+        lineno = size_t(d);
+        if (lineno != d) {
+            JS_ReportErrorNumber(cx,  js_GetErrorMessage, nullptr, JSMSG_DEBUG_BAD_LINE);
+            return false;
+        }
     }
 
     /*
@@ -3460,7 +3462,7 @@ DebuggerScript_getLineOffsets(JSContext *cx, unsigned argc, Value *vp)
             !flowData[offset].hasNoEdges() &&
             flowData[offset].lineno() != lineno)
         {
-            if (!js_NewbornArrayPush(cx, result, NumberValue(offset)))
+            if (!NewbornArrayPush(cx, result, NumberValue(offset)))
                 return false;
         }
     }
@@ -3573,7 +3575,7 @@ DebuggerScript_getBreakpoints(JSContext *cx, unsigned argc, Value *vp)
         if (site && (!pc || site->pc == pc)) {
             for (Breakpoint *bp = site->firstBreakpoint(); bp; bp = bp->nextInSite()) {
                 if (bp->debugger == dbg &&
-                    !js_NewbornArrayPush(cx, arr, ObjectValue(*bp->getHandler())))
+                    !NewbornArrayPush(cx, arr, ObjectValue(*bp->getHandler())))
                 {
                     return false;
                 }
@@ -5647,7 +5649,7 @@ DebuggerEnv_names(JSContext *cx, unsigned argc, Value *vp)
         if (JSID_IS_ATOM(id) && IsIdentifier(JSID_TO_ATOM(id))) {
             if (!cx->compartment()->wrapId(cx, id.address()))
                 return false;
-            if (!js_NewbornArrayPush(cx, arr, StringValue(JSID_TO_STRING(id))))
+            if (!NewbornArrayPush(cx, arr, StringValue(JSID_TO_STRING(id))))
                 return false;
         }
     }

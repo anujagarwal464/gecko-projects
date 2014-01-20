@@ -84,8 +84,8 @@ static bool
 #endif
 LooseEqualityOp(JSContext *cx, FrameRegs &regs)
 {
-    Value rval = regs.sp[-1];
-    Value lval = regs.sp[-2];
+    HandleValue rval = regs.stackHandleAt(-1);
+    HandleValue lval = regs.stackHandleAt(-2);
     bool cond;
     if (!LooselyEqual(cx, lval, rval, &cond))
         return false;
@@ -344,18 +344,17 @@ SetPropertyOperation(JSContext *cx, HandleScript script, jsbytecode *pc, HandleV
 }
 
 bool
-js::ReportIsNotFunction(JSContext *cx, const Value &v, int numToSkip, MaybeConstruct construct)
+js::ReportIsNotFunction(JSContext *cx, HandleValue v, int numToSkip, MaybeConstruct construct)
 {
     unsigned error = construct ? JSMSG_NOT_CONSTRUCTOR : JSMSG_NOT_FUNCTION;
     int spIndex = numToSkip >= 0 ? -(numToSkip + 1) : JSDVG_SEARCH_STACK;
 
-    RootedValue val(cx, v);
-    js_ReportValueError3(cx, error, spIndex, val, NullPtr(), nullptr, nullptr);
+    js_ReportValueError3(cx, error, spIndex, v, NullPtr(), nullptr, nullptr);
     return false;
 }
 
 JSObject *
-js::ValueToCallable(JSContext *cx, const Value &v, int numToSkip, MaybeConstruct construct)
+js::ValueToCallable(JSContext *cx, HandleValue v, int numToSkip, MaybeConstruct construct)
 {
     if (v.isObject()) {
         JSObject *callable = &v.toObject();
@@ -389,6 +388,8 @@ js::RunScript(JSContext *cx, RunState &state)
     JS_CHECK_RECURSION(cx, return false);
 
     SPSEntryMarker marker(cx->runtime());
+
+    state.script()->ensureNonLazyCanonicalFunction(cx);
 
 #ifdef JS_ION
     if (jit::IsIonEnabled(cx)) {
@@ -439,7 +440,7 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
     InitialFrameFlags initial = (InitialFrameFlags) construct;
 
     if (args.calleev().isPrimitive())
-        return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, construct);
+        return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, construct);
 
     JSObject &callee = args.callee();
     const Class *clasp = callee.getClass();
@@ -452,7 +453,7 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
 #endif
         JS_ASSERT_IF(construct, !clasp->construct);
         if (!clasp->call)
-            return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, construct);
+            return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, construct);
         return CallJSNative(cx, clasp->call, args);
     }
 
@@ -531,7 +532,7 @@ js::InvokeConstructor(JSContext *cx, CallArgs args)
     args.setThis(MagicValue(JS_IS_CONSTRUCTING));
 
     if (!args.calleev().isObject())
-        return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, CONSTRUCT);
+        return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, CONSTRUCT);
 
     JSObject &callee = args.callee();
     if (callee.is<JSFunction>()) {
@@ -543,7 +544,7 @@ js::InvokeConstructor(JSContext *cx, CallArgs args)
         }
 
         if (!fun->isInterpretedConstructor())
-            return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, CONSTRUCT);
+            return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, CONSTRUCT);
 
         if (!Invoke(cx, args, CONSTRUCT))
             return false;
@@ -554,7 +555,7 @@ js::InvokeConstructor(JSContext *cx, CallArgs args)
 
     const Class *clasp = callee.getClass();
     if (!clasp->construct)
-        return ReportIsNotFunction(cx, args.calleev().get(), args.length() + 1, CONSTRUCT);
+        return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, CONSTRUCT);
 
     return CallJSNativeConstructor(cx, clasp->construct, args);
 }
@@ -1479,7 +1480,7 @@ Interpret(JSContext *cx, RunState &state)
          * fail if cx->isExceptionPending() is true.
          */
         if (cx->isExceptionPending()) {
-            probes::EnterScript(cx, script, script->function(), REGS.fp());
+            probes::EnterScript(cx, script, script->functionNonDelazifying(), REGS.fp());
             goto error;
         }
     }
@@ -1491,7 +1492,7 @@ Interpret(JSContext *cx, RunState &state)
         if (!activation.entryFrame()->prologue(cx))
             goto error;
     } else {
-        probes::EnterScript(cx, script, script->function(), activation.entryFrame());
+        probes::EnterScript(cx, script, script->functionNonDelazifying(), activation.entryFrame());
     }
     if (JS_UNLIKELY(cx->compartment()->debugMode())) {
         JSTrapStatus status = ScriptDebugPrologue(cx, activation.entryFrame(), REGS.pc);
@@ -1802,7 +1803,8 @@ CASE(JSOP_RETRVAL)
         if (!REGS.fp()->isYielding())
             REGS.fp()->epilogue(cx);
         else
-            probes::ExitScript(cx, script, script->function(), REGS.fp()->hasPushedSPSFrame());
+            probes::ExitScript(cx, script, script->functionNonDelazifying(),
+                               REGS.fp()->hasPushedSPSFrame());
 
 #if defined(JS_ION)
   jit_return_pop_frame:
@@ -2920,7 +2922,7 @@ END_CASE(JSOP_SETARG)
 CASE(JSOP_GETLOCAL)
 CASE(JSOP_CALLLOCAL)
 {
-    unsigned i = GET_SLOTNO(REGS.pc);
+    uint32_t i = GET_LOCALNO(REGS.pc);
     PUSH_COPY_SKIP_CHECK(REGS.fp()->unaliasedLocal(i));
 
     /*
@@ -2936,7 +2938,7 @@ END_CASE(JSOP_GETLOCAL)
 
 CASE(JSOP_SETLOCAL)
 {
-    unsigned i = GET_SLOTNO(REGS.pc);
+    uint32_t i = GET_LOCALNO(REGS.pc);
     REGS.fp()->unaliasedLocal(i) = REGS.sp[-1];
 }
 END_CASE(JSOP_SETLOCAL)
@@ -3393,14 +3395,11 @@ CASE(JSOP_YIELD)
 
 CASE(JSOP_ARRAYPUSH)
 {
-    uint32_t slot = GET_UINT16(REGS.pc);
-    JS_ASSERT(script->nfixed() <= slot);
-    JS_ASSERT(slot < script->nslots());
     RootedObject &obj = rootObject0;
-    obj = &REGS.fp()->unaliasedLocal(slot).toObject();
-    if (!js_NewbornArrayPush(cx, obj, REGS.sp[-1]))
+    obj = &REGS.sp[-1].toObject();
+    if (!NewbornArrayPush(cx, obj, REGS.sp[-2]))
         goto error;
-    REGS.sp--;
+    REGS.sp -= 2;
 }
 END_CASE(JSOP_ARRAYPUSH)
 
@@ -3452,7 +3451,8 @@ DEFAULT()
     if (!REGS.fp()->isYielding())
         REGS.fp()->epilogue(cx);
     else
-        probes::ExitScript(cx, script, script->function(), REGS.fp()->hasPushedSPSFrame());
+        probes::ExitScript(cx, script, script->functionNonDelazifying(),
+                           REGS.fp()->hasPushedSPSFrame());
 
     gc::MaybeVerifyBarriers(cx, true);
 
@@ -3608,7 +3608,7 @@ js::DefFunOperation(JSContext *cx, HandleScript script, HandleObject scopeChain,
             return false;
     } else {
         JS_ASSERT(script->compileAndGo());
-        JS_ASSERT(!script->function());
+        JS_ASSERT(!script->functionNonDelazifying());
     }
 
     /*
@@ -3875,10 +3875,11 @@ js::RunOnceScriptPrologue(JSContext *cx, HandleScript script)
 
     // Force instantiation of the script's function's type to ensure the flag
     // is preserved in type information.
-    if (!script->function()->getType(cx))
+    if (!script->functionNonDelazifying()->getType(cx))
         return false;
 
-    types::MarkTypeObjectFlags(cx, script->function(), types::OBJECT_FLAG_RUNONCE_INVALIDATED);
+    types::MarkTypeObjectFlags(cx, script->functionNonDelazifying(),
+                               types::OBJECT_FLAG_RUNONCE_INVALIDATED);
     return true;
 }
 

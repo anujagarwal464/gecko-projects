@@ -544,7 +544,8 @@ JS_GetScriptOriginPrincipals(JSScript *script)
 JS_PUBLIC_API(JSFunction *)
 JS_GetScriptFunction(JSContext *cx, JSScript *script)
 {
-    return script->function();
+    script->ensureNonLazyCanonicalFunction(cx);
+    return script->functionNonDelazifying();
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -626,7 +627,7 @@ static bool
 GetPropertyDesc(JSContext *cx, JSObject *obj_, HandleShape shape, JSPropertyDesc *pd)
 {
     assertSameCompartment(cx, obj_);
-    pd->id = IdToJsval(shape->propid());
+    pd->id = IdToValue(shape->propid());
 
     RootedObject obj(cx, obj_);
 

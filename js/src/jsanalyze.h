@@ -225,7 +225,8 @@ static inline uint32_t ArgSlot(uint32_t arg) {
     return 1 + arg;
 }
 static inline uint32_t LocalSlot(JSScript *script, uint32_t local) {
-    return 1 + (script->function() ? script->function()->nargs() : 0) + local;
+    return 1 + local +
+           (script->functionNonDelazifying() ? script->functionNonDelazifying()->nargs() : 0);
 }
 static inline uint32_t TotalSlots(JSScript *script) {
     return LocalSlot(script, 0) + script->nfixed();
@@ -242,12 +243,12 @@ static inline uint32_t GetBytecodeSlot(JSScript *script, jsbytecode *pc)
       case JSOP_GETARG:
       case JSOP_CALLARG:
       case JSOP_SETARG:
-        return ArgSlot(GET_SLOTNO(pc));
+        return ArgSlot(GET_ARGNO(pc));
 
       case JSOP_GETLOCAL:
       case JSOP_CALLLOCAL:
       case JSOP_SETLOCAL:
-        return LocalSlot(script, GET_SLOTNO(pc));
+        return LocalSlot(script, GET_LOCALNO(pc));
 
       case JSOP_THIS:
         return ThisSlot();

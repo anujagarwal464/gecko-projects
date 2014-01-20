@@ -38,7 +38,6 @@
 
 #ifdef XP_WIN
 #include <windows.h>
-#include <shlobj.h>
 #endif
 
 // all this crap is needed to do the interactive shell stuff
@@ -586,7 +585,7 @@ Blob(JSContext *cx, unsigned argc, jsval *vp)
   JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
-                              args.rval().address());
+                              args.rval());
   if (NS_FAILED(rv)) {
     JS_ReportError(cx, "Could not wrap native object!");
     return false;
@@ -625,7 +624,7 @@ File(JSContext *cx, unsigned argc, jsval *vp)
   JSObject* global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
-                              args.rval().address());
+                              args.rval());
   if (NS_FAILED(rv)) {
     JS_ReportError(cx, "Could not wrap native object!");
     return false;
@@ -732,7 +731,7 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
     int rv;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);
@@ -815,7 +814,7 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
     JSString *idstr, *valstr;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);
@@ -1135,14 +1134,15 @@ ProcessArgs(JSContext *cx, JS::Handle<JSObject*> obj, char **argv, int argc, XPC
             break;
         case 'e':
         {
-            jsval rval;
+            RootedValue rval(cx);
 
             if (++i == argc) {
                 return usage();
             }
 
             JS_EvaluateScriptForPrincipals(cx, obj, gJSPrincipals, argv[i],
-                                           strlen(argv[i]), "-e", 1, &rval);
+                                           strlen(argv[i]), "-e", 1,
+                                           rval.address());
 
             isInteractive = false;
             break;
@@ -1667,44 +1667,6 @@ XPCShellDirProvider::GetFile(const char *prop, bool *persistent,
             return NS_ERROR_FAILURE;
         NS_ADDREF(*result = file);
         return NS_OK;
-    } else if (mAppFile && !strcmp(prop, XRE_UPDATE_ROOT_DIR)) {
-        // For xpcshell, we pretend that the update root directory is always
-        // the same as the GRE directory, except for Windows, where we immitate
-        // the algorithm defined in nsXREDirProvider::GetUpdateRootDir.
-        *persistent = true;
-#ifdef XP_WIN
-        char appData[MAX_PATH] = {'\0'};
-        char path[MAX_PATH] = {'\0'};
-        LPITEMIDLIST pItemIDList;
-        if (FAILED(SHGetSpecialFolderLocation(nullptr, CSIDL_LOCAL_APPDATA, &pItemIDList)) ||
-            FAILED(SHGetPathFromIDListA(pItemIDList, appData))) {
-            return NS_ERROR_FAILURE;
-        }
-        nsAutoString pathName;
-        pathName.AssignASCII(appData);
-        nsCOMPtr<nsIFile> localFile;
-        nsresult rv = NS_NewLocalFile(pathName, true, getter_AddRefs(localFile));
-        if (NS_FAILED(rv)) {
-            return rv;
-        }
-
-#ifdef MOZ_APP_PROFILE
-        localFile->AppendNative(NS_LITERAL_CSTRING(MOZ_APP_PROFILE));
-#else
-        // MOZ_APP_VENDOR and MOZ_APP_BASENAME are optional.
-#ifdef MOZ_APP_VENDOR
-        localFile->AppendNative(NS_LITERAL_CSTRING(MOZ_APP_VENDOR));
-#endif
-#ifdef MOZ_APP_BASENAME
-        localFile->AppendNative(NS_LITERAL_CSTRING(MOZ_APP_BASENAME));
-#endif
-        // However app name is always appended.
-        localFile->AppendNative(NS_LITERAL_CSTRING(MOZ_APP_NAME));
-#endif
-        return localFile->Clone(result);
-#else
-        return mAppFile->GetParent(result);
-#endif
     }
 
     return NS_ERROR_FAILURE;

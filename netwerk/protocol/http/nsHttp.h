@@ -26,10 +26,19 @@ namespace net {
     enum {
         SPDY_VERSION_2_REMOVED = 2,
         SPDY_VERSION_3 = 3,
-        SPDY_VERSION_31 = 4
+        SPDY_VERSION_31 = 4,
+
+        // leave room for official versions. telem goes to 48
+        // 24 was a internal spdy/3.1
+        // 25 was spdy/4a2
+        // 26 was http/2-draft08 and http/2-draft07 (they were the same)
+        HTTP2_VERSION_DRAFT09 = 27
     };
 
 typedef uint8_t nsHttpVersion;
+
+#define NS_HTTP2_DRAFT_VERSION HTTP2_VERSION_DRAFT09
+#define NS_HTTP2_DRAFT_TOKEN "HTTP-draft-09/2.0"
 
 //-----------------------------------------------------------------------------
 // http connection capabilities

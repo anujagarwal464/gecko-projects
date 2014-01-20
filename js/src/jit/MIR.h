@@ -6572,16 +6572,18 @@ class MGetPropertyCache
     CompilerRootPropertyName name_;
     bool idempotent_;
     bool allowGetters_;
+    bool monitoredResult_;
 
     CacheLocationList location_;
 
     InlinePropertyTable *inlinePropertyTable_;
 
-    MGetPropertyCache(MDefinition *obj, PropertyName *name)
+    MGetPropertyCache(MDefinition *obj, PropertyName *name, bool monitoredResult)
       : MUnaryInstruction(obj),
         name_(name),
         idempotent_(false),
         allowGetters_(false),
+        monitoredResult_(monitoredResult),
         location_(),
         inlinePropertyTable_(nullptr)
     {
@@ -6596,8 +6598,9 @@ class MGetPropertyCache
   public:
     INSTRUCTION_HEADER(GetPropertyCache)
 
-    static MGetPropertyCache *New(TempAllocator &alloc, MDefinition *obj, PropertyName *name) {
-        return new(alloc) MGetPropertyCache(obj, name);
+    static MGetPropertyCache *New(TempAllocator &alloc, MDefinition *obj, PropertyName *name,
+                                  bool monitoredResult) {
+        return new(alloc) MGetPropertyCache(obj, name, monitoredResult);
     }
 
     InlinePropertyTable *initInlinePropertyTable(TempAllocator &alloc, jsbytecode *pc) {
@@ -6629,6 +6632,9 @@ class MGetPropertyCache
     }
     bool allowGetters() const {
         return allowGetters_;
+    }
+    bool monitoredResult() const {
+        return monitoredResult_;
     }
     void setAllowGetters() {
         allowGetters_ = true;
@@ -7912,7 +7918,7 @@ class MGetDOMProperty
       : info_(jitinfo)
     {
         JS_ASSERT(jitinfo);
-        JS_ASSERT(jitinfo->type == JSJitInfo::Getter);
+        JS_ASSERT(jitinfo->type() == JSJitInfo::Getter);
 
         setOperand(0, obj);
 
@@ -7921,7 +7927,7 @@ class MGetDOMProperty
 
         // We are movable iff the jitinfo says we can be.
         if (isDomMovable()) {
-            JS_ASSERT(jitinfo->aliasSet != JSJitInfo::AliasEverything);
+            JS_ASSERT(jitinfo->aliasSet() != JSJitInfo::AliasEverything);
             setMovable();
         }
 
@@ -7951,7 +7957,7 @@ class MGetDOMProperty
         return info_->isMovable;
     }
     JSJitInfo::AliasSet domAliasSet() const {
-        return info_->aliasSet;
+        return info_->aliasSet();
     }
     size_t domMemberSlotIndex() const {
         MOZ_ASSERT(info_->isInSlot);
@@ -8573,24 +8579,24 @@ class MRestPar
     }
 };
 
-// Guard on an object being allocated in the current slice.
-class MGuardThreadLocalObject
+// Guard on an object being safe for writes by current parallel slice.
+// Must be either thread-local or else a handle into the destination array.
+class MGuardThreadExclusive
   : public MBinaryInstruction,
     public ObjectPolicy<1>
 {
-    MGuardThreadLocalObject(MDefinition *slice, MDefinition *obj)
+    MGuardThreadExclusive(MDefinition *slice, MDefinition *obj)
       : MBinaryInstruction(slice, obj)
     {
         setResultType(MIRType_None);
         setGuard();
-        setMovable();
     }
 
   public:
-    INSTRUCTION_HEADER(GuardThreadLocalObject);
+    INSTRUCTION_HEADER(GuardThreadExclusive);
 
-    static MGuardThreadLocalObject *New(TempAllocator &alloc, MDefinition *slice, MDefinition *obj) {
-        return new(alloc) MGuardThreadLocalObject(slice, obj);
+    static MGuardThreadExclusive *New(TempAllocator &alloc, MDefinition *slice, MDefinition *obj) {
+        return new(alloc) MGuardThreadExclusive(slice, obj);
     }
     MDefinition *forkJoinSlice() const {
         return getOperand(0);

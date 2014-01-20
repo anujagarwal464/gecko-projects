@@ -768,9 +768,21 @@ CalculatePOTSize(const IntSize& aSize, GLContext* gl)
 }
 
 void
+CompositorOGL::clearFBRect(const gfx::Rect* aRect)
+{
+  if (!aRect) {
+    return;
+  }
+
+  ScopedScissorRect autoScissorRect(mGLContext, aRect->x, aRect->y, aRect->width, aRect->height);
+  mGLContext->fClearColor(0.0, 0.0, 0.0, 0.0);
+  mGLContext->fClear(LOCAL_GL_COLOR_BUFFER_BIT | LOCAL_GL_DEPTH_BUFFER_BIT);
+}
+
+void
 CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
                           const Rect *aClipRectIn,
-                          const gfxMatrix& aTransform,
+                          const gfx::Matrix& aTransform,
                           const Rect& aRenderBounds,
                           Rect *aClipRectOut,
                           Rect *aRenderBoundsOut)
@@ -783,11 +795,11 @@ CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
   mVBOs.Reset();
 
   mFrameInProgress = true;
-  gfxRect rect;
+  gfx::Rect rect;
   if (mUseExternalSurfaceSize) {
-    rect = gfxRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
+    rect = gfx::Rect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
   } else {
-    rect = gfxRect(aRenderBounds.x, aRenderBounds.y, aRenderBounds.width, aRenderBounds.height);
+    rect = gfx::Rect(aRenderBounds.x, aRenderBounds.y, aRenderBounds.width, aRenderBounds.height);
     // If render bounds is not updated explicitly, try to infer it from widget
     if (rect.width == 0 || rect.height == 0) {
       // FIXME/bug XXXXXX this races with rotation changes on the main
@@ -795,13 +807,13 @@ CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
       // sent atomically with rotation changes
       nsIntRect intRect;
       mWidget->GetClientBounds(intRect);
-      rect = gfxRect(0, 0, intRect.width, intRect.height);
+      rect = gfx::Rect(0, 0, intRect.width, intRect.height);
     }
   }
 
   rect = aTransform.TransformBounds(rect);
   if (aRenderBoundsOut) {
-    *aRenderBoundsOut = Rect(rect.x, rect.y, rect.width, rect.height);
+    *aRenderBoundsOut = rect;
   }
 
   GLint width = rect.width;
@@ -834,7 +846,7 @@ CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
 
   mCurrentRenderTarget = CompositingRenderTargetOGL::RenderTargetForWindow(this,
                             IntSize(width, height),
-                            aTransform);
+                            ThebesMatrix(aTransform));
   mCurrentRenderTarget->BindRenderTarget();
 #ifdef DEBUG
   mWindowRenderTarget = mCurrentRenderTarget;
@@ -844,8 +856,6 @@ CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
   mGLContext->fBlendFuncSeparate(LOCAL_GL_ONE, LOCAL_GL_ONE_MINUS_SRC_ALPHA,
                                  LOCAL_GL_ONE, LOCAL_GL_ONE);
   mGLContext->fEnable(LOCAL_GL_BLEND);
-
-  mGLContext->fEnable(LOCAL_GL_SCISSOR_TEST);
 
   if (aClipRectOut && !aClipRectIn) {
     aClipRectOut->SetRect(0, 0, width, height);
@@ -1098,6 +1108,8 @@ CompositorOGL::DrawQuadInternal(const Rect& aRect,
   }
   IntRect intClipRect;
   clipRect.ToIntRect(&intClipRect);
+
+  ScopedGLState scopedScissorTestState(mGLContext, LOCAL_GL_SCISSOR_TEST, true);
   ScopedScissorRect autoScissor(mGLContext,
                                 intClipRect.x,
                                 FlipY(intClipRect.y + intClipRect.height),
@@ -1386,7 +1398,7 @@ CompositorOGL::EndFrame()
     } else {
       mWidget->GetBounds(rect);
     }
-    RefPtr<DrawTarget> target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(rect.width, rect.height), FORMAT_B8G8R8A8);
+    RefPtr<DrawTarget> target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(rect.width, rect.height), SurfaceFormat::B8G8R8A8);
     CopyToTarget(target, mCurrentRenderTarget->GetTransform());
 
     WriteSnapshotToDumpFile(this, target);
@@ -1427,7 +1439,7 @@ CompositorOGL::EndFrame()
 }
 
 void
-CompositorOGL::EndFrameForExternalComposition(const gfxMatrix& aTransform)
+CompositorOGL::EndFrameForExternalComposition(const gfx::Matrix& aTransform)
 {
   if (sDrawFPS) {
     if (!mFPS) {
@@ -1440,7 +1452,7 @@ CompositorOGL::EndFrameForExternalComposition(const gfxMatrix& aTransform)
   // This lets us reftest and screenshot content rendered externally
   if (mTarget) {
     MakeCurrent();
-    CopyToTarget(mTarget, aTransform);
+    CopyToTarget(mTarget, ThebesMatrix(aTransform));
     mGLContext->fBindBuffer(LOCAL_GL_ARRAY_BUFFER, 0);
   }
 }
@@ -1486,15 +1498,18 @@ CompositorOGL::CopyToTarget(DrawTarget *aTarget, const gfxMatrix& aTransform)
   }
 
   RefPtr<DataSourceSurface> source =
-        Factory::CreateDataSourceSurface(rect.Size(), gfx::FORMAT_B8G8R8A8);
+        Factory::CreateDataSourceSurface(rect.Size(), gfx::SurfaceFormat::B8G8R8A8);
+
+  DataSourceSurface::MappedSurface map;
+  source->Map(DataSourceSurface::MapType::WRITE, &map);
   // XXX we should do this properly one day without using the gfxImageSurface
   nsRefPtr<gfxImageSurface> surf =
-    new gfxImageSurface(source->GetData(),
+    new gfxImageSurface(map.mData,
                         gfxIntSize(width, height),
-                        source->Stride(),
+                        map.mStride,
                         gfxImageFormatARGB32);
   ReadPixelsIntoImageSurface(mGLContext, surf);
-  source->MarkDirty();
+  source->Unmap();
 
   // Map from GL space to Cairo space and reverse the world transform.
   Matrix glToCairoTransform = ToMatrix(aTransform);
@@ -1505,7 +1520,7 @@ CompositorOGL::CopyToTarget(DrawTarget *aTarget, const gfxMatrix& aTransform)
   Matrix oldMatrix = aTarget->GetTransform();
   aTarget->SetTransform(glToCairoTransform);
   Rect floatRect = Rect(rect.x, rect.y, rect.width, rect.height);
-  aTarget->DrawSurface(source, floatRect, floatRect, DrawSurfaceOptions(), DrawOptions(1.0f, OP_SOURCE));
+  aTarget->DrawSurface(source, floatRect, floatRect, DrawSurfaceOptions(), DrawOptions(1.0f, CompositionOp::OP_SOURCE));
   aTarget->SetTransform(oldMatrix);
   aTarget->Flush();
 }

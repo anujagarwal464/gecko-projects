@@ -508,13 +508,16 @@ class Marionette(object):
                                 gecko_path=gecko_path,
                                 busybox=busybox)
 
-    def __del__(self):
+    def cleanup(self):
         if self.emulator:
             self.emulator.close()
         if self.instance:
             self.instance.close()
         for qemu in self.extra_emulators:
             qemu.emulator.close()
+
+    def __del__(self):
+        self.cleanup()
 
     @staticmethod
     def is_port_available(port, host=''):
@@ -791,15 +794,15 @@ class Marionette(object):
         response = self._send_message('getPageSource', 'value')
         return response
 
-    def close(self, window_id=None):
-        '''
-        Closes the window that is in use by Marionette.
+    def close(self):
+        """Close the current window, ending the session if it's the last
+        window currently open.
 
-        :param window_id: id of the window you wish to closed
-        '''
-        if not window_id:
-            window_id = self.current_window_handle
-        response = self._send_message('closeWindow', 'ok', value=window_id)
+        On B2G this method is a noop and will return immediately.
+
+        """
+
+        response = self._send_message("close", "ok")
         return response
 
     def set_context(self, context):

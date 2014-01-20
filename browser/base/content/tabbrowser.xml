@@ -1601,8 +1601,10 @@
                 b.userTypedValue = aURI;
 
               let flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
-              if (aAllowThirdPartyFixup)
+              if (aAllowThirdPartyFixup) {
                 flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
+                flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
+              }
               if (aFromExternal)
                 flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL;
               if (aDisableMCB)
@@ -1923,7 +1925,7 @@
             evt.initUIEvent("TabClose", true, false, window, aTabWillBeMoved ? 1 : 0);
             aTab.dispatchEvent(evt);
 
-            if (!gMultiProcessBrowser) {
+            if (!aTabWillBeMoved && !gMultiProcessBrowser) {
               // Prevent this tab from showing further dialogs, since we're closing it
               var windowUtils = browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).
                                 getInterface(Ci.nsIDOMWindowUtils);
@@ -2827,6 +2829,18 @@
                 onget="return this.mCurrentBrowser.securityUI;"
                 readonly="true"/>
 
+      <property name="fullZoom"
+                onget="return this.mCurrentBrowser.fullZoom;"
+                onset="this.mCurrentBrowser.fullZoom = val;"/>
+
+      <property name="textZoom"
+                onget="return this.mCurrentBrowser.textZoom;"
+                onset="this.mCurrentBrowser.textZoom = val;"/>
+
+      <property name="isSyntheticDocument"
+                onget="return this.mCurrentBrowser.isSyntheticDocument;"
+                readonly="true"/>
+
       <method name="_handleKeyEvent">
         <parameter name="aEvent"/>
         <body><![CDATA[
@@ -2944,15 +2958,16 @@
           let browser = aMessage.target;
 
           switch (aMessage.name) {
-            case "DOMTitleChanged":
+            case "DOMTitleChanged": {
               let tab = this._getTabForBrowser(browser);
-              if (!tab)
+              if (!tab || tab.hasAttribute("pending"))
                 return;
               let titleChanged = this.setTabTitle(tab);
               if (titleChanged && !tab.selected && !tab.hasAttribute("busy"))
                 tab.setAttribute("titlechanged", "true");
               break;
-            case "contextmenu":
+            }
+            case "contextmenu": {
               gContextMenuContentData = { event: aMessage.objects.event,
                                           browser: browser };
               let popup = browser.ownerDocument.getElementById("contentAreaContextMenu");
@@ -2961,6 +2976,15 @@
                               gContextMenuContentData.event.clientY,
                               true, false, null);
               break;
+            }
+            case "DOMWebNotificationClicked": {
+              let tab = this._getTabForBrowser(browser);
+              if (!tab)
+                return;
+              this.selectedTab = tab;
+              window.focus();
+              break;
+            }
           }
         ]]></body>
       </method>
@@ -3018,6 +3042,7 @@
             messageManager.addMessageListener("DOMTitleChanged", this);
             messageManager.addMessageListener("contextmenu", this);
           }
+          messageManager.addMessageListener("DOMWebNotificationClicked", this);
         ]]>
       </constructor>
 
@@ -3177,6 +3202,9 @@
             return;
 
           var tab = this._getTabForContentWindow(contentWin);
+          if (tab.hasAttribute("pending"))
+            return;
+
           var titleChanged = this.setTabTitle(tab);
           if (titleChanged && !tab.selected && !tab.hasAttribute("busy"))
             tab.setAttribute("titlechanged", "true");
@@ -4480,7 +4508,10 @@
           } else {
             // Load in an existing tab.
             try {
-              this.tabbrowser.getBrowserForTab(tab).loadURIWithFlags(url, Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP);
+              let webNav = Ci.nsIWebNavigation;
+              let flags = webNav.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
+                          webNav.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
+              this.tabbrowser.getBrowserForTab(tab).loadURIWithFlags(url, flags);
               if (!bgLoad)
                 this.selectedItem = tab;
             } catch(ex) {
@@ -4626,6 +4657,7 @@
                      role="presentation"
                      layer="true" />
           <xul:image xbl:inherits="src=image,fadein,pinned,selected"
+                     anonid="tab-icon-image"
                      class="tab-icon-image"
                      validate="never"
                      role="presentation"/>

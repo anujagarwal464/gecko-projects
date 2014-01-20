@@ -559,7 +559,7 @@ Layer::MayResample()
 
 nsIntRect
 Layer::CalculateScissorRect(const nsIntRect& aCurrentScissorRect,
-                            const gfxMatrix* aWorldTransform)
+                            const gfx::Matrix* aWorldTransform)
 {
   ContainerLayer* container = GetParent();
   NS_ASSERTION(container, "This can't be called on the root!");
@@ -605,10 +605,10 @@ Layer::CalculateScissorRect(const nsIntRect& aCurrentScissorRect,
   if (container) {
     scissor.MoveBy(-container->GetIntermediateSurfaceRect().TopLeft());
   } else if (aWorldTransform) {
-    gfxRect r(scissor.x, scissor.y, scissor.width, scissor.height);
-    gfxRect trScissor = aWorldTransform->TransformBounds(r);
+    gfx::Rect r(scissor.x, scissor.y, scissor.width, scissor.height);
+    gfx::Rect trScissor = aWorldTransform->TransformBounds(r);
     trScissor.Round();
-    if (!gfxUtils::GfxRectToIntRect(trScissor, &scissor))
+    if (!gfxUtils::GfxRectToIntRect(ThebesRect(trScissor), &scissor))
       return nsIntRect(currentClip.TopLeft(), nsIntSize(0, 0));
   }
   return currentClip.Intersect(scissor);
@@ -1115,34 +1115,40 @@ void WriteSnapshotLinkToDumpFile(T* aObj, FILE* aFile)
 }
 
 template <typename T>
-void WriteSnapshotToDumpFile_internal(T* aObj, gfxASurface* aSurf)
+void WriteSnapshotToDumpFile_internal(T* aObj, DataSourceSurface* aSurf)
 {
+  nsRefPtr<gfxImageSurface> deprecatedSurf =
+    new gfxImageSurface(aSurf->GetData(),
+                        ThebesIntSize(aSurf->GetSize()),
+                        aSurf->Stride(),
+                        SurfaceFormatToImageFormat(aSurf->GetFormat()));
   nsCString string(aObj->Name());
   string.Append("-");
   string.AppendInt((uint64_t)aObj);
   if (gfxUtils::sDumpPaintFile) {
     fprintf_stderr(gfxUtils::sDumpPaintFile, "array[\"%s\"]=\"", string.BeginReading());
   }
-  aSurf->DumpAsDataURL(gfxUtils::sDumpPaintFile);
+  deprecatedSurf->DumpAsDataURL(gfxUtils::sDumpPaintFile);
   if (gfxUtils::sDumpPaintFile) {
     fprintf_stderr(gfxUtils::sDumpPaintFile, "\";");
   }
 }
 
-void WriteSnapshotToDumpFile(Layer* aLayer, gfxASurface* aSurf)
+void WriteSnapshotToDumpFile(Layer* aLayer, DataSourceSurface* aSurf)
 {
   WriteSnapshotToDumpFile_internal(aLayer, aSurf);
 }
 
-void WriteSnapshotToDumpFile(LayerManager* aManager, gfxASurface* aSurf)
+void WriteSnapshotToDumpFile(LayerManager* aManager, DataSourceSurface* aSurf)
 {
   WriteSnapshotToDumpFile_internal(aManager, aSurf);
 }
 
 void WriteSnapshotToDumpFile(Compositor* aCompositor, DrawTarget* aTarget)
 {
-  nsRefPtr<gfxASurface> surf = gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(aTarget);
-  WriteSnapshotToDumpFile_internal(aCompositor, surf);
+  RefPtr<SourceSurface> surf = aTarget->Snapshot();
+  RefPtr<DataSourceSurface> dSurf = surf->GetDataSurface();
+  WriteSnapshotToDumpFile_internal(aCompositor, dSurf);
 }
 #endif
 
@@ -1501,7 +1507,7 @@ void
 SetAntialiasingFlags(Layer* aLayer, DrawTarget* aTarget)
 {
   bool permitSubpixelAA = !(aLayer->GetContentFlags() & Layer::CONTENT_DISABLE_SUBPIXEL_AA);
-  if (aTarget->GetFormat() != FORMAT_B8G8R8A8) {
+  if (aTarget->GetFormat() != SurfaceFormat::B8G8R8A8) {
     aTarget->SetPermitSubpixelAA(permitSubpixelAA);
     return;
   }

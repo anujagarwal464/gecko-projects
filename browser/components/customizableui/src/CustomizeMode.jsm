@@ -15,6 +15,7 @@ const kAboutURI = "about:customizing";
 const kDragDataTypePrefix = "text/toolbarwrapper-id/";
 const kPlaceholderClass = "panel-customization-placeholder";
 const kSkipSourceNodePref = "browser.uiCustomization.skipSourceNodeCheck";
+const kToolbarVisibilityBtn = "customization-toolbar-visibility-button";
 const kMaxTransitionDurationMs = 2000;
 
 Cu.import("resource://gre/modules/Services.jsm");
@@ -22,8 +23,11 @@ Cu.import("resource:///modules/CustomizableUI.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "DragPositionManager",
                                   "resource:///modules/DragPositionManager.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "BrowserUITelemetry",
+                                  "resource:///modules/BrowserUITelemetry.jsm");
 
 let gModuleName = "[CustomizeMode]";
 #include logging.js
@@ -70,8 +74,13 @@ CustomizeMode.prototype = {
     return this.document.getElementById("PanelUI-contents");
   },
 
+  get _handler() {
+    return this.window.CustomizationHandler;
+  },
+
   toggle: function() {
-    if (this._transitioning) {
+    if (this._handler.isEnteringCustomizeMode || this._handler.isExitingCustomizeMode) {
+      this._wantToBeInCustomizeMode = !this._wantToBeInCustomizeMode;
       return;
     }
     if (this._customizing) {
@@ -82,9 +91,19 @@ CustomizeMode.prototype = {
   },
 
   enter: function() {
-    if (this._customizing || this._transitioning) {
+    this._wantToBeInCustomizeMode = true;
+
+    if (this._customizing || this._handler.isEnteringCustomizeMode) {
       return;
     }
+
+    // Exiting; want to re-enter once we've done that.
+    if (this._handler.isExitingCustomizeMode) {
+      LOG("Attempted to enter while we're in the middle of exiting. " +
+          "We'll exit after we've entered");
+      return;
+    }
+
 
     // We don't need to switch to kAboutURI, or open a new tab at
     // kAboutURI if we're already on it.
@@ -95,6 +114,8 @@ CustomizeMode.prototype = {
 
     let window = this.window;
     let document = this.document;
+
+    this._handler.isEnteringCustomizeMode = true;
 
     Task.spawn(function() {
       // We shouldn't start customize mode until after browser-delayed-startup has finished:
@@ -108,6 +129,16 @@ CustomizeMode.prototype = {
         }.bind(this);
         Services.obs.addObserver(delayedStartupObserver, "browser-delayed-startup-finished", false);
         yield delayedStartupDeferred.promise;
+      }
+
+      let toolbarVisibilityBtn = document.getElementById(kToolbarVisibilityBtn);
+      let togglableToolbars = window.getTogglableToolbars();
+      let bookmarksToolbar = document.getElementById("PersonalToolbar");
+      if (togglableToolbars.length == 0 ||
+          (togglableToolbars.length == 1 && togglableToolbars[0] == bookmarksToolbar)) {
+        toolbarVisibilityBtn.setAttribute("hidden", "true");
+      } else {
+        toolbarVisibilityBtn.removeAttribute("hidden");
       }
 
       // Disable lightweight themes while in customization mode since
@@ -198,18 +229,34 @@ CustomizeMode.prototype = {
       // Show the palette now that the transition has finished.
       this.visiblePalette.hidden = false;
 
+      this._handler.isEnteringCustomizeMode = false;
       this.dispatchToolboxEvent("customizationready");
+      if (!this._wantToBeInCustomizeMode) {
+        this.exit();
+      }
     }.bind(this)).then(null, function(e) {
       ERROR(e);
       // We should ensure this has been called, and calling it again doesn't hurt:
       window.PanelUI.endBatchUpdate();
-    });
+      this._handler.isEnteringCustomizeMode = false;
+    }.bind(this));
   },
 
   exit: function() {
-    if (!this._customizing || this._transitioning) {
+    this._wantToBeInCustomizeMode = false;
+
+    if (!this._customizing || this._handler.isExitingCustomizeMode) {
       return;
     }
+
+    // Entering; want to exit once we've done that.
+    if (this._handler.isEnteringCustomizeMode) {
+      LOG("Attempted to exit while we're in the middle of entering. " +
+          "We'll exit after we've entered");
+      return;
+    }
+
+    this._handler.isExitingCustomizeMode = true;
 
     CustomizableUI.removeListener(this);
 
@@ -293,7 +340,13 @@ CustomizeMode.prototype = {
         let custBrowser = this.browser.selectedBrowser;
         if (custBrowser.canGoBack) {
           // If there's history to this tab, just go back.
-          custBrowser.goBack();
+          // Note that this throws an exception if the previous document has a
+          // problematic URL (e.g. about:idontexist)
+          try {
+            custBrowser.goBack();
+          } catch (ex) {
+            ERROR(ex);
+          }
         } else {
           // If we can't go back, we're removing the about:customization tab.
           // We only do this if we're the top window for this window (so not
@@ -318,13 +371,19 @@ CustomizeMode.prototype = {
       this.window.PanelUI.endBatchUpdate();
       this._changed = false;
       this._transitioning = false;
+      this._handler.isExitingCustomizeMode = false;
       this.dispatchToolboxEvent("aftercustomization");
       CustomizableUI.notifyEndCustomizing(this.window);
+
+      if (this._wantToBeInCustomizeMode) {
+        this.enter();
+      }
     }.bind(this)).then(null, function(e) {
       ERROR(e);
       // We should ensure this has been called, and calling it again doesn't hurt:
       window.PanelUI.endBatchUpdate();
-    });
+      this._handler.isExitingCustomizeMode = false;
+    }.bind(this));
   },
 
   /**
@@ -568,6 +627,9 @@ CustomizeMode.prototype = {
 
     if (aNode.hasAttribute("flex")) {
       wrapper.setAttribute("flex", aNode.getAttribute("flex"));
+      if (aPlace == "palette") {
+        aNode.removeAttribute("flex");
+      }
     }
 
 
@@ -632,6 +694,10 @@ CustomizeMode.prototype = {
 
     if (aWrapper.hasAttribute("itemchecked")) {
       toolbarItem.checked = true;
+    }
+
+    if (aWrapper.hasAttribute("flex") && !toolbarItem.hasAttribute("flex")) {
+      toolbarItem.setAttribute("flex", aWrapper.getAttribute("flex"));
     }
 
     if (aWrapper.hasAttribute("itemcommand")) {
@@ -731,6 +797,7 @@ CustomizeMode.prototype = {
     this.resetting = true;
     // Disable the reset button temporarily while resetting:
     let btn = this.document.getElementById("customization-reset-button");
+    BrowserUITelemetry.countCustomizationEvent("reset");
     btn.disabled = true;
     return Task.spawn(function() {
       this._removePanelCustomizationPlaceholders();
@@ -911,6 +978,7 @@ CustomizeMode.prototype = {
     let dt = aEvent.dataTransfer;
     let documentId = aEvent.target.ownerDocument.documentElement.id;
     let draggedItem = item.firstChild;
+    let isInToolbar = CustomizableUI.getPlaceForItem(item) == "toolbar";
 
     dt.mozSetDataAt(kDragDataTypePrefix + documentId, draggedItem.id, 0);
     dt.effectAllowed = "move";
@@ -931,6 +999,9 @@ CustomizeMode.prototype = {
         item.hidden = true;
         this._showPanelCustomizationPlaceholders();
         DragPositionManager.start(this.window);
+        if (!isInToolbar && item.nextSibling) {
+          this._setDragActive(item.nextSibling, "before", draggedItem.id, false);
+        }
       }
       this._initializeDragAfterMove = null;
       this.window.clearTimeout(this._dragInitializeTimeout);
@@ -1106,6 +1177,11 @@ CustomizeMode.prototype = {
         }
 
         CustomizableUI.removeWidgetFromArea(aDraggedItemId);
+        BrowserUITelemetry.countCustomizationEvent("remove");
+        // Special widgets are removed outright, we can return here:
+        if (CustomizableUI.isSpecialWidget(aDraggedItemId)) {
+          return;
+        }
       }
       draggedItem = draggedItem.parentNode;
 
@@ -1139,6 +1215,7 @@ CustomizeMode.prototype = {
         this.wrapToolbarItem(aTargetNode, place);
       }
       this.wrapToolbarItem(draggedItem, place);
+      BrowserUITelemetry.countCustomizationEvent("move");
       return;
     }
 
@@ -1146,6 +1223,12 @@ CustomizeMode.prototype = {
     // widget to the end of the area.
     if (aTargetNode == aTargetArea.customizationTarget) {
       CustomizableUI.addWidgetToArea(aDraggedItemId, aTargetArea.id);
+      // For the purposes of BrowserUITelemetry, we consider both moving a widget
+      // within the same area, and adding a widget from one area to another area
+      // as a "move". An "add" is only when we move an item from the palette into
+      // an area.
+      let custEventType = aOriginArea.id == kPaletteId ? "add" : "move";
+      BrowserUITelemetry.countCustomizationEvent(custEventType);
       return;
     }
 
@@ -1173,7 +1256,6 @@ CustomizeMode.prototype = {
     }
     let position = placement ? placement.position : null;
 
-
     // Is the target area the same as the origin? Since we've already handled
     // the possibility that the target is the customization palette, we know
     // that the widget is moving within a customizable area.
@@ -1182,6 +1264,12 @@ CustomizeMode.prototype = {
     } else {
       CustomizableUI.addWidgetToArea(aDraggedItemId, aTargetArea.id, position);
     }
+
+    // For BrowserUITelemetry, an "add" is only when we move an item from the palette
+    // into an area. Otherwise, it's a move.
+    let custEventType = aOriginArea.id == kPaletteId ? "add" : "move";
+    BrowserUITelemetry.countCustomizationEvent(custEventType);
+
     // If we dropped onto a skipintoolbarset item, manually correct the drop location:
     if (aTargetNode != itemForPlacement) {
       let draggedWrapper = draggedItem.parentNode;
@@ -1263,7 +1351,7 @@ CustomizeMode.prototype = {
       let window = aItem.ownerDocument.defaultView;
       let draggedItem = window.document.getElementById(aDraggedItemId);
       if (!aInToolbar) {
-        this._setPanelDragActive(aItem, draggedItem, aValue);
+        this._setGridDragActive(aItem, draggedItem, aValue);
       } else {
         // Calculate width of the item when it'd be dropped in this position
         let width = this._getDragItemSize(aItem, draggedItem).width;
@@ -1309,7 +1397,7 @@ CustomizeMode.prototype = {
     }
   },
 
-  _setPanelDragActive: function(aDragOverNode, aDraggedItem, aValue) {
+  _setGridDragActive: function(aDragOverNode, aDraggedItem, aValue) {
     let targetArea = this._getCustomizableParent(aDragOverNode);
     let positionManager = DragPositionManager.getManagerForArea(targetArea);
     let draggedSize = this._getDragItemSize(aDragOverNode, aDraggedItem);

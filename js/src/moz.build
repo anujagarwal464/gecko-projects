@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DIRS += ['config']
-
 if CONFIG['DEHYDRA_PATH']:
     DIRS += ['analysis-tests']
 
@@ -18,15 +16,10 @@ if not CONFIG['JS_DISABLE_SHELL']:
 
 TEST_DIRS += ['jsapi-tests', 'tests', 'gdb']
 
-mfbt_root = '../../mfbt'
-LOCAL_INCLUDES += ['%s/double-conversion' % mfbt_root]
+LOCAL_INCLUDES += ['../../mfbt/double-conversion']
 
 if CONFIG['JS_STANDALONE']:
     LIBRARY_NAME = 'mozjs-%s' % CONFIG['MOZILLA_SYMBOLVERSION']
-
-    # When building standalone, we need to include mfbt sources, and to declare
-    # "exported" mfbt symbols on its behalf when we use its headers.
-    include('%s/common.mozbuild' % mfbt_root)
 else:
     LIBRARY_NAME = 'mozjs'
 
@@ -157,6 +150,7 @@ UNIFIED_SOURCES += [
     'vm/ArgumentsObject.cpp',
     'vm/CallNonGenericMethod.cpp',
     'vm/CharacterEncoding.cpp',
+    'vm/Compression.cpp',
     'vm/DateTime.cpp',
     'vm/Debugger.cpp',
     'vm/ErrorObject.cpp',
@@ -349,11 +343,15 @@ else:
     ]
 
 if CONFIG['ENABLE_ION'] or CONFIG['ENABLE_YARR_JIT']:
-    SOURCES += [
-        'assembler/assembler/ARMAssembler.cpp',
-        'assembler/assembler/MacroAssemblerARM.cpp',
-        'assembler/assembler/MacroAssemblerX86Common.cpp',
-    ]
+    if '86' in CONFIG['TARGET_CPU']:
+        SOURCES += [
+            'assembler/assembler/MacroAssemblerX86Common.cpp',
+        ]
+    elif CONFIG['CPU_ARCH'] == 'arm':
+        SOURCES += [
+            'assembler/assembler/ARMAssembler.cpp',
+            'assembler/assembler/MacroAssemblerARM.cpp',
+        ]
 
 if CONFIG['ENABLE_YARR_JIT']:
     SOURCES += [

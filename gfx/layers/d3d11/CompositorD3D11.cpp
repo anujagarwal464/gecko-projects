@@ -341,7 +341,7 @@ CompositorD3D11::Initialize()
 TemporaryRef<DataTextureSource>
 CompositorD3D11::CreateDataTextureSource(TextureFlags aFlags)
 {
-  RefPtr<DataTextureSource> result = new DataTextureSourceD3D11(gfx::FORMAT_UNKNOWN,
+  RefPtr<DataTextureSource> result = new DataTextureSourceD3D11(gfx::SurfaceFormat::UNKNOWN,
                                                                 this);
   return result.forget();
 }
@@ -428,8 +428,10 @@ CompositorD3D11::CreateRenderTargetFromSource(const gfx::IntRect &aRect,
     srcBox.back = 0;
 
     const IntSize& srcSize = sourceD3D11->GetSize();
-    if (srcBox.right <= srcSize.width &&
-        srcBox.bottom <= srcSize.height) {
+    MOZ_ASSERT(srcSize.width >= 0 && srcSize.height >= 0,
+               "render targets should have nonnegative sizes");
+    if (srcBox.right <= static_cast<uint32_t>(srcSize.width) &&
+        srcBox.bottom <= static_cast<uint32_t>(srcSize.height)) {
       mContext->CopySubresourceRegion(texture, 0,
                                       0, 0, 0,
                                       sourceD3D11->GetD3D11Texture(), 0,
@@ -590,7 +592,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
       EffectYCbCr* ycbcrEffect =
         static_cast<EffectYCbCr*>(aEffectChain.mPrimaryEffect.get());
 
-      SetSamplerForFilter(FILTER_LINEAR);
+      SetSamplerForFilter(Filter::LINEAR);
 
       mVSConstants.textureCoords = ycbcrEffect->mTextureCoords;
 
@@ -667,7 +669,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
 void
 CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
                             const Rect* aClipRectIn,
-                            const gfxMatrix& aTransform,
+                            const gfx::Matrix& aTransform,
                             const Rect& aRenderBounds,
                             Rect* aClipRectOut,
                             Rect* aRenderBoundsOut)
@@ -917,10 +919,10 @@ CompositorD3D11::SetSamplerForFilter(Filter aFilter)
   ID3D11SamplerState *sampler;
   switch (aFilter) {
   default:
-  case FILTER_LINEAR:
+  case Filter::LINEAR:
     sampler = mAttachments->mLinearSamplerState;
     break;
-  case FILTER_POINT:
+  case Filter::POINT:
     sampler = mAttachments->mPointSamplerState;
     break;
   }
@@ -955,7 +957,7 @@ CompositorD3D11::PaintToTarget()
     Factory::CreateWrappingDataSourceSurface((uint8_t*)map.pData,
                                              map.RowPitch,
                                              IntSize(bbDesc.Width, bbDesc.Height),
-                                             FORMAT_B8G8R8A8);
+                                             SurfaceFormat::B8G8R8A8);
   mTarget->CopySurface(sourceSurface,
                        IntRect(0, 0, bbDesc.Width, bbDesc.Height),
                        IntPoint());

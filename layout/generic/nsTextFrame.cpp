@@ -38,10 +38,11 @@
 #include "nsLayoutUtils.h"
 #include "nsDisplayList.h"
 #include "nsFrame.h"
+#include "nsIMathMLFrame.h"
 #include "nsPlaceholderFrame.h"
 #include "nsTextFrameUtils.h"
 #include "nsTextRunTransformations.h"
-#include "MathVariantTextRunFactory.h"
+#include "MathMLTextRunFactory.h"
 #include "nsExpirationTracker.h"
 #include "nsUnicodeProperties.h"
 
@@ -247,9 +248,6 @@ NS_DECLARE_FRAME_PROPERTY(TextFrameGlyphObservers, DestroyGlyphObserverList);
 
 // nsTextFrame.h has
 // #define TEXT_IS_IN_TOKEN_MATHML          NS_FRAME_STATE_BIT(32)
-
-// nsTextFrame.h has
-// #define TEXT_IS_IN_SINGLE_CHAR_MI        NS_FRAME_STATE_BIT(59)
 
 // Set when this text frame is mentioned in the userdata for the
 // uninflated textrun property
@@ -1326,8 +1324,11 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
                  "Wrong line container hint");
   }
 
-  if (aForFrame && aForFrame->HasAnyStateBits(TEXT_IS_IN_SINGLE_CHAR_MI)) {
-    aLineContainer->AddStateBits(TEXT_IS_IN_SINGLE_CHAR_MI);
+  if (aForFrame && aForFrame->HasAnyStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI)) {
+    aLineContainer->AddStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI);
+  }
+  if (aForFrame && aForFrame->HasAnyStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT)) {
+    aLineContainer->AddStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT);
   }
 
   nsPresContext* presContext = aLineContainer->PresContext();
@@ -1888,12 +1889,13 @@ static const nsTextFrameUtils::CompressionMode CSSWhitespaceToCompressionMode[] 
 gfxTextRun*
 BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
 {
-  gfxSkipCharsBuilder builder;
+  gfxSkipChars skipChars;
 
   const void* textPtr = aTextBuffer;
   bool anySmallcapsStyle = false;
   bool anyTextTransformStyle = false;
-  bool anyMathVariantStyle = false;
+  bool anyMathMLStyling = false;
+  uint8_t sstyScriptLevel = 0;
   uint32_t textFlags = nsTextFrameUtils::TEXT_NO_BREAKS;
 
   if (mCurrentRunContextInfo & nsTextFrameUtils::INCOMING_WHITESPACE) {
@@ -1972,10 +1974,35 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
       anySmallcapsStyle = true;
     }
     if (NS_MATHML_MATHVARIANT_NONE != fontStyle->mMathVariant) {
-      anyMathVariantStyle = true;
-    } else if (mLineContainer->GetStateBits() & TEXT_IS_IN_SINGLE_CHAR_MI) {
+      anyMathMLStyling = true;
+    } else if (mLineContainer->GetStateBits() & NS_FRAME_IS_IN_SINGLE_CHAR_MI) {
       textFlags |= nsTextFrameUtils::TEXT_IS_SINGLE_CHAR_MI;
-      anyMathVariantStyle = true;
+      anyMathMLStyling = true;
+    }
+    nsIFrame* parent = mLineContainer->GetParent();
+    nsIFrame* child = mLineContainer;
+    uint8_t oldScriptLevel = 0;
+    while (parent && 
+           child->HasAnyStateBits(NS_FRAME_MATHML_SCRIPT_DESCENDANT)) {
+      // Reconstruct the script level ignoring any user overrides. It is
+      // calculated this way instead of using scriptlevel to ensure the 
+      // correct ssty font feature setting is used even if the user sets a
+      // different (especially negative) scriptlevel.
+      nsIMathMLFrame* mathFrame= do_QueryFrame(parent);
+      if (mathFrame) {
+        sstyScriptLevel += mathFrame->ScriptIncrement(child);
+      }
+      if (sstyScriptLevel < oldScriptLevel) {
+        // overflow
+        sstyScriptLevel = UINT8_MAX;
+        break;
+      }
+      child = parent;
+      parent = parent->GetParent();
+      oldScriptLevel = sstyScriptLevel;
+    }
+    if (sstyScriptLevel) {
+      anyMathMLStyling = true;
     }
 
     // Figure out what content is included in this flow.
@@ -1987,7 +2014,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
 
     TextRunMappedFlow* newFlow = &userData->mMappedFlows[i];
     newFlow->mStartFrame = mappedFlow->mStartFrame;
-    newFlow->mDOMOffsetToBeforeTransformOffset = builder.GetCharCount() -
+    newFlow->mDOMOffsetToBeforeTransformOffset = skipChars.GetOriginalCharCount() -
       mappedFlow->mStartFrame->GetContentOffset();
     newFlow->mContentLength = contentLength;
 
@@ -2003,7 +2030,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
       char16_t* bufStart = static_cast<char16_t*>(aTextBuffer);
       char16_t* bufEnd = nsTextFrameUtils::TransformText(
           frag->Get2b() + contentStart, contentLength, bufStart,
-          compression, &mNextRunContextInfo, &builder, &analysisFlags);
+          compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
       aTextBuffer = bufEnd;
       currentTransformedTextOffset = bufEnd - static_cast<const char16_t*>(textPtr);
     } else {
@@ -2018,7 +2045,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
         }
         uint8_t* end = nsTextFrameUtils::TransformText(
             reinterpret_cast<const uint8_t*>(frag->Get1b()) + contentStart, contentLength,
-            bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
+            bufStart, compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
         aTextBuffer = ExpandBuffer(static_cast<char16_t*>(aTextBuffer),
                                    tempBuf.Elements(), end - tempBuf.Elements());
         currentTransformedTextOffset =
@@ -2027,18 +2054,12 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
         uint8_t* bufStart = static_cast<uint8_t*>(aTextBuffer);
         uint8_t* end = nsTextFrameUtils::TransformText(
             reinterpret_cast<const uint8_t*>(frag->Get1b()) + contentStart, contentLength,
-            bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
+            bufStart, compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
         aTextBuffer = end;
         currentTransformedTextOffset = end - static_cast<const uint8_t*>(textPtr);
       }
     }
     textFlags |= analysisFlags;
-  }
-
-  // Check for out-of-memory in gfxSkipCharsBuilder
-  if (!builder.IsOK()) {
-    DestroyUserData(userDataToDestroy);
-    return nullptr;
   }
 
   void* finalUserData;
@@ -2093,8 +2114,6 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     textFlags |= gfxTextRunFactory::TEXT_NEED_BOUNDING_BOX;
   }
 
-  gfxSkipChars skipChars;
-  skipChars.TakeFrom(&builder);
   // Convert linebreak coordinates to transformed string offsets
   NS_ASSERTION(nextBreakIndex == mLineBreakBeforeFrames.Length(),
                "Didn't find all the frames to break-before...");
@@ -2118,9 +2137,9 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     transformingFactory =
       new nsCaseTransformTextRunFactory(transformingFactory.forget());
   }
-  if (anyMathVariantStyle) {
+  if (anyMathMLStyling) {
     transformingFactory =
-      new nsMathVariantTextRunFactory(transformingFactory.forget());
+      new MathMLTextRunFactory(transformingFactory.forget(), sstyScriptLevel);
   }
   nsTArray<nsStyleContext*> styles;
   if (transformingFactory) {
@@ -2235,7 +2254,7 @@ BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun *aTextRun)
     return false;
   }
 
-  gfxSkipCharsBuilder builder;
+  gfxSkipChars skipChars;
 
   nsAutoTArray<int32_t,50> textBreakPoints;
   TextRunUserData dummyData;
@@ -2280,7 +2299,7 @@ BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun *aTextRun)
 
     TextRunMappedFlow* newFlow = &userData->mMappedFlows[i];
     newFlow->mStartFrame = mappedFlow->mStartFrame;
-    newFlow->mDOMOffsetToBeforeTransformOffset = builder.GetCharCount() -
+    newFlow->mDOMOffsetToBeforeTransformOffset = skipChars.GetOriginalCharCount() -
       mappedFlow->mStartFrame->GetContentOffset();
     newFlow->mContentLength = contentLength;
 
@@ -2296,7 +2315,7 @@ BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun *aTextRun)
       char16_t* bufStart = static_cast<char16_t*>(textPtr);
       char16_t* bufEnd = nsTextFrameUtils::TransformText(
           frag->Get2b() + contentStart, contentLength, bufStart,
-          compression, &mNextRunContextInfo, &builder, &analysisFlags);
+          compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
       textPtr = bufEnd;
     } else {
       if (mDoubleByteText) {
@@ -2310,14 +2329,14 @@ BuildTextRunsScanner::SetupLineBreakerContext(gfxTextRun *aTextRun)
         }
         uint8_t* end = nsTextFrameUtils::TransformText(
             reinterpret_cast<const uint8_t*>(frag->Get1b()) + contentStart, contentLength,
-            bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
+            bufStart, compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
         textPtr = ExpandBuffer(static_cast<char16_t*>(textPtr),
                                tempBuf.Elements(), end - tempBuf.Elements());
       } else {
         uint8_t* bufStart = static_cast<uint8_t*>(textPtr);
         uint8_t* end = nsTextFrameUtils::TransformText(
             reinterpret_cast<const uint8_t*>(frag->Get1b()) + contentStart, contentLength,
-            bufStart, compression, &mNextRunContextInfo, &builder, &analysisFlags);
+            bufStart, compression, &mNextRunContextInfo, &skipChars, &analysisFlags);
         textPtr = end;
       }
     }
@@ -5219,9 +5238,6 @@ static bool GetSelectionTextShadow(nsIFrame* aFrame,
                                    nsTextPaintStyle& aTextPaintStyle,
                                    nsCSSShadowArray** aShadow)
 {
-  if (aFrame->IsSVGText()) {
-    return false;
-  }
   switch (aType) {
     case nsISelectionController::SELECTION_NORMAL:
       return aTextPaintStyle.GetSelectionShadow(aShadow);
@@ -5519,7 +5535,7 @@ nsTextFrame::PaintTextWithSelectionColors(gfxContext* aCtx,
 
     // Determine what shadow, if any, to draw - either from textStyle
     // or from the ::-moz-selection pseudo-class if specified there
-    nsCSSShadowArray *shadow = textStyle->GetTextShadow(this);
+    nsCSSShadowArray* shadow = textStyle->GetTextShadow();
     GetSelectionTextShadow(this, type, aTextPaintStyle, &shadow);
 
     // Draw shadows, if any
@@ -5905,7 +5921,7 @@ nsTextFrame::PaintText(nsRenderingContext* aRenderingContext, nsPoint aPt,
   nscolor foregroundColor = textPaintStyle.GetTextColor();
   if (!aCallbacks) {
     const nsStyleText* textStyle = StyleText();
-    if (textStyle->HasTextShadow(this)) {
+    if (textStyle->HasTextShadow()) {
       // Text shadow happens with the last value being painted at the back,
       // ie. it is painted first.
       gfxTextRun::Metrics shadowMetrics = 
@@ -8331,7 +8347,7 @@ nsresult nsTextFrame::GetRenderedText(nsAString* aAppendToString,
                                       uint32_t aSkippedMaxLength)
 {
   // The handling of aSkippedStartOffset and aSkippedMaxLength could be more efficient...
-  gfxSkipCharsBuilder skipCharsBuilder;
+  gfxSkipChars skipChars;
   nsTextFrame* textFrame;
   const nsTextFragment* textFrag = mContent->GetText();
   uint32_t keptCharsLength = 0;
@@ -8360,7 +8376,7 @@ nsresult nsTextFrame::GetRenderedText(nsAString* aAppendToString,
     TrimmedOffsets trimmedContentOffsets = textFrame->GetTrimmedOffsets(textFrag, false);
     int32_t startOfLineSkipChars = trimmedContentOffsets.mStart - textFrame->mContentOffset;
     if (startOfLineSkipChars > 0) {
-      skipCharsBuilder.SkipChars(startOfLineSkipChars);
+      skipChars.SkipChars(startOfLineSkipChars);
       iter.SetOriginalOffset(trimmedContentOffsets.mStart);
     }
 
@@ -8370,10 +8386,10 @@ nsresult nsTextFrame::GetRenderedText(nsAString* aAppendToString,
            keptCharsLength < aSkippedMaxLength) {
       // For each original char from content text
       if (iter.IsOriginalCharSkipped() || ++validCharsLength <= aSkippedStartOffset) {
-        skipCharsBuilder.SkipChar();
+        skipChars.SkipChar();
       } else {
         ++keptCharsLength;
-        skipCharsBuilder.KeepChar();
+        skipChars.KeepChar();
         if (aAppendToString) {
           aAppendToString->Append(
               TransformChar(textStyle, textFrame->mTextRun, iter.GetSkippedOffset(),
@@ -8388,10 +8404,10 @@ nsresult nsTextFrame::GetRenderedText(nsAString* aAppendToString,
   }
   
   if (aSkipChars) {
-    aSkipChars->TakeFrom(&skipCharsBuilder); // Copy skipChars into aSkipChars
+    aSkipChars->TakeFrom(&skipChars); // Copy skipChars into aSkipChars
     if (aSkipIter) {
       // Caller must provide both pointers in order to retrieve a gfxSkipCharsIterator,
-      // because the gfxSkipCharsIterator holds a weak pointer to the gfxSkipCars.
+      // because the gfxSkipCharsIterator holds a weak pointer to the gfxSkipChars.
       *aSkipIter = gfxSkipCharsIterator(*aSkipChars, GetContentLength());
     }
   }

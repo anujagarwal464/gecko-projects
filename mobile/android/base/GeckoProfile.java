@@ -26,6 +26,7 @@ public final class GeckoProfile {
     private static final String LOGTAG = "GeckoProfile";
     // Used to "lock" the guest profile, so that we'll always restart in it
     private static final String LOCK_FILE_NAME = ".active_lock";
+    public static final String DEFAULT_PROFILE = "default";
 
     private static HashMap<String, GeckoProfile> sProfileCache = new HashMap<String, GeckoProfile>();
     private static String sDefaultProfileName = null;
@@ -113,7 +114,7 @@ public final class GeckoProfile {
         if (TextUtils.isEmpty(profileName) && profileDir == null) {
             profileName = GeckoProfile.findDefaultProfile(context);
             if (profileName == null)
-                profileName = "default";
+                profileName = DEFAULT_PROFILE;
         }
 
         // actually try to look up the profile
@@ -547,11 +548,16 @@ public final class GeckoProfile {
         // If this is the first time its created, we also add a General section
         // look for the first profile number that isn't taken yet
         int profileNum = 0;
-        while (parser.getSection("Profile" + profileNum) != null) {
+        boolean isDefaultSet = false;
+        INISection profileSection;
+        while ((profileSection = parser.getSection("Profile" + profileNum)) != null) {
             profileNum++;
+            if (profileSection.getProperty("Default") != null) {
+                isDefaultSet = true;
+            }
         }
 
-        INISection profileSection = new INISection("Profile" + profileNum);
+        profileSection = new INISection("Profile" + profileNum);
         profileSection.setProperty("Name", mName);
         profileSection.setProperty("IsRelative", 1);
         profileSection.setProperty("Path", saltedName);
@@ -560,8 +566,11 @@ public final class GeckoProfile {
             INISection generalSection = new INISection("General");
             generalSection.setProperty("StartWithLastProfile", 1);
             parser.addSection(generalSection);
+        }
 
-            // only set as default if this is the first profile we're creating
+        if (!isDefaultSet && !mName.startsWith("webapp")) {
+            // only set as default if this is the first non-webapp
+            // profile we're creating
             profileSection.setProperty("Default", 1);
         }
 

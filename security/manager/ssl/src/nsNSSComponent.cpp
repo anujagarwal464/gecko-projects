@@ -11,6 +11,7 @@
 #include "nsNSSComponent.h"
 
 #include "CertVerifier.h"
+#include "mozilla/Telemetry.h"
 #include "nsCertVerificationThread.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsComponentManagerUtils.h"
@@ -914,6 +915,8 @@ static const int32_t OCSP_ENABLED_DEFAULT = 1;
 static const bool REQUIRE_SAFE_NEGOTIATION_DEFAULT = false;
 static const bool ALLOW_UNRESTRICTED_RENEGO_DEFAULT = false;
 static const bool FALSE_START_ENABLED_DEFAULT = true;
+static const bool NPN_ENABLED_DEFAULT = true;
+static const bool ALPN_ENABLED_DEFAULT = false;
 
 namespace {
 
@@ -994,27 +997,36 @@ CipherSuiteChangeObserver::Observe(nsISupports *aSubject,
 } // anonymous namespace
 
 // Caller must hold a lock on nsNSSComponent::mutex when calling this function
-void nsNSSComponent::setValidationOptions()
+void nsNSSComponent::setValidationOptions(bool isInitialSetting)
 {
   nsNSSShutDownPreventionLock locker;
 
   bool crlDownloading = Preferences::GetBool("security.CRL_download.enabled",
                                              false);
+
+  // This preference controls whether we do OCSP fetching and does not affect
+  // OCSP stapling.
   // 0 = disabled, 1 = enabled
   int32_t ocspEnabled = Preferences::GetInt("security.OCSP.enabled",
                                             OCSP_ENABLED_DEFAULT);
 
-  bool ocspRequired = Preferences::GetBool("security.OCSP.require", false);
+  bool ocspRequired = ocspEnabled &&
+    Preferences::GetBool("security.OCSP.require", false);
+
+  // We measure the setting of the pref at startup only to minimize noise by
+  // addons that may muck with the settings, though it probably doesn't matter.
+  if (isInitialSetting) {
+    Telemetry::Accumulate(Telemetry::CERT_OCSP_ENABLED, ocspEnabled);
+    Telemetry::Accumulate(Telemetry::CERT_OCSP_REQUIRED, ocspRequired);
+  }
+
   bool aiaDownloadEnabled = Preferences::GetBool("security.missing_cert_download.enabled",
                                                  false);
 
   bool ocspStaplingEnabled = Preferences::GetBool("security.ssl.enable_ocsp_stapling",
                                                   true);
-  if (!ocspEnabled) {
-    ocspStaplingEnabled = false;
-  }
-  PublicSSLState()->SetOCSPStaplingEnabled(ocspStaplingEnabled);
-  PrivateSSLState()->SetOCSPStaplingEnabled(ocspStaplingEnabled);
+  PublicSSLState()->SetOCSPOptions(ocspEnabled, ocspStaplingEnabled);
+  PrivateSSLState()->SetOCSPOptions(ocspEnabled, ocspStaplingEnabled);
 
   setNonPkixOcspEnabled(ocspEnabled);
 
@@ -1043,12 +1055,6 @@ void nsNSSComponent::setValidationOptions()
         CertVerifier::ocsp_strict : CertVerifier::ocsp_relaxed,
       ocspGetEnabled ?
         CertVerifier::ocsp_get_enabled : CertVerifier::ocsp_get_disabled);
-
-  /*
-    * The new defaults might change the validity of already established SSL sessions,
-    * let's not reuse them.
-    */
-  SSL_ClearSessionCache();
 }
 
 // Enable the TLS versions given in the prefs, defaulting to SSL 3.0 (min
@@ -1262,13 +1268,24 @@ nsNSSComponent::InitializeNSS()
                          Preferences::GetBool("security.ssl.enable_false_start",
                                               FALSE_START_ENABLED_DEFAULT));
 
+    /* SSL_ENABLE_NPN and SSL_ENABLE_ALPN also require calling
+       SSL_SetNextProtoNego in order for the extensions to be negotiated.
+       WebRTC does not do that so it will not use NPN or ALPN even when these
+       preferences are true. */
+    SSL_OptionSetDefault(SSL_ENABLE_NPN,
+                         Preferences::GetBool("security.ssl.enable_npn",
+                                              NPN_ENABLED_DEFAULT));
+    SSL_OptionSetDefault(SSL_ENABLE_ALPN,
+                         Preferences::GetBool("security.ssl.enable_alpn",
+                                              ALPN_ENABLED_DEFAULT));
+
     if (NS_FAILED(InitializeCipherSuite())) {
       PR_LOG(gPIPNSSLog, PR_LOG_ERROR, ("Unable to initialize cipher suite settings\n"));
       return NS_ERROR_FAILURE;
     }
 
     // dynamic options from prefs
-    setValidationOptions();
+    setValidationOptions(true);
 
     mHttpForNSS.initTable();
     mHttpForNSS.registerHttpClient();
@@ -1635,13 +1652,12 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
   }
   else if (nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) { 
     nsNSSShutDownPreventionLock locker;
-    bool clearSessionCache = false;
+    bool clearSessionCache = true;
     NS_ConvertUTF16toUTF8  prefName(someData);
 
     if (prefName.Equals("security.tls.version.min") ||
         prefName.Equals("security.tls.version.max")) {
       (void) setEnabledTLSVersions();
-      clearSessionCache = true;
     } else if (prefName.Equals("security.ssl.require_safe_negotiation")) {
       bool requireSafeNegotiation =
         Preferences::GetBool("security.ssl.require_safe_negotiation",
@@ -1659,6 +1675,14 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
       SSL_OptionSetDefault(SSL_ENABLE_FALSE_START,
                            Preferences::GetBool("security.ssl.enable_false_start",
                                                 FALSE_START_ENABLED_DEFAULT));
+    } else if (prefName.Equals("security.ssl.enable_npn")) {
+      SSL_OptionSetDefault(SSL_ENABLE_NPN,
+                           Preferences::GetBool("security.ssl.enable_npn",
+                                                NPN_ENABLED_DEFAULT));
+    } else if (prefName.Equals("security.ssl.enable_alpn")) {
+      SSL_OptionSetDefault(SSL_ENABLE_ALPN,
+                           Preferences::GetBool("security.ssl.enable_alpn",
+                                                ALPN_ENABLED_DEFAULT));
     } else if (prefName.Equals("security.OCSP.enabled")
                || prefName.Equals("security.CRL_download.enabled")
                || prefName.Equals("security.fresh_revocation_info.require")
@@ -1667,11 +1691,14 @@ nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic,
                || prefName.Equals("security.OCSP.GET.enabled")
                || prefName.Equals("security.ssl.enable_ocsp_stapling")) {
       MutexAutoLock lock(mutex);
-      setValidationOptions();
+      setValidationOptions(false);
     } else if (prefName.Equals("network.ntlm.send-lm-response")) {
       bool sendLM = Preferences::GetBool("network.ntlm.send-lm-response",
                                          SEND_LM_DEFAULT);
       nsNTLMAuthModule::SetSendLM(sendLM);
+      clearSessionCache = false;
+    } else {
+      clearSessionCache = false;
     }
     if (clearSessionCache)
       SSL_ClearSessionCache();

@@ -216,7 +216,7 @@ IsPhiObservable(MPhi *phi, Observability observe)
 
     uint32_t slot = phi->slot();
     CompileInfo &info = phi->block()->info();
-    JSFunction *fun = info.fun();
+    JSFunction *fun = info.funMaybeLazy();
 
     // If the Phi is of the |this| value, it must always be observable.
     if (fun && slot == info.thisSlot())
@@ -2143,12 +2143,15 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
     // which will definitely be added to the created object before it has a
     // chance to escape and be accessed elsewhere.
 
-    if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
+    RootedScript script(cx, fun->getOrCreateScript(cx));
+    if (!script)
         return false;
 
-    RootedScript script(cx, fun->nonLazyScript());
-
     if (!script->compileAndGo() || !script->canBaselineCompile())
+        return true;
+
+    static const uint32_t MAX_SCRIPT_SIZE = 2000;
+    if (script->length() > MAX_SCRIPT_SIZE)
         return true;
 
     Vector<PropertyName *> accessedProperties(cx);

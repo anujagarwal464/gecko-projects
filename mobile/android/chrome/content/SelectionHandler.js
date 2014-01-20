@@ -125,23 +125,36 @@ var SelectionHandler = {
           this._ignoreSelectionChanges = true;
           // Check to see if the handles should be reversed.
           let isStartHandle = JSON.parse(aData).handleType == this.HANDLE_TYPE_START;
-          let selectionReversed = this._updateCacheForSelection(isStartHandle);
-          if (selectionReversed) {
-            // Reverse the anchor and focus to correspond to the new start and end handles.
-            let selection = this._getSelection();
-            let anchorNode = selection.anchorNode;
-            let anchorOffset = selection.anchorOffset;
-            selection.collapse(selection.focusNode, selection.focusOffset);
-            selection.extend(anchorNode, anchorOffset);
+
+          try {
+            let selectionReversed = this._updateCacheForSelection(isStartHandle);
+            if (selectionReversed) {
+              // Reverse the anchor and focus to correspond to the new start and end handles.
+              let selection = this._getSelection();
+              let anchorNode = selection.anchorNode;
+              let anchorOffset = selection.anchorOffset;
+              selection.collapse(selection.focusNode, selection.focusOffset);
+              selection.extend(anchorNode, anchorOffset);
+            }
+          } catch (e) {
+            // User finished handle positioning with one end off the screen
+            this._closeSelection();
+            break;
           }
+
           // Act on selectionChange notifications after handle movement ends
           this._ignoreSelectionChanges = false;
+          this._positionHandles();
 
         } else if (this._activeType == this.TYPE_CURSOR) {
           // Act on IMM composition notifications after caret movement ends
           this._ignoreCompositionChanges = false;
+          this._positionHandles();
+
+        } else {
+          Cu.reportError("Ignored \"TextSelection:Position\" message during invalid selection status");
         }
-        this._positionHandles();
+
         break;
       }
 
@@ -274,23 +287,40 @@ var SelectionHandler = {
    * Called to perform a selection operation, given a target element, selection method, starting point etc.
    */
   _performSelection: function sh_performSelection(aOptions) {
-    if (aOptions.mode == this.SELECT_ALL) {
-      if (this._targetElement instanceof HTMLPreElement)  {
-        // Use SELECT_PARAGRAPH else we default to entire page including trailing whitespace
-        return this._domWinUtils.selectAtPoint(1, 1, Ci.nsIDOMWindowUtils.SELECT_PARAGRAPH);
-      } else {
-        // Else default to selectALL Document
-        this._getSelectionController().selectAll();
-        return true;
-      }
-    }
-
     if (aOptions.mode == this.SELECT_AT_POINT) {
       return this._domWinUtils.selectAtPoint(aOptions.x, aOptions.y, Ci.nsIDOMWindowUtils.SELECT_WORDNOSPACE);
     }
 
-    Services.console.logStringMessage("Invalid selection mode " + aOptions.mode);
-    return false;
+    if (aOptions.mode != this.SELECT_ALL) {
+      Cu.reportError("SelectionHandler.js: _performSelection() Invalid selection mode " + aOptions.mode);
+      return false;
+    }
+
+    // HTMLPreElement is a #text node, SELECT_ALL implies entire paragraph
+    if (this._targetElement instanceof HTMLPreElement)  {
+      return this._domWinUtils.selectAtPoint(1, 1, Ci.nsIDOMWindowUtils.SELECT_PARAGRAPH);
+    }
+
+    // Else default to selectALL Document
+    this._getSelectionController().selectAll();
+
+    // Selection is entire HTMLHtmlElement, remove any trailing document whitespace
+    let selection = this._getSelection();
+    let lastNode = selection.focusNode;
+    while (lastNode && lastNode.lastChild) {
+      lastNode = lastNode.lastChild;
+    }
+
+    if (lastNode instanceof Text) {
+      try {
+        selection.extend(lastNode, lastNode.length);
+      } catch (e) {
+        Cu.reportError("SelectionHandler.js: _performSelection() whitespace trim fails: lastNode[" + lastNode +
+          "] lastNode.length[" + lastNode.length + "]");
+      }
+    }
+
+    return true;
   },
 
   /* Return true if the current selection (given by aPositions) is near to where the coordinates passed in */
@@ -743,8 +773,12 @@ var SelectionHandler = {
   // Returns true if the selection has been reversed. Takes optional aIsStartHandle
   // param to decide whether the selection has been reversed.
   _updateCacheForSelection: function sh_updateCacheForSelection(aIsStartHandle) {
-    let selection = this._getSelection();
-    let rects = selection.getRangeAt(0).getClientRects();
+    let rects = this._getSelection().getRangeAt(0).getClientRects();
+    if (!rects[0]) {
+      // nsISelection object exists, but there's nothing actually selected
+      throw "Failed to update cache for invalid selection";
+    }
+
     let start = { x: this._isRTL ? rects[0].right : rects[0].left, y: rects[0].bottom };
     let end = { x: this._isRTL ? rects[rects.length - 1].left : rects[rects.length - 1].right, y: rects[rects.length - 1].bottom };
 

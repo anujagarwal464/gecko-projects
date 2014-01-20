@@ -376,6 +376,7 @@ nsChildView::nsChildView() : nsBaseWidget()
 , mShowsResizeIndicator(false)
 , mHasRoundedBottomCorners(false)
 , mIsCoveringTitlebar(false)
+, mIsFullscreen(false)
 , mTitlebarCGContext(nullptr)
 , mBackingScaleFactor(0.0)
 , mVisible(false)
@@ -1580,6 +1581,18 @@ NS_IMETHODIMP nsChildView::Invalidate(const nsIntRect &aRect)
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
+void
+nsChildView::Update()
+{
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
+  if (!ShouldUseOffMainThreadCompositing() && mView) {
+    [mView displayIfNeeded];
+  }
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
 bool
 nsChildView::ComputeShouldAccelerate(bool aDefault)
 {
@@ -2059,6 +2072,7 @@ nsChildView::PrepareWindowEffects()
   CGFloat cornerRadius = [(ChildView*)mView cornerRadius];
   mDevPixelCornerRadius = cornerRadius * BackingScaleFactor();
   mIsCoveringTitlebar = [(ChildView*)mView isCoveringTitlebar];
+  mIsFullscreen = ([[mView window] styleMask] & NSFullScreenWindowMask) != 0;
   if (mIsCoveringTitlebar) {
     mTitlebarRect = RectContainingTitlebarControls();
     UpdateTitlebarCGContext();
@@ -2363,7 +2377,7 @@ void
 nsChildView::MaybeDrawTitlebar(GLManager* aManager, const nsIntRect& aRect)
 {
   MutexAutoLock lock(mEffectsLock);
-  if (!mIsCoveringTitlebar) {
+  if (!mIsCoveringTitlebar || mIsFullscreen) {
     return;
   }
 
@@ -2406,7 +2420,7 @@ nsChildView::MaybeDrawRoundedCorners(GLManager* aManager, const nsIntRect& aRect
     RefPtr<gfx::Path> path = builder->Finish();
     drawTarget->Fill(path,
                      gfx::ColorPattern(gfx::Color(1.0, 1.0, 1.0, 1.0)),
-                     gfx::DrawOptions(1.0f, gfx::OP_SOURCE));
+                     gfx::DrawOptions(1.0f, gfx::CompositionOp::OP_SOURCE));
   });
 
   // Use operator destination in: multiply all 4 channels with source alpha.
@@ -2416,13 +2430,13 @@ nsChildView::MaybeDrawRoundedCorners(GLManager* aManager, const nsIntRect& aRect
   gfx3DMatrix flipX = gfx3DMatrix::ScalingMatrix(-1, 1, 1);
   gfx3DMatrix flipY = gfx3DMatrix::ScalingMatrix(1, -1, 1);
 
-  if (mIsCoveringTitlebar) {
+  if (mIsCoveringTitlebar && !mIsFullscreen) {
     // Mask the top corners.
     mCornerMaskImage->Draw(aManager, aRect.TopLeft());
     mCornerMaskImage->Draw(aManager, aRect.TopRight(), flipX);
   }
 
-  if (mHasRoundedBottomCorners) {
+  if (mHasRoundedBottomCorners && !mIsFullscreen) {
     // Mask the bottom corners.
     mCornerMaskImage->Draw(aManager, aRect.BottomLeft(), flipY);
     mCornerMaskImage->Draw(aManager, aRect.BottomRight(), flipY * flipX);
@@ -2634,8 +2648,8 @@ RectTextureImage::BeginUpdate(const nsIntSize& aNewSize,
   if (!mUpdateDrawTarget || mBufferSize != neededBufferSize) {
     gfx::IntSize size(neededBufferSize.width, neededBufferSize.height);
     mUpdateDrawTarget =
-      gfx::Factory::CreateDrawTarget(gfx::BACKEND_COREGRAPHICS, size,
-                                     gfx::FORMAT_B8G8R8A8);
+      gfx::Factory::CreateDrawTarget(gfx::BackendType::COREGRAPHICS, size,
+                                     gfx::SurfaceFormat::B8G8R8A8);
     mBufferSize = neededBufferSize;
   }
 
@@ -2705,10 +2719,10 @@ RectTextureImage::UpdateFromCGContext(const nsIntSize& aNewSize,
       dt->CreateSourceSurfaceFromData(static_cast<uint8_t *>(CGBitmapContextGetData(aCGContext)),
                                       size,
                                       CGBitmapContextGetBytesPerRow(aCGContext),
-                                      gfx::FORMAT_B8G8R8A8);
+                                      gfx::SurfaceFormat::B8G8R8A8);
     dt->DrawSurface(sourceSurface, rect, rect,
                     gfx::DrawSurfaceOptions(),
-                    gfx::DrawOptions(1.0, gfx::OP_SOURCE));
+                    gfx::DrawOptions(1.0, gfx::CompositionOp::OP_SOURCE));
     dt->PopClip();
     EndUpdate();
   }
@@ -2729,7 +2743,7 @@ RectTextureImage::UpdateFromDrawTarget(const nsIntSize& aNewSize,
       gfxUtils::ClipToRegion(drawTarget, GetUpdateRegion());
       drawTarget->DrawSurface(source, rect, rect,
                               gfx::DrawSurfaceOptions(),
-                              gfx::DrawOptions(1.0, gfx::OP_SOURCE));
+                              gfx::DrawOptions(1.0, gfx::CompositionOp::OP_SOURCE));
       drawTarget->PopClip();
     }
     EndUpdate();
@@ -3525,14 +3539,14 @@ NSEvent* gLastDragMouseDownEvent = nil;
   targetSurface->SetAllowUseAsSource(false);
 
   nsRefPtr<gfxContext> targetContext;
-  if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(gfx::BACKEND_CAIRO)) {
+  if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(gfx::BackendType::CAIRO)) {
     RefPtr<gfx::DrawTarget> dt =
       gfxPlatform::GetPlatform()->CreateDrawTargetForSurface(targetSurface,
                                                              gfx::IntSize(backingSize.width,
                                                                           backingSize.height));
     dt->AddUserData(&gfxContext::sDontUseAsSourceKey, dt, nullptr);
     targetContext = new gfxContext(dt);
-  } else if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(gfx::BACKEND_COREGRAPHICS)) {
+  } else if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(gfx::BackendType::COREGRAPHICS)) {
     RefPtr<gfx::DrawTarget> dt =
       gfx::Factory::CreateDrawTargetForCairoCGContext(aContext,
                                                       gfx::IntSize(backingSize.width,
