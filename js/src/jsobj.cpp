@@ -1130,14 +1130,14 @@ JSObject::sealOrFreeze(JSContext *cx, HandleObject obj, ImmutabilityType it)
         Reverse(shapes.begin(), shapes.end());
 
         for (size_t i = 0; i < shapes.length(); i++) {
-            StackShape child(shapes[i]);
-            StackShape::AutoRooter rooter(cx, &child);
-            child.attrs |= getSealedOrFrozenAttributes(child.attrs, it);
+            StackShape unrootedChild(shapes[i]);
+            RootedGeneric<StackShape*> child(cx, &unrootedChild);
+            child->attrs |= getSealedOrFrozenAttributes(child->attrs, it);
 
-            if (!JSID_IS_EMPTY(child.propid) && it == FREEZE)
-                MarkTypePropertyNonWritable(cx, obj, child.propid);
+            if (!JSID_IS_EMPTY(child->propid) && it == FREEZE)
+                MarkTypePropertyNonWritable(cx, obj, child->propid);
 
-            last = cx->compartment()->propertyTree.getChild(cx, last, obj->numFixedSlots(), child);
+            last = cx->compartment()->propertyTree.getChild(cx, last, *child);
             if (!last)
                 return false;
         }
@@ -5252,7 +5252,13 @@ js::IsDelegate(JSContext *cx, HandleObject obj, const js::Value &v, bool *result
         *result = false;
         return true;
     }
-    RootedObject obj2(cx, &v.toObject());
+    return IsDelegateOfObject(cx, obj, &v.toObject(), result);
+}
+
+bool
+js::IsDelegateOfObject(JSContext *cx, HandleObject protoObj, JSObject* obj, bool *result)
+{
+    RootedObject obj2(cx, obj);
     for (;;) {
         if (!JSObject::getProto(cx, obj2, &obj2))
             return false;
@@ -5260,7 +5266,7 @@ js::IsDelegate(JSContext *cx, HandleObject obj, const js::Value &v, bool *result
             *result = false;
             return true;
         }
-        if (obj2 == obj) {
+        if (obj2 == protoObj) {
             *result = true;
             return true;
         }

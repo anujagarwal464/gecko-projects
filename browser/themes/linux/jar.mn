@@ -27,6 +27,7 @@ browser.jar:
   skin/classic/browser/customizableui/customizeMode-gridTexture.png  (customizableui/customizeMode-gridTexture.png)
   skin/classic/browser/customizableui/customizeMode-separatorHorizontal.png  (customizableui/customizeMode-separatorHorizontal.png)
   skin/classic/browser/customizableui/customizeMode-separatorVertical.png  (customizableui/customizeMode-separatorVertical.png)
+  skin/classic/browser/customizableui/customizeFavicon.ico  (../shared/customizableui/customizeFavicon.ico)
 * skin/classic/browser/engineManager.css
   skin/classic/browser/fullscreen-darknoise.png
   skin/classic/browser/Geolocation-16.png
@@ -93,6 +94,7 @@ browser.jar:
   skin/classic/browser/newtab/controls.png            (newtab/controls.png)
   skin/classic/browser/places/bookmarksMenu.png       (places/bookmarksMenu.png)
   skin/classic/browser/places/bookmarksToolbar.png    (places/bookmarksToolbar.png)
+  skin/classic/browser/places/bookmarksToolbar-menuPanel.png (places/bookmarksToolbar-menuPanel.png)
   skin/classic/browser/places/calendar.png            (places/calendar.png)
 * skin/classic/browser/places/editBookmarkOverlay.css (places/editBookmarkOverlay.css)
   skin/classic/browser/places/livemark-item.png       (places/livemark-item.png)

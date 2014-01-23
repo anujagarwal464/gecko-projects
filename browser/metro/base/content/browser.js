@@ -183,8 +183,11 @@ var Browser = {
       }
 
       // Should we restore the previous session (crash or some other event)
-      let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-      if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
+      let ss = Cc["@mozilla.org/browser/sessionstore;1"]
+               .getService(Ci.nsISessionStore);
+      let shouldRestore = ss.shouldRestore()
+                       || (3 == Services.prefs.getIntPref("browser.startup.page"));
+      if (shouldRestore) {
         let bringFront = false;
         // First open any commandline URLs, except the homepage
         if (activationURI && activationURI != kStartURI) {
@@ -1498,12 +1501,14 @@ Tab.prototype = {
     let browser = this._browser;
 
     if (aActive) {
+      notification.classList.add("active-tab-notificationbox");
       browser.setAttribute("type", "content-primary");
       Elements.browsers.selectedPanel = notification;
       browser.active = true;
       Elements.tabList.selectedTab = this._chromeTab;
       browser.focus();
     } else {
+      notification.classList.remove("active-tab-notificationbox");
       browser.messageManager.sendAsyncMessage("Browser:Blur", { });
       browser.setAttribute("type", "content");
       browser.active = false;

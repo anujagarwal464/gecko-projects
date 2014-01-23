@@ -19,6 +19,7 @@
 
 #include "jsinferinlines.h"
 #include "jsobjinlines.h"
+#include "jsopcodeinlines.h"
 
 using namespace js;
 using namespace js::jit;
@@ -1522,7 +1523,7 @@ jit::ExtractLinearInequality(MTest *test, BranchDirection direction,
 
     JSOp jsop = compare->jsop();
     if (direction == FALSE_BRANCH)
-        jsop = analyze::NegateCompareOp(jsop);
+        jsop = NegateCompareOp(jsop);
 
     SimpleLinearSum lsum = ExtractLinearSum(lhs);
     SimpleLinearSum rsum = ExtractLinearSum(rhs);
@@ -2148,6 +2149,10 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
         return false;
 
     if (!script->compileAndGo() || !script->canBaselineCompile())
+        return true;
+
+    static const uint32_t MAX_SCRIPT_SIZE = 2000;
+    if (script->length() > MAX_SCRIPT_SIZE)
         return true;
 
     Vector<PropertyName *> accessedProperties(cx);

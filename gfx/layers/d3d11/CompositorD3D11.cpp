@@ -669,7 +669,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
 void
 CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
                             const Rect* aClipRectIn,
-                            const gfxMatrix& aTransform,
+                            const gfx::Matrix& aTransform,
                             const Rect& aRenderBounds,
                             Rect* aClipRectOut,
                             Rect* aRenderBoundsOut)
@@ -685,8 +685,8 @@ CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
 
   UpdateRenderTarget();
 
-  // Failed to create a render target.
-  if (!mDefaultRT ||
+  // Failed to create a render target or the view.
+  if (!mDefaultRT || !mDefaultRT->mRTView ||
       mSize.width == 0 || mSize.height == 0) {
     *aRenderBoundsOut = Rect();
     return;

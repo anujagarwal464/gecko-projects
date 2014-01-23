@@ -789,7 +789,7 @@ CodeGenerator::visitRegExpTest(LRegExpTest *lir)
 }
 
 typedef JSString *(*RegExpReplaceFn)(JSContext *, HandleString, HandleObject, HandleString);
-static const VMFunction RegExpReplaceInfo = FunctionInfo<RegExpReplaceFn>(regexp_replace);
+static const VMFunction RegExpReplaceInfo = FunctionInfo<RegExpReplaceFn>(RegExpReplace);
 
 bool
 CodeGenerator::visitRegExpReplace(LRegExpReplace *lir)
@@ -799,7 +799,7 @@ CodeGenerator::visitRegExpReplace(LRegExpReplace *lir)
     else
         pushArg(ToRegister(lir->replacement()));
 
-    pushArg(ToRegister(lir->regexp()));
+    pushArg(ToRegister(lir->pattern()));
 
     if (lir->string()->isConstant())
         pushArg(ImmGCPtr(lir->string()->toConstant()->toString()));
@@ -808,6 +808,31 @@ CodeGenerator::visitRegExpReplace(LRegExpReplace *lir)
 
     return callVM(RegExpReplaceInfo, lir);
 }
+
+typedef JSString *(*StringReplaceFn)(JSContext *, HandleString, HandleString, HandleString);
+static const VMFunction StringReplaceInfo = FunctionInfo<StringReplaceFn>(StringReplace);
+
+bool
+CodeGenerator::visitStringReplace(LStringReplace *lir)
+{
+    if (lir->replacement()->isConstant())
+        pushArg(ImmGCPtr(lir->replacement()->toConstant()->toString()));
+    else
+        pushArg(ToRegister(lir->replacement()));
+
+    if (lir->pattern()->isConstant())
+        pushArg(ImmGCPtr(lir->pattern()->toConstant()->toString()));
+    else
+        pushArg(ToRegister(lir->pattern()));
+
+    if (lir->string()->isConstant())
+        pushArg(ImmGCPtr(lir->string()->toConstant()->toString()));
+    else
+        pushArg(ToRegister(lir->string()));
+
+    return callVM(StringReplaceInfo, lir);
+}
+
 
 typedef JSObject *(*LambdaFn)(JSContext *, HandleFunction, HandleObject);
 static const VMFunction LambdaInfo =
@@ -1496,7 +1521,7 @@ CodeGenerator::visitForkJoinSlice(LForkJoinSlice *lir)
 }
 
 bool
-CodeGenerator::visitGuardThreadLocalObject(LGuardThreadLocalObject *lir)
+CodeGenerator::visitGuardThreadExclusive(LGuardThreadExclusive *lir)
 {
     JS_ASSERT(gen->info().executionMode() == ParallelExecution);
 
@@ -1504,7 +1529,7 @@ CodeGenerator::visitGuardThreadLocalObject(LGuardThreadLocalObject *lir)
     masm.setupUnalignedABICall(2, tempReg);
     masm.passABIArg(ToRegister(lir->forkJoinSlice()));
     masm.passABIArg(ToRegister(lir->object()));
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, IsThreadLocalObject));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParallelWriteGuard));
 
     OutOfLineAbortPar *bail = oolAbortPar(ParallelBailoutIllegalWrite, lir);
     if (!bail)
@@ -7426,11 +7451,11 @@ CodeGenerator::visitInstanceOfV(LInstanceOfV *ins)
     return emitInstanceOf(ins, ins->mir()->prototypeObject());
 }
 
-// Wrap IsDelegate, which takes a Value for the lhs of an instanceof.
+// Wrap IsDelegateOfObject, which takes a JSObject*, not a HandleObject
 static bool
 IsDelegateObject(JSContext *cx, HandleObject protoObj, HandleObject obj, bool *res)
 {
-    return IsDelegate(cx, protoObj, ObjectValue(*obj), res);
+    return IsDelegateOfObject(cx, protoObj, obj, res);
 }
 
 typedef bool (*IsDelegateObjectFn)(JSContext *, HandleObject, HandleObject, bool *);

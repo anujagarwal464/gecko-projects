@@ -28,6 +28,9 @@ Cu.import('resource://gre/modules/FxAccountsMgmtService.jsm');
 
 Cu.import('resource://gre/modules/DownloadsAPI.jsm');
 
+Cu.import('resource://gre/modules/Webapps.jsm');
+DOMApplicationRegistry.allAppsLaunchable = true;
+
 XPCOMUtils.defineLazyServiceGetter(Services, 'env',
                                    '@mozilla.org/process/environment;1',
                                    'nsIEnvironment');
@@ -268,7 +271,6 @@ var shell = {
       alert(msg);
       return;
     }
-
     let manifestURL = this.manifestURL;
     // <html:iframe id="systemapp"
     //              mozbrowser="true" allowfullscreen="true"
@@ -294,14 +296,22 @@ var shell = {
                   .sessionHistory = Cc["@mozilla.org/browser/shistory;1"]
                                       .createInstance(Ci.nsISHistory);
 
+    // On firefox mulet, shell.html is loaded in a tab
+    // and we have to listen on the chrome event handler
+    // to catch key events
+    let chromeEventHandler = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                                   .getInterface(Ci.nsIWebNavigation)
+                                   .QueryInterface(Ci.nsIDocShell)
+                                   .chromeEventHandler || window;
     // Capture all key events so we can filter out hardware buttons
     // And send them to Gaia via mozChromeEvents.
     // Ideally, hardware buttons wouldn't generate key events at all, or
     // if they did, they would use keycodes that conform to DOM 3 Events.
     // See discussion in https://bugzilla.mozilla.org/show_bug.cgi?id=762362
-    window.addEventListener('keydown', this, true);
-    window.addEventListener('keypress', this, true);
-    window.addEventListener('keyup', this, true);
+    chromeEventHandler.addEventListener('keydown', this, true);
+    chromeEventHandler.addEventListener('keypress', this, true);
+    chromeEventHandler.addEventListener('keyup', this, true);
+
     window.addEventListener('MozApplicationManifest', this);
     window.addEventListener('mozfullscreenchange', this);
     window.addEventListener('MozAfterPaint', this);
@@ -613,9 +623,6 @@ var shell = {
 
     this.reportCrash(true);
 
-    Cu.import('resource://gre/modules/Webapps.jsm');
-    DOMApplicationRegistry.allAppsLaunchable = true;
-
     this.sendEvent(window, 'ContentStart');
 
     Services.obs.notifyObservers(null, 'content-start', null);
@@ -668,13 +675,12 @@ Services.obs.addObserver(function onFullscreenOriginChange(subject, topic, data)
                           fullscreenorigin: data });
 }, "fullscreen-origin-change", false);
 
-Services.obs.addObserver(function onWebappsStart(subject, topic, data) {
+DOMApplicationRegistry.registryStarted.then(function () {
   shell.sendChromeEvent({ type: 'webapps-registry-start' });
-}, 'webapps-registry-start', false);
-
-Services.obs.addObserver(function onWebappsReady(subject, topic, data) {
+});
+DOMApplicationRegistry.registryReady.then(function () {
   shell.sendChromeEvent({ type: 'webapps-registry-ready' });
-}, 'webapps-registry-ready', false);
+});
 
 Services.obs.addObserver(function onBluetoothVolumeChange(subject, topic, data) {
   shell.sendChromeEvent({
@@ -682,6 +688,10 @@ Services.obs.addObserver(function onBluetoothVolumeChange(subject, topic, data) 
     value: data
   });
 }, 'bluetooth-volume-change', false);
+
+Services.obs.addObserver(function(subject, topic, data) {
+  shell.sendCustomEvent('mozmemorypressure');
+}, 'memory-pressure', false);
 
 var CustomEventManager = {
   init: function custevt_init() {
@@ -812,7 +822,7 @@ var AlertsHelper = {
     this._listeners[uid] = listener;
 
     let app = DOMApplicationRegistry.getAppByManifestURL(listener.manifestURL);
-    DOMApplicationRegistry.getManifestFor(app.manifestURL, function(manifest) {
+    DOMApplicationRegistry.getManifestFor(app.manifestURL).then((manifest) => {
       let helper = new ManifestHelper(manifest, app.origin);
       let getNotificationURLFor = function(messages) {
         if (!messages)
@@ -869,7 +879,7 @@ var AlertsHelper = {
     // If we have a manifest URL, get the icon and title from the manifest
     // to prevent spoofing.
     let app = DOMApplicationRegistry.getAppByManifestURL(manifestUrl);
-    DOMApplicationRegistry.getManifestFor(manifestUrl, function(aManifest) {
+    DOMApplicationRegistry.getManifestFor(manifestUrl).then((aManifest) => {
       let helper = new ManifestHelper(aManifest, app.origin);
       send(helper.name, helper.iconURLForSize(128));
     });
@@ -968,7 +978,7 @@ var WebappsHelper = {
 
     switch(topic) {
       case "webapps-launch":
-        DOMApplicationRegistry.getManifestFor(json.manifestURL, function(aManifest) {
+        DOMApplicationRegistry.getManifestFor(json.manifestURL).then((aManifest) => {
           if (!aManifest)
             return;
 
@@ -1080,9 +1090,9 @@ let RemoteDebugger = {
       DebuggerServer.init(this.prompt.bind(this));
       DebuggerServer.chromeWindowType = "navigator:browser";
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
-      // Until we implement unix domain socket, we enable content actors
-      // only on development devices
-      if (Services.prefs.getBoolPref("devtools.debugger.enable-content-actors")) {
+      // Prevent tab actors to be loaded in parent process,
+      // unless we enable certified apps debugging
+      if (!Services.prefs.getBoolPref("devtools.debugger.forbid-certified-apps")) {
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
         DebuggerServer.addGlobalActor(DebuggerServer.ChromeDebuggerActor, "chromeDebugger");
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
@@ -1093,7 +1103,6 @@ let RemoteDebugger = {
         DebuggerServer.registerModule("devtools/server/actors/inspector");
         DebuggerServer.registerModule("devtools/server/actors/styleeditor");
         DebuggerServer.registerModule("devtools/server/actors/stylesheets");
-        DebuggerServer.enableWebappsContentActor = true;
       }
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webapps.js");

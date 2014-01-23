@@ -92,6 +92,12 @@ AccumulateCacheHitTelemetry(CacheDisposition hitOrMiss)
     }
     else {
         Telemetry::Accumulate(Telemetry::HTTP_CACHE_DISPOSITION_2_V2, hitOrMiss);
+
+        int32_t experiment = CacheObserver::HalfLifeExperiment();
+        if (experiment > 0 && hitOrMiss == kCacheMissed) {
+            Telemetry::Accumulate(Telemetry::HTTP_CACHE_MISS_HALFLIFE_EXPERIMENT,
+                                  experiment - 1);
+        }
     }
 }
 
@@ -2012,7 +2018,7 @@ nsHttpChannel::MaybeSetupByteRangeRequest(int64_t partialLen, int64_t contentLen
     mIsPartialRequest = false;
 
     if (!IsResumable(partialLen, contentLength))
-      return NS_OK;
+      return NS_ERROR_NOT_RESUMABLE;
 
     // looks like a partial entry we can reuse; add If-Range
     // and Range headers.
@@ -2751,7 +2757,7 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, nsIApplicationCache* appC
                  "[content-length=%lld size=%lld]\n", contentLength, size));
 
             rv = MaybeSetupByteRangeRequest(size, contentLength);
-            mCachedContentIsPartial = NS_SUCCEEDED(rv);
+            mCachedContentIsPartial = NS_SUCCEEDED(rv) && mIsPartialRequest;
             if (mCachedContentIsPartial) {
                 rv = OpenCacheInputStream(entry, false);
                 *aResult = ENTRY_NEEDS_REVALIDATION;

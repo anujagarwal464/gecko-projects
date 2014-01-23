@@ -148,6 +148,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitRegExpExec(MRegExpExec *ins);
     bool visitRegExpTest(MRegExpTest *ins);
     bool visitRegExpReplace(MRegExpReplace *ins);
+    bool visitStringReplace(MStringReplace *ins);
     bool visitLambda(MLambda *ins);
     bool visitLambdaPar(MLambdaPar *ins);
     bool visitImplicitThis(MImplicitThis *ins);
@@ -159,7 +160,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitLoadSlot(MLoadSlot *ins);
     bool visitFunctionEnvironment(MFunctionEnvironment *ins);
     bool visitForkJoinSlice(MForkJoinSlice *ins);
-    bool visitGuardThreadLocalObject(MGuardThreadLocalObject *ins);
+    bool visitGuardThreadExclusive(MGuardThreadExclusive *ins);
     bool visitInterruptCheck(MInterruptCheck *ins);
     bool visitCheckInterruptPar(MCheckInterruptPar *ins);
     bool visitStoreSlot(MStoreSlot *ins);

@@ -1814,7 +1814,7 @@ nsLayoutUtils::GetLayerTransformForFrame(nsIFrame* aFrame,
     new (&builder) nsDisplayTransform(&builder, aFrame, &list);
 
   *aTransform =
-    item->GetTransform(aFrame->PresContext()->AppUnitsPerDevPixel());
+    item->GetTransform();
   item->~nsDisplayTransform();
 
   return true;
@@ -4995,7 +4995,7 @@ nsLayoutUtils::SurfaceFromElement(HTMLVideoElement* aElement,
     return result;
 
   mozilla::gfx::IntSize size;
-  nsRefPtr<gfxASurface> surf = container->GetCurrentAsSurface(&size);
+  nsRefPtr<gfxASurface> surf = container->DeprecatedGetCurrentAsSurface(&size);
   if (!surf)
     return result;
 

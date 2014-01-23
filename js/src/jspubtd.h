@@ -34,9 +34,9 @@ class Rooted;
 
 class JS_PUBLIC_API(AutoGCRooter);
 
-class JS_PUBLIC_API(CompileOptions);
-class JS_PUBLIC_API(ReadOnlyCompileOptions);
-class JS_PUBLIC_API(OwningCompileOptions);
+class JS_FRIEND_API(CompileOptions);
+class JS_FRIEND_API(ReadOnlyCompileOptions);
+class JS_FRIEND_API(OwningCompileOptions);
 class JS_PUBLIC_API(CompartmentOptions);
 
 struct Zone;
@@ -310,6 +310,7 @@ enum ThingRootKind
     THING_ROOT_TYPE,
     THING_ROOT_BINDINGS,
     THING_ROOT_PROPERTY_DESCRIPTOR,
+    THING_ROOT_CUSTOM,
     THING_ROOT_LIMIT
 };
 

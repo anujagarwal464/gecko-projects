@@ -93,6 +93,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitRegExpExec(LRegExpExec *lir);
     bool visitRegExpTest(LRegExpTest *lir);
     bool visitRegExpReplace(LRegExpReplace *lir);
+    bool visitStringReplace(LStringReplace *lir);
     bool visitLambda(LLambda *lir);
     bool visitLambdaForSingleton(LLambdaForSingleton *lir);
     bool visitLambdaPar(LLambdaPar *lir);
@@ -207,7 +208,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitStringSplit(LStringSplit *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
     bool visitForkJoinSlice(LForkJoinSlice *lir);
-    bool visitGuardThreadLocalObject(LGuardThreadLocalObject *lir);
+    bool visitGuardThreadExclusive(LGuardThreadExclusive *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);

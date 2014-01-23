@@ -1044,19 +1044,17 @@ var gBrowserInit = {
     if (!isLoadingBlank || !focusAndSelectUrlBar())
       gBrowser.selectedBrowser.focus();
 
-    gNavToolbox.customizeDone = BrowserToolboxCustomizeDone;
-    gNavToolbox.customizeChange = BrowserToolboxCustomizeChange;
-
     // Set up Sanitize Item
     this._initializeSanitizer();
 
     // Enable/Disable auto-hide tabbar
     gBrowser.tabContainer.updateVisibility();
 
+    BookmarkingUI.init();
+
     gPrefService.addObserver(gHomeButton.prefDomain, gHomeButton, false);
 
     var homeButton = document.getElementById("home-button");
-    gHomeButton.init();
     gHomeButton.updateTooltip(homeButton);
     gHomeButton.updatePersonalToolbarStyle(homeButton);
 
@@ -1151,6 +1149,7 @@ var gBrowserInit = {
     window.addEventListener("dragover", MousePosTracker, false);
 
     gNavToolbox.addEventListener("customizationstarting", CustomizationHandler);
+    gNavToolbox.addEventListener("customizationchange", CustomizationHandler);
     gNavToolbox.addEventListener("customizationending", CustomizationHandler);
 
     // End startup crash tracking after a delay to catch crashes while restoring
@@ -1248,7 +1247,6 @@ var gBrowserInit = {
     }
 
     BookmarkingUI.uninit();
-    gHomeButton.uninit();
 
     TabsInTitlebar.uninit();
 
@@ -2530,8 +2528,7 @@ function getWebNavigation()
 
 function BrowserReloadWithFlags(reloadFlags) {
   let url = gBrowser.currentURI.spec;
-  if (gBrowser._updateBrowserRemoteness(gBrowser.selectedBrowser,
-                                        gBrowser._shouldBrowserBeRemote(url))) {
+  if (gBrowser.updateBrowserRemoteness(gBrowser.selectedBrowser, url)) {
     // If the remoteness has changed, the new browser doesn't have any
     // information of what was loaded before, so we need to load the previous
     // URL again.
@@ -3279,18 +3276,9 @@ function OpenBrowserWindow(options)
   return win;
 }
 
-//XXXunf Are these still useful to keep around?
+// Only here for backwards compat, we should remove this soon
 function BrowserCustomizeToolbar() {
   gCustomizeMode.enter();
-}
-
-function BrowserToolboxCustomizeDone(aToolboxChanged) {
-  gCustomizeMode.exit(aToolboxChanged);
-}
-
-function BrowserToolboxCustomizeChange(aType) {
-  gHomeButton.updatePersonalToolbarStyle();
-  BookmarksMenuButton.customizeChange();
 }
 
 /**
@@ -3458,6 +3446,21 @@ var XULBrowserWindow = {
 
     this.overLink = url;
     LinkTargetDisplay.update();
+  },
+
+  showTooltip: function (x, y, tooltip) {
+    // The x,y coordinates are relative to the <browser> element using
+    // the chrome zoom level.
+    let elt = document.getElementById("remoteBrowserTooltip");
+    elt.label = tooltip;
+
+    let anchor = gBrowser.selectedBrowser;
+    elt.openPopupAtScreen(anchor.boxObject.screenX + x, anchor.boxObject.screenY + y, false, null);
+  },
+
+  hideTooltip: function () {
+    let elt = document.getElementById("remoteBrowserTooltip");
+    elt.hidePopup();
   },
 
   updateStatusField: function () {
@@ -3710,11 +3713,11 @@ var XULBrowserWindow = {
       // Try not to instantiate gCustomizeMode as much as possible,
       // so don't use CustomizeMode.jsm to check for URI or customizing.
       let customizingURI = "about:customizing";
-      if (location == customizingURI &&
-          !CustomizationHandler.isCustomizing()) {
+      if (location == customizingURI) {
         gCustomizeMode.enter();
       } else if (location != customizingURI &&
-                 CustomizationHandler.isCustomizing()) {
+                 (CustomizationHandler.isEnteringCustomizeMode ||
+                  CustomizationHandler.isCustomizing())) {
         gCustomizeMode.exit();
       }
     }
@@ -4229,6 +4232,13 @@ nsBrowserAccess.prototype = {
   }
 }
 
+function getTogglableToolbars() {
+  let toolbarNodes = Array.slice(gNavToolbox.childNodes);
+  toolbarNodes = toolbarNodes.concat(gNavToolbox.externalToolbars);
+  toolbarNodes = toolbarNodes.filter(node => node.getAttribute("toolbarname"));
+  return toolbarNodes;
+}
+
 function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
   var popup = aEvent.target;
   if (popup != aEvent.currentTarget)
@@ -4243,28 +4253,24 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
 
   var firstMenuItem = aInsertPoint || popup.firstChild;
 
-  let toolbarNodes = Array.slice(gNavToolbox.childNodes);
-  toolbarNodes = toolbarNodes.concat(gNavToolbox.externalToolbars);
+  let toolbarNodes = getTogglableToolbars();
 
   for (let toolbar of toolbarNodes) {
-    let toolbarName = toolbar.getAttribute("toolbarname");
-    if (toolbarName) {
-      let menuItem = document.createElement("menuitem");
-      let hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
-                            "autohide" : "collapsed";
-      menuItem.setAttribute("id", "toggle_" + toolbar.id);
-      menuItem.setAttribute("toolbarId", toolbar.id);
-      menuItem.setAttribute("type", "checkbox");
-      menuItem.setAttribute("label", toolbarName);
-      menuItem.setAttribute("checked", toolbar.getAttribute(hidingAttribute) != "true");
-      menuItem.setAttribute("accesskey", toolbar.getAttribute("accesskey"));
-      if (popup.id != "toolbar-context-menu")
-        menuItem.setAttribute("key", toolbar.getAttribute("key"));
+    let menuItem = document.createElement("menuitem");
+    let hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
+                          "autohide" : "collapsed";
+    menuItem.setAttribute("id", "toggle_" + toolbar.id);
+    menuItem.setAttribute("toolbarId", toolbar.id);
+    menuItem.setAttribute("type", "checkbox");
+    menuItem.setAttribute("label", toolbar.getAttribute("toolbarname"));
+    menuItem.setAttribute("checked", toolbar.getAttribute(hidingAttribute) != "true");
+    menuItem.setAttribute("accesskey", toolbar.getAttribute("accesskey"));
+    if (popup.id != "toolbar-context-menu")
+      menuItem.setAttribute("key", toolbar.getAttribute("key"));
 
-      popup.insertBefore(menuItem, firstMenuItem);
+    popup.insertBefore(menuItem, firstMenuItem);
 
-      menuItem.addEventListener("command", onViewToolbarCommand, false);
-    }
+    menuItem.addEventListener("command", onViewToolbarCommand, false);
   }
 
 
@@ -4760,16 +4766,6 @@ function fireSidebarFocusedEvent() {
 
 
 var gHomeButton = {
-  init: function() {
-    gNavToolbox.addEventListener("customizationchange",
-                                 this.onCustomizationChange);
-  },
-
-  uninit: function() {
-    gNavToolbox.removeEventListener("customizationchange",
-                                    this.onCustomizationChange);
-  },
-
   prefDomain: "browser.startup.homepage",
   observe: function (aSubject, aTopic, aPrefName)
   {
@@ -4821,10 +4817,6 @@ var gHomeButton = {
                                || homeButton.parentNode.parentNode.id == "PersonalToolbar" ?
                              homeButton.className.replace("toolbarbutton-1", "bookmark-item") :
                              homeButton.className.replace("bookmark-item", "toolbarbutton-1");
-  },
-
-  onCustomizationChange: function(aEvent) {
-    gHomeButton.updatePersonalToolbarStyle();
   },
 };
 
@@ -6441,10 +6433,10 @@ var gIdentityHandler = {
     // Chrome URIs however get special treatment. Some chrome URIs are
     // whitelisted to provide a positive security signal to the user.
     let chromeWhitelist = ["about:addons", "about:app-manager", "about:config",
-                           "about:crashes", "about:healthreport", "about:home",
-                           "about:newaddon", "about:permissions", "about:preferences",
-                           "about:privatebrowsing", "about:sessionstore",
-                           "about:support", "about:welcomeback"];
+                           "about:crashes", "about:customizing", "about:healthreport",
+                           "about:home", "about:newaddon", "about:permissions",
+                           "about:preferences", "about:privatebrowsing",
+                           "about:sessionstore", "about:support", "about:welcomeback"];
     let lowercaseSpec = uri.spec.toLowerCase();
     if (chromeWhitelist.some(function(whitelistedSpec) lowercaseSpec.startsWith(whitelistedSpec))) {
       this.setMode(this.IDENTITY_MODE_CHROMEUI);

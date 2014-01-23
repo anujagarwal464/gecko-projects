@@ -101,6 +101,7 @@ namespace jit {
     _(RegExpExec)                                                           \
     _(RegExpTest)                                                           \
     _(RegExpReplace)                                                        \
+    _(StringReplace)                                                        \
     _(Lambda)                                                               \
     _(ImplicitThis)                                                         \
     _(Slots)                                                                \
@@ -209,7 +210,7 @@ namespace jit {
     _(LambdaPar)                                                            \
     _(RestPar)                                                              \
     _(ForkJoinSlice)                                                        \
-    _(GuardThreadLocalObject)                                               \
+    _(GuardThreadExclusive)                                                 \
     _(CheckInterruptPar)                                                    \
     _(RecompileCheck)
 

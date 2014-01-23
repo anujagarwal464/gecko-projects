@@ -765,6 +765,87 @@ LoadScriptRelativeToScript(JSContext *cx, unsigned argc, jsval *vp)
     return LoadScript(cx, argc, vp, true);
 }
 
+// Populate |options| with the options given by |opts|'s properties. If we
+// need to convert a filename to a C string, let fileNameBytes own the
+// bytes.
+static bool
+ParseCompileOptions(JSContext *cx, CompileOptions &options, HandleObject opts,
+                    JSAutoByteString &fileNameBytes)
+{
+    RootedValue v(cx);
+    RootedString s(cx);
+
+    if (!JS_GetProperty(cx, opts, "compileAndGo", &v))
+        return false;
+    if (!v.isUndefined())
+        options.setCompileAndGo(ToBoolean(v));
+
+    if (!JS_GetProperty(cx, opts, "noScriptRval", &v))
+        return false;
+    if (!v.isUndefined())
+        options.setNoScriptRval(ToBoolean(v));
+
+    if (!JS_GetProperty(cx, opts, "fileName", &v))
+        return false;
+    if (v.isNull()) {
+        options.setFile(nullptr);
+    } else if (!v.isUndefined()) {
+        s = ToString(cx, v);
+        if (!s)
+            return false;
+        char *fileName = fileNameBytes.encodeLatin1(cx, s);
+        if (!fileName)
+            return false;
+        options.setFile(fileName);
+    }
+
+    if (!JS_GetProperty(cx, opts, "element", &v))
+        return false;
+    if (v.isObject())
+        options.setElement(&v.toObject());
+
+    if (!JS_GetProperty(cx, opts, "elementAttributeName", &v))
+        return false;
+    if (!v.isUndefined()) {
+        s = ToString(cx, v);
+        if (!s)
+            return false;
+        options.setElementAttributeName(s);
+    }
+
+    if (!JS_GetProperty(cx, opts, "lineNumber", &v))
+        return false;
+    if (!v.isUndefined()) {
+        uint32_t u;
+        if (!ToUint32(cx, v, &u))
+            return false;
+        options.setLine(u);
+    }
+
+    if (!JS_GetProperty(cx, opts, "sourcePolicy", &v))
+        return false;
+    if (!v.isUndefined()) {
+        JSString *s = ToString(cx, v);
+        if (!s)
+            return false;
+        char *policy = JS_EncodeStringToUTF8(cx, s);
+        if (!policy)
+            return false;
+        if (strcmp(policy, "NO_SOURCE") == 0) {
+            options.setSourcePolicy(CompileOptions::NO_SOURCE);
+        } else if (strcmp(policy, "LAZY_SOURCE") == 0) {
+            options.setSourcePolicy(CompileOptions::LAZY_SOURCE);
+        } else if (strcmp(policy, "SAVE_SOURCE") == 0) {
+            options.setSourcePolicy(CompileOptions::SAVE_SOURCE);
+        } else {
+            JS_ReportError(cx, "bad 'sourcePolicy' option: '%s'", policy);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 class AutoNewContext
 {
   private:
@@ -849,21 +930,17 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    bool newContext = false;
-    bool compileAndGo = true;
-    bool noScriptRval = false;
-    const char *fileName = "@evaluate";
-    RootedObject element(cx);
-    RootedString elementProperty(cx);
+    CompileOptions options(cx);
     JSAutoByteString fileNameBytes;
+    bool newContext = false;
     RootedString displayURL(cx);
     RootedString sourceMapURL(cx);
-    unsigned lineNumber = 1;
     RootedObject global(cx, nullptr);
     bool catchTermination = false;
     bool saveFrameChain = false;
     RootedObject callerGlobal(cx, cx->global());
-    CompileOptions::SourcePolicy sourcePolicy = CompileOptions::SAVE_SOURCE;
+
+    options.setFileAndLine("@evaluate", 1);
 
     global = JS_GetGlobalForObject(cx, &args.callee());
     if (!global)
@@ -873,46 +950,13 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         RootedObject opts(cx, &args[1].toObject());
         RootedValue v(cx);
 
+        if (!ParseCompileOptions(cx, options, opts, fileNameBytes))
+            return false;
+
         if (!JS_GetProperty(cx, opts, "newContext", &v))
             return false;
         if (!v.isUndefined())
             newContext = ToBoolean(v);
-
-        if (!JS_GetProperty(cx, opts, "compileAndGo", &v))
-            return false;
-        if (!v.isUndefined())
-            compileAndGo = ToBoolean(v);
-
-        if (!JS_GetProperty(cx, opts, "noScriptRval", &v))
-            return false;
-        if (!v.isUndefined())
-            noScriptRval = ToBoolean(v);
-
-        if (!JS_GetProperty(cx, opts, "fileName", &v))
-            return false;
-        if (v.isNull()) {
-            fileName = nullptr;
-        } else if (!v.isUndefined()) {
-            JSString *s = ToString(cx, v);
-            if (!s)
-                return false;
-            fileName = fileNameBytes.encodeLatin1(cx, s);
-            if (!fileName)
-                return false;
-        }
-
-        if (!JS_GetProperty(cx, opts, "element", &v))
-            return false;
-        if (v.isObject())
-            element = &v.toObject();
-
-        if (!JS_GetProperty(cx, opts, "elementProperty", &v))
-            return false;
-        if (!v.isUndefined()) {
-            elementProperty = ToString(cx, v);
-            if (!elementProperty)
-                return false;
-        }
 
         if (!JS_GetProperty(cx, opts, "displayURL", &v))
             return false;
@@ -928,15 +972,6 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
             sourceMapURL = ToString(cx, v);
             if (!sourceMapURL)
                 return false;
-        }
-
-        if (!JS_GetProperty(cx, opts, "lineNumber", &v))
-            return false;
-        if (!v.isUndefined()) {
-            uint32_t u;
-            if (!ToUint32(cx, v, &u))
-                return false;
-            lineNumber = u;
         }
 
         if (!JS_GetProperty(cx, opts, "global", &v))
@@ -963,28 +998,6 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
             return false;
         if (!v.isUndefined())
             saveFrameChain = ToBoolean(v);
-
-        if (!JS_GetProperty(cx, opts, "sourcePolicy", &v))
-            return false;
-        if (!v.isUndefined()) {
-            JSString *s = ToString(cx, v);
-            if (!s)
-                return false;
-            char *policy = JS_EncodeStringToUTF8(cx, s);
-            if (!policy)
-                return false;
-            if (strcmp(policy, "NO_SOURCE") == 0) {
-                sourcePolicy = CompileOptions::NO_SOURCE;
-            } else if (strcmp(policy, "LAZY_SOURCE") == 0) {
-                sourcePolicy = CompileOptions::LAZY_SOURCE;
-            } else if (strcmp(policy, "SAVE_SOURCE") == 0) {
-                sourcePolicy = CompileOptions::SAVE_SOURCE;
-            } else {
-                JS_ReportError(cx, "bad 'sourcePolicy' option passed to 'evaluate': '%s'",
-                               policy);
-                return false;
-            }
-        }
     }
 
     RootedString code(cx, args[0].toString());
@@ -1009,16 +1022,12 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         JSAutoCompartment ac(cx, global);
         RootedScript script(cx);
 
+        if (!options.wrap(cx, cx->compartment()))
+            return false;
+
         {
             JS::AutoSaveContextOptions asco(cx);
-            JS::ContextOptionsRef(cx).setNoScriptRval(noScriptRval);
-
-            CompileOptions options(cx);
-            options.setFileAndLine(fileName, lineNumber)
-                   .setElement(element)
-                   .setElementProperty(elementProperty)
-                   .setSourcePolicy(sourcePolicy)
-                   .setCompileAndGo(compileAndGo);
+            JS::ContextOptionsRef(cx).setNoScriptRval(options.noScriptRval);
 
             script = JS::Compile(cx, global, options, codeChars, codeLength);
             if (!script)
@@ -2342,7 +2351,7 @@ GetPDA(JSContext *cx, unsigned argc, jsval *vp)
     RootedValue alias(cx);
 
     for (uint32_t i = 0; i < pda.length; i++, pd++) {
-        pdobj = JS_NewObject(cx, nullptr, nullptr, nullptr);
+        pdobj = JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr());
         if (!pdobj) {
             ok = false;
             break;
@@ -3087,20 +3096,20 @@ Parent(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 Compile(JSContext *cx, unsigned argc, jsval *vp)
 {
-    if (argc < 1) {
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() < 1) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
                              "compile", "0", "s");
         return false;
     }
-    jsval arg0 = JS_ARGV(cx, vp)[0];
-    if (!JSVAL_IS_STRING(arg0)) {
-        const char *typeName = JS_GetTypeName(cx, JS_TypeOfValue(cx, arg0));
+    if (!args[0].isString()) {
+        const char *typeName = JS_GetTypeName(cx, JS_TypeOfValue(cx, args[0]));
         JS_ReportError(cx, "expected string to compile, got %s", typeName);
         return false;
     }
 
     RootedObject global(cx, JS::CurrentGlobalOrNull(cx));
-    JSString *scriptContents = JSVAL_TO_STRING(arg0);
+    JSString *scriptContents = args[0].toString();
     JS::AutoSaveContextOptions asco(cx);
     JS::ContextOptionsRef(cx).setNoScriptRval(true);
     JS::CompileOptions options(cx);
@@ -3108,7 +3117,7 @@ Compile(JSContext *cx, unsigned argc, jsval *vp)
            .setCompileAndGo(true);
     bool ok = JS_CompileUCScript(cx, global, JS_GetStringCharsZ(cx, scriptContents),
                                  JS_GetStringLength(scriptContents), options);
-    JS_SET_RVAL(cx, vp, UndefinedValue());
+    args.rval().setUndefined();
     return ok;
 }
 
@@ -3298,21 +3307,39 @@ OffThreadCompileScript(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    JSString *scriptContents = args[0].toString();
+    JSAutoByteString fileNameBytes;
     CompileOptions options(cx);
-    options.setFileAndLine("<string>", 1)
-           .setCompileAndGo(true)
-           .setSourcePolicy(CompileOptions::SAVE_SOURCE);
+    options.setFileAndLine("<string>", 1);
 
-    if (!JS::CanCompileOffThread(cx, options)) {
-        JS_ReportError(cx, "cannot compile code on worker thread");
-        return false;
+    if (args.length() >= 2) {
+        if (args[1].isPrimitive()) {
+            JS_ReportErrorNumber(cx, my_GetErrorMessage, nullptr, JSSMSG_INVALID_ARGS, "evaluate");
+            return false;
+        }
+
+        RootedObject opts(cx, &args[1].toObject());
+        if (!ParseCompileOptions(cx, options, opts, fileNameBytes))
+            return false;
     }
 
+    // These option settings must override whatever the caller requested.
+    options.setCompileAndGo(true)
+           .setSourcePolicy(CompileOptions::SAVE_SOURCE);
+
+    // We assume the caller wants caching if at all possible, ignoring
+    // heuristics that make sense for a real browser.
+    options.forceAsync = true;
+
+    JSString *scriptContents = args[0].toString();
     const jschar *chars = JS_GetStringCharsZ(cx, scriptContents);
     if (!chars)
         return false;
     size_t length = JS_GetStringLength(scriptContents);
+
+    if (!JS::CanCompileOffThread(cx, options, length)) {
+        JS_ReportError(cx, "cannot compile code on worker thread");
+        return false;
+    }
 
     if (!offThreadState.startIfIdle(cx, scriptContents)) {
         JS_ReportError(cx, "called offThreadCompileScript without calling runOffThreadScript"
@@ -3675,14 +3702,15 @@ NestedShell(JSContext *cx, unsigned argc, jsval *vp)
 
 static bool
 DecompileFunctionSomehow(JSContext *cx, unsigned argc, Value *vp,
-                         JSString *(*decompiler)(JSContext *, JSFunction *, unsigned))
+                         JSString *(*decompiler)(JSContext *, HandleFunction, unsigned))
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     if (args.length() < 1 || !args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
         args.rval().setUndefined();
         return true;
     }
-    JSString *result = decompiler(cx, &args[0].toObject().as<JSFunction>(), 0);
+    RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
+    JSString *result = decompiler(cx, fun, 0);
     if (!result)
         return false;
     args.rval().setString(result);
@@ -3884,7 +3912,7 @@ ObjectEmulatingUndefined(JSContext *cx, unsigned argc, jsval *vp)
         JS_ConvertStub
     };
 
-    RootedObject obj(cx, JS_NewObject(cx, &cls, nullptr, nullptr));
+    RootedObject obj(cx, JS_NewObject(cx, &cls, JS::NullPtr(), JS::NullPtr()));
     if (!obj)
         return false;
     JS_SET_RVAL(cx, vp, ObjectValue(*obj));
@@ -4036,13 +4064,13 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "      catchTermination: if true, catch termination (failure without\n"
 "         an exception value, as for slow scripts or out-of-memory)\n"
 "         and return 'terminated'\n"
-"      element: if present with value |v|, convert |v| to an object |o| mark\n"
-"         the source as being attached to the DOM element |o|. If the\n"
+"      element: if present with value |v|, convert |v| to an object |o| and\n"
+"         mark the source as being attached to the DOM element |o|. If the\n"
 "         property is omitted or |v| is null, don't attribute the source to\n"
 "         any DOM element.\n"
-"      elementProperty: if present and not undefined, the name of property\n"
-"         of 'element' that holds this code. This is what Debugger.Source\n"
-"         .prototype.elementProperty returns.\n"
+"      elementAttributeName: if present and not undefined, the name of\n"
+"         property of 'element' that holds this code. This is what\n"
+"         Debugger.Source.prototype.elementAttributeName returns.\n"
 "      sourceMapURL: if present with value |v|, convert |v| to a string, and\n"
 "         provide that as the code's source map URL. If omitted, attach no\n"
 "         source map URL to the code (although the code may provide one itself,\n"
@@ -4231,14 +4259,26 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 
 #ifdef JS_THREADSAFE
     JS_FN_HELP("offThreadCompileScript", OffThreadCompileScript, 1, 0,
-"offThreadCompileScript(code)",
-"  Trigger an off thread parse/emit for the input string"),
+"offThreadCompileScript(code[, options])",
+"  Compile |code| on a helper thread. To wait for the compilation to finish\n"
+"  and run the code, call |runOffThreadScript|. If present, |options| may\n"
+"  have properties saying how the code should be compiled:\n"
+"      noScriptRval: use the no-script-rval compiler option (default: false)\n"
+"      fileName: filename for error messages and debug info\n"
+"      lineNumber: starting line number for error messages and debug info\n"
+"      element: if present with value |v|, convert |v| to an object |o| and\n"
+"         mark the source as being attached to the DOM element |o|. If the\n"
+"         property is omitted or |v| is null, don't attribute the source to\n"
+"         any DOM element.\n"
+"      elementAttributeName: if present and not undefined, the name of\n"
+"         property of 'element' that holds this code. This is what\n"
+"         Debugger.Source.prototype.elementAttributeName returns.\n"),
 
     JS_FN_HELP("runOffThreadScript", runOffThreadScript, 0, 0,
 "runOffThreadScript()",
 "  Wait for off-thread compilation to complete. If an error occurred,\n"
 "  throw the appropriate exception; otherwise, run the script and return\n"
-               "  its value."),
+"  its value."),
 
 #endif
 
@@ -4833,15 +4873,14 @@ static const JSJitInfo dom_x_getterinfo = {
     { (JSJitGetterOp)dom_get_x },
     0,        /* protoID */
     0,        /* depth */
+    JSJitInfo::AliasNone, /* aliasSet */
     JSJitInfo::Getter,
+    JSVAL_TYPE_UNKNOWN, /* returnType */
     true,     /* isInfallible. False in setters. */
     true,     /* isMovable */
-    JSJitInfo::AliasNone, /* aliasSet */
     false,    /* isInSlot */
-    0,        /* slotIndex */
-    JSVAL_TYPE_UNKNOWN, /* returnType */
-    nullptr,  /* argTypes */
-    nullptr   /* parallelNative */
+    false,    /* isTypedMethod */
+    0         /* slotIndex */
 };
 
 static const JSJitInfo dom_x_setterinfo = {
@@ -4849,14 +4888,13 @@ static const JSJitInfo dom_x_setterinfo = {
     0,        /* protoID */
     0,        /* depth */
     JSJitInfo::Setter,
+    JSJitInfo::AliasEverything, /* aliasSet */
+    JSVAL_TYPE_UNKNOWN, /* returnType */
     false,    /* isInfallible. False in setters. */
     false,    /* isMovable. */
-    JSJitInfo::AliasEverything, /* aliasSet */
     false,    /* isInSlot */
-    0,        /* slotIndex */
-    JSVAL_TYPE_UNKNOWN, /* returnType */
-    nullptr,  /* argTypes */
-    nullptr   /* parallelNative */
+    false,    /* isTypedMethod */
+    0         /* slotIndex */
 };
 
 static const JSJitInfo doFoo_methodinfo = {
@@ -4864,14 +4902,13 @@ static const JSJitInfo doFoo_methodinfo = {
     0,        /* protoID */
     0,        /* depth */
     JSJitInfo::Method,
+    JSJitInfo::AliasEverything, /* aliasSet */
+    JSVAL_TYPE_UNKNOWN, /* returnType */
     false,    /* isInfallible. False in setters. */
     false,    /* isMovable */
-    JSJitInfo::AliasEverything, /* aliasSet */
     false,    /* isInSlot */
-    0,        /* slotIndex */
-    JSVAL_TYPE_UNKNOWN, /* returnType */
-    nullptr,  /* argTypes */
-    nullptr   /* parallelNative */
+    false,    /* isTypedMethod */
+    0         /* slotIndex */
 };
 
 static const JSPropertySpec dom_props[] = {
@@ -4928,7 +4965,7 @@ dom_genericGetter(JSContext *cx, unsigned argc, JS::Value *vp)
     JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
 
     const JSJitInfo *info = FUNCTION_VALUE_TO_JITINFO(JS_CALLEE(cx, vp));
-    MOZ_ASSERT(info->type == JSJitInfo::Getter);
+    MOZ_ASSERT(info->type() == JSJitInfo::Getter);
     JSJitGetterOp getter = info->getter;
     return getter(cx, obj, val.toPrivate(), JSJitGetterCallArgs(args));
 }
@@ -4951,7 +4988,7 @@ dom_genericSetter(JSContext* cx, unsigned argc, JS::Value* vp)
     JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
 
     const JSJitInfo *info = FUNCTION_VALUE_TO_JITINFO(JS_CALLEE(cx, vp));
-    MOZ_ASSERT(info->type == JSJitInfo::Setter);
+    MOZ_ASSERT(info->type() == JSJitInfo::Setter);
     JSJitSetterOp setter = info->setter;
     if (!setter(cx, obj, val.toPrivate(), JSJitSetterCallArgs(args)))
         return false;
@@ -4975,7 +5012,7 @@ dom_genericMethod(JSContext* cx, unsigned argc, JS::Value *vp)
     JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
 
     const JSJitInfo *info = FUNCTION_VALUE_TO_JITINFO(JS_CALLEE(cx, vp));
-    MOZ_ASSERT(info->type == JSJitInfo::Method);
+    MOZ_ASSERT(info->type() == JSJitInfo::Method);
     JSJitMethodOp method = info->method;
     return method(cx, obj, val.toPrivate(), JSJitMethodCallArgs(args));
 }
@@ -5002,7 +5039,8 @@ dom_constructor(JSContext* cx, unsigned argc, JS::Value *vp)
         return false;
     }
 
-    RootedObject domObj(cx, JS_NewObject(cx, &dom_class, &protov.toObject(), nullptr));
+    RootedObject proto(cx, &protov.toObject());
+    RootedObject domObj(cx, JS_NewObject(cx, &dom_class, proto, JS::NullPtr()));
     if (!domObj)
         return false;
 

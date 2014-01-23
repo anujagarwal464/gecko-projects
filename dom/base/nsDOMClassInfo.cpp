@@ -154,7 +154,6 @@
 #include "nsIDOMSmsFilter.h"
 #include "nsIDOMSmsSegmentInfo.h"
 #include "nsIDOMMozMobileMessageThread.h"
-#include "nsIDOMConnection.h"
 
 #ifdef MOZ_B2G_RIL
 #include "nsIDOMIccManager.h"
@@ -163,10 +162,6 @@
 
 #ifdef MOZ_B2G_FM
 #include "FMRadio.h"
-#endif
-
-#ifdef MOZ_B2G_BT
-#include "BluetoothDevice.h"
 #endif
 
 #include "nsIDOMCameraManager.h"
@@ -453,9 +448,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(MozMobileMessageThread, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
-  NS_DEFINE_CLASSINFO_DATA(MozConnection, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
 #ifdef MOZ_B2G_RIL
   NS_DEFINE_CLASSINFO_DATA(MozMobileConnection, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
@@ -490,11 +482,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
 #ifdef MOZ_B2G_RIL
   NS_DEFINE_CLASSINFO_DATA(MozIccManager, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
-#endif
-
-#ifdef MOZ_B2G_BT
-  NS_DEFINE_CLASSINFO_DATA(BluetoothDevice, nsEventTargetSH,
-                           EVENTTARGET_SCRIPTABLE_FLAGS)
 #endif
 
   NS_DEFINE_CLASSINFO_DATA(CameraCapabilities, nsDOMGenericSH,
@@ -594,7 +581,7 @@ IdToString(JSContext *cx, jsid id)
   if (JSID_IS_STRING(id))
     return JSID_TO_STRING(id);
   JS::Rooted<JS::Value> idval(cx);
-  if (!::JS_IdToValue(cx, id, idval.address()))
+  if (!::JS_IdToValue(cx, id, &idval))
     return nullptr;
   return JS::ToString(cx, idval);
 }
@@ -617,7 +604,7 @@ WrapNative(JSContext *cx, JSObject *scope, nsISupports *native,
 
   return nsDOMClassInfo::XPConnect()->WrapNativeToJSVal(cx, scope, native,
                                                         cache, aIID,
-                                                        aAllowWrapping, vp.address());
+                                                        aAllowWrapping, vp);
 }
 
 static inline nsresult
@@ -1147,11 +1134,6 @@ nsDOMClassInfo::Init()
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozMobileMessageThread)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(MozConnection, nsIDOMMozConnection)
-     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozConnection)
-     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
-  DOM_CLASSINFO_MAP_END
-
 #ifdef MOZ_B2G_RIL
   DOM_CLASSINFO_MAP_BEGIN(MozMobileConnection, nsIDOMMozMobileConnection)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozMobileConnection)
@@ -1210,12 +1192,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
   DOM_CLASSINFO_MAP_END
 
-#endif
-
-#ifdef MOZ_B2G_BT
-  DOM_CLASSINFO_MAP_BEGIN(BluetoothDevice, nsIDOMBluetoothDevice)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMBluetoothDevice)
-  DOM_CLASSINFO_MAP_END
 #endif
 
   DOM_CLASSINFO_MAP_BEGIN(CameraCapabilities, nsICameraCapabilities)
@@ -1320,7 +1296,7 @@ nsDOMClassInfo::GetArrayIndexFromId(JSContext *cx, JS::Handle<jsid> id, bool *aI
   } else {
       JS::Rooted<JS::Value> idval(cx);
       double array_index;
-      if (!::JS_IdToValue(cx, id, idval.address()) ||
+      if (!::JS_IdToValue(cx, id, &idval) ||
           !JS::ToNumber(cx, idval, &array_index) ||
           !::JS_DoubleIsInt32(array_index, &i)) {
         return -1;
@@ -1662,7 +1638,7 @@ nsDOMClassInfo::Construct(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
 
 NS_IMETHODIMP
 nsDOMClassInfo::HasInstance(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                            JSObject *obj, const jsval &val, bool *bp,
+                            JSObject *obj, JS::Handle<JS::Value> val, bool *bp,
                             bool *_retval)
 {
   NS_WARNING("nsDOMClassInfo::HasInstance Don't call me!");
@@ -3134,7 +3110,7 @@ nsWindowSH::GlobalResolve(nsGlobalWindow *aWin, JSContext *cx,
 
     nsCOMPtr<nsIDOMGlobalPropertyInitializer> gpi(do_QueryInterface(native));
     if (gpi) {
-      rv = gpi->Init(aWin, prop_val.address());
+      rv = gpi->Init(aWin, &prop_val);
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
@@ -3302,14 +3278,14 @@ DefineComponentsShim(JSContext *cx, JS::Handle<JSObject*> global, nsPIDOMWindow 
   }
 
   // Create a fake Components object.
-  JS::Rooted<JSObject*> components(cx, JS_NewObject(cx, nullptr, nullptr, global));
+  JS::Rooted<JSObject*> components(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), global));
   NS_ENSURE_TRUE(components, NS_ERROR_OUT_OF_MEMORY);
   bool ok = JS_DefineProperty(cx, global, "Components", JS::ObjectValue(*components),
                               JS_PropertyStub, JS_StrictPropertyStub, JSPROP_ENUMERATE);
   NS_ENSURE_TRUE(ok, NS_ERROR_OUT_OF_MEMORY);
 
   // Create a fake interfaces object.
-  JS::Rooted<JSObject*> interfaces(cx, JS_NewObject(cx, nullptr, nullptr, global));
+  JS::Rooted<JSObject*> interfaces(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), global));
   NS_ENSURE_TRUE(interfaces, NS_ERROR_OUT_OF_MEMORY);
   ok = JS_DefineProperty(cx, components, "interfaces", JS::ObjectValue(*interfaces),
                          JS_PropertyStub, JS_StrictPropertyStub,
@@ -3365,46 +3341,14 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     return DefineComponentsShim(cx, obj, win);
   }
 
-  nsIScriptContext *my_context = win->GetContextInternal();
-
   // Don't resolve standard classes on XrayWrappers, only resolve them if we're
   // resolving on the real global object.
-  if (!xpc::WrapperFactory::IsXrayWrapper(obj)) {
+  bool isXray = xpc::WrapperFactory::IsXrayWrapper(obj);
+  if (!isXray) {
     bool did_resolve = false;
-    bool ok = true;
-    JS::Rooted<JS::Value> exn(cx, JSVAL_VOID);
-
-    {
-      // Resolve standard classes on my_context's JSContext (or on cx,
-      // if we don't have a my_context yet), in case the two contexts
-      // have different origins.  We want lazy standard class
-      // initialization to behave as if it were done eagerly, on each
-      // window's own context (not on some other window-caller's
-      // context).
-      AutoPushJSContext my_cx(my_context ? my_context->GetNativeContext() : cx);
-      JSAutoCompartment ac(my_cx, obj);
-
-      ok = JS_ResolveStandardClass(my_cx, obj, id, &did_resolve);
-
-      if (!ok) {
-        // Trust the JS engine (or the script security manager) to set
-        // the exception in the JS engine.
-
-        if (!JS_GetPendingException(my_cx, &exn)) {
-          return NS_ERROR_UNEXPECTED;
-        }
-
-        // Return NS_OK to avoid stomping over the exception that was passed
-        // down from the ResolveStandardClass call.
-        // Note that the order of the JS_ClearPendingException and
-        // JS_SetPendingException is important in the case that my_cx == cx.
-
-        JS_ClearPendingException(my_cx);
-      }
-    }
-
-    if (!ok) {
-      JS_SetPendingException(cx, exn);
+    if (!JS_ResolveStandardClass(cx, obj, id, &did_resolve)) {
+      // Return NS_OK to avoid stomping over the exception that was passed
+      // down from the ResolveStandardClass call.
       *_retval = false;
       return NS_OK;
     }
@@ -3415,14 +3359,10 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     }
   }
 
-  if (!my_context || !my_context->IsContextInitialized()) {
-    // The context is not yet initialized so there's nothing we can do
-    // here yet.
-
-    return NS_OK;
-  }
-
-  if (sLocation_id == id) {
+  // WebIDL quickstubs handle location for us, but Xrays don't see those.  So if
+  // we're an Xray, we have to resolve stuff here to make "window.location =
+  // someString" work.
+  if (sLocation_id == id && isXray) {
     // This must be done even if we're just getting the value of
     // window.location (i.e. no checking flags & JSRESOLVE_ASSIGNING
     // here) since we must define window.location to prevent the
@@ -3453,7 +3393,10 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     return NS_OK;
   }
 
-  if (sTop_id == id) {
+  // WebIDL quickstubs handle "top" for us, but Xrays don't see those.  So if
+  // we're an Xray and we want "top" to be JSPROP_PERMANENT, we need to resolve
+  // it here.
+  if (sTop_id == id && isXray) {
     nsCOMPtr<nsIDOMWindow> top;
     nsresult rv = win->GetScriptableTop(getter_AddRefs(top));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -4367,7 +4310,9 @@ nsStorage2SH::NewEnumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
       JS_NewUCStringCopyN(cx, key.get(), key.Length());
     NS_ENSURE_TRUE(str, NS_ERROR_OUT_OF_MEMORY);
 
-    JS_ValueToId(cx, STRING_TO_JSVAL(str), idp);
+    JS::Rooted<jsid> id(cx);
+    JS_ValueToId(cx, JS::StringValue(str), &id);
+    *idp = id;
 
     keys->RemoveElementAt(0);
 
@@ -4508,7 +4453,7 @@ nsDOMConstructorSH::Construct(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
 
 NS_IMETHODIMP
 nsDOMConstructorSH::HasInstance(nsIXPConnectWrappedNative *wrapper,
-                                JSContext *cx, JSObject *aObj, const jsval &val,
+                                JSContext *cx, JSObject *aObj, JS::Handle<JS::Value> val,
                                 bool *bp, bool *_retval)
 {
   JS::Rooted<JSObject*> obj(cx, aObj);

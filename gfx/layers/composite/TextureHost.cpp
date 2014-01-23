@@ -36,8 +36,8 @@ public:
 
   ~TextureParent();
 
-  bool RecvInit(const SurfaceDescriptor& aSharedData,
-                const TextureFlags& aFlags) MOZ_OVERRIDE;
+  bool Init(const SurfaceDescriptor& aSharedData,
+            const TextureFlags& aFlags);
 
   virtual bool RecvRemoveTexture() MOZ_OVERRIDE;
 
@@ -53,9 +53,14 @@ public:
 
 // static
 PTextureParent*
-TextureHost::CreateIPDLActor(ISurfaceAllocator* aAllocator)
+TextureHost::CreateIPDLActor(ISurfaceAllocator* aAllocator,
+                             const SurfaceDescriptor& aSharedData,
+                             TextureFlags aFlags)
 {
-  return new TextureParent(aAllocator);
+  TextureParent* actor = new TextureParent(aAllocator);
+  DebugOnly<bool> status = actor->Init(aSharedData, aFlags);
+  MOZ_ASSERT(status);
+  return actor;
 }
 
 // static
@@ -244,8 +249,13 @@ TextureHost::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
   aTo += aPrefix;
   aTo += nsPrintfCString("%s (0x%p)", Name(), this);
-  AppendToString(aTo, GetSize(), " [size=", "]");
-  AppendToString(aTo, GetFormat(), " [format=", "]");
+  // Note: the TextureHost needs to be locked before it is safe to call
+  //       GetSize() and GetFormat() on it.
+  if (Lock()) {
+    AppendToString(aTo, GetSize(), " [size=", "]");
+    AppendToString(aTo, GetFormat(), " [format=", "]");
+    Unlock();
+  }
   AppendToString(aTo, mFlags, " [flags=", "]");
 }
 
@@ -679,8 +689,8 @@ TextureParent::~TextureParent()
 }
 
 bool
-TextureParent::RecvInit(const SurfaceDescriptor& aSharedData,
-                        const TextureFlags& aFlags)
+TextureParent::Init(const SurfaceDescriptor& aSharedData,
+                    const TextureFlags& aFlags)
 {
   mTextureHost = TextureHost::Create(aSharedData,
                                      mAllocator,

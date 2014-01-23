@@ -129,6 +129,7 @@
                oncommand="gotoHistoryIndex(event); event.stopPropagation();"
                onclick="checkForMiddleClick(this, event);"/>
     <tooltip id="aHTMLTooltip" page="true"/>
+    <tooltip id="remoteBrowserTooltip"/>
 
     <!-- for search and content formfill/pw manager -->
     <panel type="autocomplete" id="PopupAutoComplete" noautofocus="true" hidden="true"/>
@@ -202,8 +203,16 @@
            align="start"
            orient="vertical"
            role="alert">
-      <label id="UITourTooltipTitle" flex="1"/>
-      <description id="UITourTooltipDescription" flex="1"/>
+      <hbox>
+        <vbox>
+          <image id="UITourTooltipIcon"/>
+        </vbox>
+        <vbox flex="1">
+          <label id="UITourTooltipTitle" flex="1"/>
+          <description id="UITourTooltipDescription" flex="1"/>
+          <hbox id="UITourTooltipButtons" flex="1" align="end"/>
+        </vbox>
+      </hbox>
     </panel>
     <panel id="UITourHighlightContainer"
            hidden="true"
@@ -850,7 +859,6 @@
                    cui-areatype="toolbar"
                    removable="true">
         <toolbarbutton id="bookmarks-toolbar-placeholder"
-                       type="wrap"
                        mousethrough="never"
                        label="&bookmarksToolbarItem.label;"
                        oncommand="PlacesToolbarHelper.onPlaceholderCommand();"/>

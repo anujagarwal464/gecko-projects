@@ -59,13 +59,16 @@ public class Favicons {
     // The density-adjusted default Favicon dimensions.
     public static int sDefaultFaviconSize;
 
+    // The density-adjusted maximum Favicon dimensions.
+    public static int sLargestFaviconSize;
+
     private static final Map<Integer, LoadFaviconTask> sLoadTasks = Collections.synchronizedMap(new HashMap<Integer, LoadFaviconTask>());
 
     // Cache to hold mappings between page URLs and Favicon URLs. Used to avoid going to the DB when
     // doing so is not necessary.
     private static final NonEvictingLruCache<String, String> sPageURLMappings = new NonEvictingLruCache<String, String>(NUM_PAGE_URL_MAPPINGS_TO_STORE);
 
-    public static String getFaviconUrlForPageUrlFromCache(String pageURL) {
+    public static String getFaviconURLForPageURLFromCache(String pageURL) {
         return sPageURLMappings.get(pageURL);
     }
 
@@ -73,7 +76,7 @@ public class Favicons {
      * Insert the given pageUrl->faviconUrl mapping into the memory cache of such mappings.
      * Useful for short-circuiting local database access.
      */
-    public static void putFaviconUrlForPageUrlInCache(String pageURL, String faviconURL) {
+    public static void putFaviconURLForPageURLInCache(String pageURL, String faviconURL) {
         sPageURLMappings.put(pageURL, faviconURL);
     }
 
@@ -143,7 +146,7 @@ public class Favicons {
 
         // If there's no favicon URL given, try and hit the cache with the default one.
         if (cacheURL == null)  {
-            cacheURL = guessDefaultFaviconUrl(pageURL);
+            cacheURL = guessDefaultFaviconURL(pageURL);
         }
 
         // If it's something we can't even figure out a default URL for, just give up.
@@ -231,7 +234,7 @@ public class Favicons {
      * @return The URL of the Favicon used by that webpage, according to either the History database
      *         or a somewhat educated guess.
      */
-    public static String getFaviconUrlForPageUrl(String pageURL) {
+    public static String getFaviconURLForPageURL(String pageURL) {
         // Attempt to determine the Favicon URL from the Tabs datastructure. Can dodge having to use
         // the database sometimes by doing this.
         String targetURL;
@@ -246,7 +249,7 @@ public class Favicons {
         targetURL = BrowserDB.getFaviconUrlForHistoryUrl(sContext.getContentResolver(), pageURL);
         if (targetURL == null) {
             // Nothing in the history database. Fall back to the default URL and hope for the best.
-            targetURL = guessDefaultFaviconUrl(pageURL);
+            targetURL = guessDefaultFaviconURL(pageURL);
         }
         return targetURL;
     }
@@ -290,8 +293,20 @@ public class Favicons {
         sFaviconsCache.putSingleFavicon(pageUrl, image);
     }
 
+    /**
+     * Adds the bitmaps given by the specified iterator to the cache associated with the url given.
+     * Future requests for images will be able to select the least larger image than the target
+     * size from this new set of images.
+     *
+     * @param pageUrl The URL to associate the new favicons with.
+     * @param images An iterator over the new favicons to put in the cache.
+     */
     public static void putFaviconsInMemCache(String pageUrl, Iterator<Bitmap> images, boolean permanently) {
         sFaviconsCache.putFavicons(pageUrl, images, permanently);
+    }
+
+    public static void putFaviconsInMemCache(String pageUrl, Iterator<Bitmap> images) {
+        putFaviconsInMemCache(pageUrl, images, false);
     }
 
     public static void clearMemCache() {
@@ -366,7 +381,11 @@ public class Favicons {
         }
 
         sDefaultFaviconSize = res.getDimensionPixelSize(R.dimen.favicon_bg);
-        sFaviconsCache = new FaviconCache(FAVICON_CACHE_SIZE_BYTES, res.getDimensionPixelSize(R.dimen.favicon_largest_interesting_size));
+
+        // Screen-density-adjusted upper limit on favicon size. Favicons larger than this are
+        // downscaled to this size or discarded.
+        sLargestFaviconSize = context.getResources().getDimensionPixelSize(R.dimen.favicon_largest_interesting_size);
+        sFaviconsCache = new FaviconCache(FAVICON_CACHE_SIZE_BYTES, sLargestFaviconSize);
 
         // Initialize page mappings for each of our special pages.
         for (String url : AboutPages.getDefaultIconPages()) {
@@ -407,7 +426,7 @@ public class Favicons {
      * @param pageURL Page URL for which a default Favicon URL is requested
      * @return The default Favicon URL.
      */
-    public static String guessDefaultFaviconUrl(String pageURL) {
+    public static String guessDefaultFaviconURL(String pageURL) {
         // Special-casing for about: pages. The favicon for about:pages which don't provide a link tag
         // is bundled in the database, keyed only by page URL, hence the need to return the page URL
         // here. If the database ever migrates to stop being silly in this way, this can plausibly
