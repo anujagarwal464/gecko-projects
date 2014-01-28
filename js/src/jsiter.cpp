@@ -101,13 +101,13 @@ Enumerate(JSContext *cx, HandleObject pobj, jsid id,
      * the built-in prototypes).  So exclude __proto__ if the object where the
      * property was found has no [[Prototype]] and might be |Object.prototype|.
      */
-    if (JS_UNLIKELY(!pobj->getTaggedProto().isObject() && JSID_IS_ATOM(id, cx->names().proto)))
+    if (MOZ_UNLIKELY(!pobj->getTaggedProto().isObject() && JSID_IS_ATOM(id, cx->names().proto)))
         return true;
 
     if (!(flags & JSITER_OWNONLY) || pobj->is<ProxyObject>() || pobj->getOps()->enumerate) {
         /* If we've already seen this, we definitely won't add it. */
         IdSet::AddPtr p = ht.lookupForAdd(id);
-        if (JS_UNLIKELY(!!p))
+        if (MOZ_UNLIKELY(!!p))
             return true;
 
         /*
@@ -669,13 +669,13 @@ js::GetIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandleVa
 
     AutoIdVector keys(cx);
     if (flags & JSITER_FOREACH) {
-        if (JS_LIKELY(obj != nullptr) && !Snapshot(cx, obj, flags, &keys))
+        if (MOZ_LIKELY(obj != nullptr) && !Snapshot(cx, obj, flags, &keys))
             return false;
         JS_ASSERT(shapes.empty());
         if (!VectorToValueIterator(cx, obj, flags, keys, vp))
             return false;
     } else {
-        if (JS_LIKELY(obj != nullptr) && !Snapshot(cx, obj, flags, &keys))
+        if (MOZ_LIKELY(obj != nullptr) && !Snapshot(cx, obj, flags, &keys))
             return false;
         if (!VectorToKeyIterator(cx, obj, flags, keys, shapes.length(), key, vp))
             return false;
@@ -757,13 +757,13 @@ js::IteratorConstructor(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 IsIterator(HandleValue v)
 {
     return v.isObject() && v.toObject().hasClass(&PropertyIteratorObject::class_);
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 iterator_next_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsIterator(args.thisv()));
@@ -834,7 +834,6 @@ const Class PropertyIteratorObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     finalize,
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
@@ -1264,7 +1263,6 @@ const Class StopIterationObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     nullptr,                 /* finalize    */
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     stopiter_hasInstance,
     nullptr                  /* construct   */
@@ -1488,7 +1486,6 @@ const Class LegacyGeneratorObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     FinalizeGenerator<LegacyGeneratorObject>,
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
@@ -1511,7 +1508,6 @@ const Class StarGeneratorObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     FinalizeGenerator<StarGeneratorObject>,
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
@@ -1702,7 +1698,7 @@ SendToGenerator(JSContext *cx, JSGeneratorOp op, HandleObject obj,
     return ok;
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 star_generator_next(JSContext *cx, CallArgs args)
 {
     RootedObject thisObj(cx, &args.thisv().toObject());
@@ -1724,7 +1720,7 @@ star_generator_next(JSContext *cx, CallArgs args)
                            args.rval());
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 star_generator_throw(JSContext *cx, CallArgs args)
 {
     RootedObject thisObj(cx, &args.thisv().toObject());
@@ -1739,7 +1735,7 @@ star_generator_throw(JSContext *cx, CallArgs args)
                            args.rval());
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 legacy_generator_next(JSContext *cx, CallArgs args)
 {
     RootedObject thisObj(cx, &args.thisv().toObject());
@@ -1759,7 +1755,7 @@ legacy_generator_next(JSContext *cx, CallArgs args)
                            args.rval());
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 legacy_generator_throw(JSContext *cx, CallArgs args)
 {
     RootedObject thisObj(cx, &args.thisv().toObject());
@@ -1803,7 +1799,7 @@ CloseLegacyGenerator(JSContext *cx, HandleObject obj)
     return CloseLegacyGenerator(cx, obj, &rval);
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 legacy_generator_close(JSContext *cx, CallArgs args)
 {
     RootedObject thisObj(cx, &args.thisv().toObject());
@@ -1812,7 +1808,7 @@ legacy_generator_close(JSContext *cx, CallArgs args)
 }
 
 template<typename T>
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 IsObjectOfType(HandleValue v)
 {
     return v.isObject() && v.toObject().is<T>();

@@ -20,6 +20,7 @@
 
 #include "ds/LifoAlloc.h"
 #include "gc/Nursery.h"
+#include "js/MemoryMetrics.h"
 #include "js/Tracer.h"
 
 namespace js {
@@ -87,16 +88,12 @@ class StoreBuffer
      * type of edge: e.g. Value or Cell*.
      */
     template<typename T>
-    class MonoTypeBuffer
+    struct MonoTypeBuffer
     {
-        friend class StoreBuffer;
-
         LifoAlloc *storage_;
 
         explicit MonoTypeBuffer() : storage_(nullptr) {}
         ~MonoTypeBuffer() { js_delete(storage_); }
-
-        MonoTypeBuffer &operator=(const MonoTypeBuffer& other) MOZ_DELETE;
 
         bool init() {
             if (!storage_)
@@ -142,6 +139,13 @@ class StoreBuffer
 
         /* Mark the source of all edges in the store buffer. */
         void mark(StoreBuffer *owner, JSTracer *trc);
+
+        size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
+            return storage_ ? storage_->sizeOfIncludingThis(mallocSizeOf) : 0;
+        }
+
+      private:
+        MonoTypeBuffer &operator=(const MonoTypeBuffer& other) MOZ_DELETE;
     };
 
     /*
@@ -149,10 +153,8 @@ class StoreBuffer
      * memory outside of the GC's control.
      */
     template <typename T>
-    class RelocatableMonoTypeBuffer : public MonoTypeBuffer<T>
+    struct RelocatableMonoTypeBuffer : public MonoTypeBuffer<T>
     {
-        friend class StoreBuffer;
-
         /* Override compaction to filter out removed items. */
         void compactMoved(StoreBuffer *owner);
         virtual void compact(StoreBuffer *owner) MOZ_OVERRIDE;
@@ -163,16 +165,12 @@ class StoreBuffer
         }
     };
 
-    class GenericBuffer
+    struct GenericBuffer
     {
-        friend class StoreBuffer;
-
         LifoAlloc *storage_;
 
         explicit GenericBuffer() : storage_(nullptr) {}
         ~GenericBuffer() { js_delete(storage_); }
-
-        GenericBuffer &operator=(const GenericBuffer& other) MOZ_DELETE;
 
         bool init() {
             if (!storage_)
@@ -215,14 +213,17 @@ class StoreBuffer
             if (isAboutToOverflow())
                 owner->setAboutToOverflow();
         }
+
+        size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
+            return storage_ ? storage_->sizeOfIncludingThis(mallocSizeOf) : 0;
+        }
+
+      private:
+        GenericBuffer &operator=(const GenericBuffer& other) MOZ_DELETE;
     };
 
-    class CellPtrEdge
+    struct CellPtrEdge
     {
-        friend class StoreBuffer;
-        friend class StoreBuffer::MonoTypeBuffer<CellPtrEdge>;
-        friend class StoreBuffer::RelocatableMonoTypeBuffer<CellPtrEdge>;
-
         Cell **edge;
 
         explicit CellPtrEdge(Cell **v) : edge(v) {}
@@ -246,12 +247,8 @@ class StoreBuffer
         bool isTagged() const { return bool(uintptr_t(edge) & 1); }
     };
 
-    class ValueEdge
+    struct ValueEdge
     {
-        friend class StoreBuffer;
-        friend class StoreBuffer::MonoTypeBuffer<ValueEdge>;
-        friend class StoreBuffer::RelocatableMonoTypeBuffer<ValueEdge>;
-
         JS::Value *edge;
 
         explicit ValueEdge(JS::Value *v) : edge(v) {}
@@ -278,9 +275,6 @@ class StoreBuffer
 
     struct SlotEdge
     {
-        friend class StoreBuffer;
-        friend class StoreBuffer::MonoTypeBuffer<SlotEdge>;
-
         JSObject *object;
         uint32_t offset;
         int kind; // this is really just HeapSlot::Kind, but we can't see that type easily here
@@ -297,21 +291,18 @@ class StoreBuffer
             return object != other.object || offset != other.offset || kind != other.kind;
         }
 
-        JS_ALWAYS_INLINE HeapSlot *slotLocation() const;
+        MOZ_ALWAYS_INLINE HeapSlot *slotLocation() const;
 
-        JS_ALWAYS_INLINE void *deref() const;
-        JS_ALWAYS_INLINE void *location() const;
+        MOZ_ALWAYS_INLINE void *deref() const;
+        MOZ_ALWAYS_INLINE void *location() const;
         bool inRememberedSet(const Nursery &nursery) const;
-        JS_ALWAYS_INLINE bool isNullEdge() const;
+        MOZ_ALWAYS_INLINE bool isNullEdge() const;
 
         void mark(JSTracer *trc);
     };
 
-    class WholeCellEdges
+    struct WholeCellEdges
     {
-        friend class StoreBuffer;
-        friend class StoreBuffer::MonoTypeBuffer<WholeCellEdges>;
-
         Cell *tenured;
 
         WholeCellEdges(Cell *cell) : tenured(cell) {
@@ -332,9 +323,8 @@ class StoreBuffer
     };
 
     template <typename Key>
-    class CallbackRef : public BufferableRef
+    struct CallbackRef : public BufferableRef
     {
-      public:
         typedef void (*MarkCallback)(JSTracer *trc, Key *key, void *data);
 
         CallbackRef(MarkCallback cb, Key *k, void *d) : callback(cb), key(k), data(d) {}
@@ -447,15 +437,23 @@ class StoreBuffer
         put(bufferGeneric, CallbackRef<Key>(callback, key, data));
     }
 
-    /* Mark the source of all edges in the store buffer. */
-    void mark(JSTracer *trc);
+    /* Methods to mark the source of all edges in the store buffer. */
+    void markAll(JSTracer *trc);
+    void markValues(JSTracer *trc)            { bufferVal.mark(this, trc); }
+    void markCells(JSTracer *trc)             { bufferCell.mark(this, trc); }
+    void markSlots(JSTracer *trc)             { bufferSlot.mark(this, trc); }
+    void markWholeCells(JSTracer *trc)        { bufferWholeCell.mark(this, trc); }
+    void markRelocatableValues(JSTracer *trc) { bufferRelocVal.mark(this, trc); }
+    void markRelocatableCells(JSTracer *trc)  { bufferRelocCell.mark(this, trc); }
+    void markGenericEntries(JSTracer *trc)    { bufferGeneric.mark(this, trc); }
 
     /* We cannot call InParallelSection directly because of a circular dependency. */
     bool inParallelSection() const;
 
     /* For use by our owned buffers and for testing. */
     void setAboutToOverflow();
-    void setOverflowed();
+
+    void addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::GCSizes *sizes);
 };
 
 } /* namespace gc */

@@ -3317,6 +3317,22 @@
     "extended_statistics_ok": true,
     "description": "Session restore: Time to read the session data from the file on disk (ms)"
   },
+  "FX_SESSION_RESTORE_SEND_SERIALIZED_STATE_LONGEST_OP_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Time spent on the main thread sending the session data off the main thread for writing (ms)"
+  },
+  "FX_SESSION_RESTORE_WRITE_STATE_LONGEST_OP_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Time spent on the main thread serializing, broadcasting and sending the session data for writing (ms)"
+  },
   "FX_SESSION_RESTORE_WRITE_FILE_MS": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -3368,18 +3384,6 @@
     "high": "365",
     "n_buckets": 15,
     "description": "Session restore: Days elapsed since the session was first started"
-  },
-  "FX_SESSION_RESTORE_TABSTATECACHE_HIT_RATE": {
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 101,
-    "description": "Session restore: Percentage of tab state cache hits in all tab state cache accesses"
-  },
-  "FX_SESSION_RESTORE_TABSTATECACHE_CLEAR_RATIO": {
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 101,
-    "description": "Session restore: Number of times the tab state cache has been cleared during a session divided by number of total accesses during the session (percentage)"
   },
   "FX_SESSION_RESTORE_EXTRACTING_STATISTICS_DURATION_MS": {
     "expires_in_version": "never",
@@ -4866,6 +4870,34 @@
     "n_buckets": "1000",
     "description": "The time (in milliseconds) that it took to display a selected source to the user."
   },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_RECONFIGURETAB_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'reconfigure tab' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_RECONFIGURETAB_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'reconfigure tab' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_LOCAL_RECONFIGURETHREAD_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'reconfigure thread' request to go round trip."
+  },
+  "DEVTOOLS_DEBUGGER_RDP_REMOTE_RECONFIGURETHREAD_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "10000",
+    "n_buckets": "1000",
+    "description": "The time (in milliseconds) that it took a 'reconfigure thread' request to go round trip."
+  },
   "WEBRTC_ICE_SUCCESS_RATE": {
     "expires_in_version": "never",
     "kind": "boolean",
@@ -5620,5 +5652,29 @@
     "expires_in_version": "never",
     "kind": "boolean",
     "description": "Is OCSP required when the cert has an OCSP URI? (pref security.OCSP.require)"
+  },
+  "OSFILE_WORKER_LAUNCH_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "description": "The duration between the instant the first message is sent to OS.File and the moment the OS.File worker starts executing JavaScript, in milliseconds",
+    "high": "5000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true
+  },
+  "OSFILE_WORKER_READY_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "description": "The duration between the instant the first message is sent to OS.File and the moment the OS.File worker has finished executing its startup JavaScript and is ready to receive requests, in milliseconds",
+    "high": "5000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true
+  },
+  "OSFILE_WRITEATOMIC_JANK_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "description": "The duration during which the main thread is blocked during a call to OS.File.writeAtomic, in milliseconds",
+    "high": "5000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true
   }
 }

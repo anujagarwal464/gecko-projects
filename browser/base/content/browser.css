@@ -265,7 +265,6 @@ toolbarpaletteitem > #personal-bookmarks > #bookmarks-toolbar-placeholder,
   display: -moz-box;
 }
 
-#wrapper-urlbar-container > #urlbar-container > #urlbar-wrapper > #urlbar > toolbarbutton,
 #urlbar-reload-button:not([displaystop]) + #urlbar-stop-button,
 #urlbar-reload-button[displaystop] {
   visibility: collapse;
@@ -747,6 +746,14 @@ toolbarpaletteitem[place="palette"] > toolbarbutton[type="badged"] > .toolbarbut
   max-height: 32px;
 }
 
+toolbarbutton[sdk-button="true"] > .toolbarbutton-icon {
+  max-height: 32px;
+}
+
+toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
+  max-height: 18px;
+}
+
 panelview > .social-panel-frame {
   width: auto;
   height: auto;
@@ -779,7 +786,11 @@ chatbar {
 
 /*** Visibility of downloads indicator controls ***/
 
-#downloads-button[indicator] > image.toolbarbutton-icon {
+/* Bug 924050: If we've loaded the indicator, for now we hide it in the menu panel,
+   and just show the icon. This is a hack to side-step very weird layout bugs that
+   seem to be caused by the indicator stack interacting with the menu panel. */
+#downloads-button[indicator]:not([cui-areatype="menu-panel"]) > image.toolbarbutton-icon,
+#downloads-button[indicator][cui-areatype="menu-panel"] > #downloads-indicator-anchor {
   display: none;
 }
 
