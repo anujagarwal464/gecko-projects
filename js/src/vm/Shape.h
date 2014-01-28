@@ -715,7 +715,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
      * Lookup base shapes from the compartment's baseShapes table, adding if
      * not already found.
      */
-    static UnownedBaseShape* getUnowned(ExclusiveContext *cx, const StackBaseShape &base);
+    static UnownedBaseShape* getUnowned(ExclusiveContext *cx, StackBaseShape &base);
 
     /*
      * Lookup base shapes from the compartment's baseShapes table, returning
@@ -847,19 +847,9 @@ struct StackBaseShape
     static inline HashNumber hash(const StackBaseShape *lookup);
     static inline bool match(UnownedBaseShape *key, const StackBaseShape *lookup);
 
-    class AutoRooter : private JS::CustomAutoRooter
-    {
-      public:
-        inline AutoRooter(ThreadSafeContext *cx, const StackBaseShape *base_
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
-      private:
-        virtual void trace(JSTracer *trc);
-
-        const StackBaseShape *base;
-        SkipRoot skip;
-        MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-    };
+    // For RootedGeneric<StackBaseShape*>
+    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
+    void trace(JSTracer *trc);
 };
 
 inline
@@ -960,10 +950,8 @@ class Shape : public gc::BarrieredCell<Shape>
         insertIntoDictionary(dictp);
     }
 
-    Shape *getChildBinding(ExclusiveContext *cx, const StackShape &child);
-
     /* Replace the base shape of the last shape in a non-dictionary lineage with base. */
-    static Shape *replaceLastProperty(ExclusiveContext *cx, const StackBaseShape &base,
+    static Shape *replaceLastProperty(ExclusiveContext *cx, StackBaseShape &base,
                                       TaggedProto proto, HandleShape shape);
 
     /*
@@ -1148,8 +1136,8 @@ class Shape : public gc::BarrieredCell<Shape>
 
     bool matches(const Shape *other) const {
         return propid_.get() == other->propid_.get() &&
-               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs,
-                                    other->flags, other->shortid_);
+               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs, other->flags,
+                                    other->shortid_);
     }
 
     inline bool matches(const StackShape &other) const;
@@ -1508,7 +1496,7 @@ struct StackShape
     int16_t          shortid;
 
     explicit StackShape(UnownedBaseShape *base, jsid propid, uint32_t slot,
-                        uint32_t nfixed, unsigned attrs, unsigned flags, int shortid)
+                        unsigned attrs, unsigned flags, int shortid)
       : base(base),
         propid(propid),
         slot_(slot),
@@ -1524,7 +1512,7 @@ struct StackShape
     StackShape(Shape *shape)
       : base(shape->base()->unowned()),
         propid(shape->propidRef()),
-        slot_(shape->slotInfo & Shape::SLOT_MASK),
+        slot_(shape->maybeSlot()),
         attrs(shape->attrs),
         flags(shape->flags),
         shortid(shape->shortid_)
@@ -1558,19 +1546,9 @@ struct StackShape
         return hash;
     }
 
-    class AutoRooter : private JS::CustomAutoRooter
-    {
-      public:
-        inline AutoRooter(ThreadSafeContext *cx, const StackShape *shape_
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
-      private:
-        virtual void trace(JSTracer *trc);
-
-        const StackShape *shape;
-        SkipRoot skip;
-        MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-    };
+    // For RootedGeneric<StackShape*>
+    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
+    void trace(JSTracer *trc);
 };
 
 } /* namespace js */

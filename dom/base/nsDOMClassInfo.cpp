@@ -164,10 +164,6 @@
 #include "FMRadio.h"
 #endif
 
-#ifdef MOZ_B2G_BT
-#include "BluetoothDevice.h"
-#endif
-
 #include "nsIDOMCameraManager.h"
 #include "nsIDOMGlobalObjectConstructor.h"
 #include "nsIDOMLockedFile.h"
@@ -486,11 +482,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
 #ifdef MOZ_B2G_RIL
   NS_DEFINE_CLASSINFO_DATA(MozIccManager, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
-#endif
-
-#ifdef MOZ_B2G_BT
-  NS_DEFINE_CLASSINFO_DATA(BluetoothDevice, nsEventTargetSH,
-                           EVENTTARGET_SCRIPTABLE_FLAGS)
 #endif
 
   NS_DEFINE_CLASSINFO_DATA(CameraCapabilities, nsDOMGenericSH,
@@ -1203,12 +1194,6 @@ nsDOMClassInfo::Init()
 
 #endif
 
-#ifdef MOZ_B2G_BT
-  DOM_CLASSINFO_MAP_BEGIN(BluetoothDevice, nsIDOMBluetoothDevice)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMBluetoothDevice)
-  DOM_CLASSINFO_MAP_END
-#endif
-
   DOM_CLASSINFO_MAP_BEGIN(CameraCapabilities, nsICameraCapabilities)
     DOM_CLASSINFO_MAP_ENTRY(nsICameraCapabilities)
   DOM_CLASSINFO_MAP_END
@@ -1512,21 +1497,6 @@ NS_IMETHODIMP
 nsDOMClassInfo::Enumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                           JSObject *obj, bool *_retval)
 {
-#ifdef DEBUG
-  if (!sSecMan) {
-    NS_ERROR("No security manager!!!");
-    return NS_OK;
-  }
-
-  // Ask the security manager if it's OK to enumerate
-  nsresult rv =
-    sSecMan->CheckPropertyAccess(cx, obj, mData->mName, sEnumerate_id,
-                                 nsIXPCSecurityManager::ACCESS_GET_PROPERTY);
-
-  NS_ASSERTION(NS_SUCCEEDED(rv),
-               "XOWs should have stopped us from getting here!!!");
-#endif
-
   return NS_OK;
 }
 
@@ -1598,38 +1568,6 @@ nsDOMClassInfo::Finalize(nsIXPConnectWrappedNative *wrapper, JSFreeOp *fop,
   NS_WARNING("nsDOMClassInfo::Finalize Don't call me!");
 
   return NS_ERROR_UNEXPECTED;
-}
-
-NS_IMETHODIMP
-nsDOMClassInfo::CheckAccess(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                            JSObject *obj, jsid aId, uint32_t mode,
-                            jsval *vp, bool *_retval)
-{
-  JS::Rooted<jsid> id(cx, aId);
-  uint32_t mode_type = mode & JSACC_TYPEMASK;
-
-  if ((mode_type == JSACC_WATCH || mode_type == JSACC_PROTO) && sSecMan) {
-    nsresult rv;
-    JS::Rooted<JSObject*> real_obj(cx);
-    if (wrapper) {
-      real_obj = wrapper->GetJSObject();
-      NS_ENSURE_STATE(real_obj);
-    }
-    else {
-      real_obj = obj;
-    }
-
-    rv =
-      sSecMan->CheckPropertyAccess(cx, real_obj, mData->mName, id,
-                                   nsIXPCSecurityManager::ACCESS_GET_PROPERTY);
-
-    if (NS_FAILED(rv)) {
-      // Let XPConnect know that the access was not granted.
-      *_retval = false;
-    }
-  }
-
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2796,7 +2734,8 @@ ResolvePrototype(nsIXPConnect *aXPConnect, nsGlobalWindow *aWin, JSContext *cx,
       }
 
       if (val.isObject()) {
-        if (!JS_LookupProperty(cx, &val.toObject(), "prototype", &val)) {
+        JS::Rooted<JSObject*> obj(cx, &val.toObject());
+        if (!JS_LookupProperty(cx, obj, "prototype", &val)) {
           return NS_ERROR_UNEXPECTED;
         }
 
@@ -3356,46 +3295,14 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     return DefineComponentsShim(cx, obj, win);
   }
 
-  nsIScriptContext *my_context = win->GetContextInternal();
-
   // Don't resolve standard classes on XrayWrappers, only resolve them if we're
   // resolving on the real global object.
-  if (!xpc::WrapperFactory::IsXrayWrapper(obj)) {
+  bool isXray = xpc::WrapperFactory::IsXrayWrapper(obj);
+  if (!isXray) {
     bool did_resolve = false;
-    bool ok = true;
-    JS::Rooted<JS::Value> exn(cx, JSVAL_VOID);
-
-    {
-      // Resolve standard classes on my_context's JSContext (or on cx,
-      // if we don't have a my_context yet), in case the two contexts
-      // have different origins.  We want lazy standard class
-      // initialization to behave as if it were done eagerly, on each
-      // window's own context (not on some other window-caller's
-      // context).
-      AutoPushJSContext my_cx(my_context ? my_context->GetNativeContext() : cx);
-      JSAutoCompartment ac(my_cx, obj);
-
-      ok = JS_ResolveStandardClass(my_cx, obj, id, &did_resolve);
-
-      if (!ok) {
-        // Trust the JS engine (or the script security manager) to set
-        // the exception in the JS engine.
-
-        if (!JS_GetPendingException(my_cx, &exn)) {
-          return NS_ERROR_UNEXPECTED;
-        }
-
-        // Return NS_OK to avoid stomping over the exception that was passed
-        // down from the ResolveStandardClass call.
-        // Note that the order of the JS_ClearPendingException and
-        // JS_SetPendingException is important in the case that my_cx == cx.
-
-        JS_ClearPendingException(my_cx);
-      }
-    }
-
-    if (!ok) {
-      JS_SetPendingException(cx, exn);
+    if (!JS_ResolveStandardClass(cx, obj, id, &did_resolve)) {
+      // Return NS_OK to avoid stomping over the exception that was passed
+      // down from the ResolveStandardClass call.
       *_retval = false;
       return NS_OK;
     }
@@ -3406,14 +3313,10 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     }
   }
 
-  if (!my_context || !my_context->IsContextInitialized()) {
-    // The context is not yet initialized so there's nothing we can do
-    // here yet.
-
-    return NS_OK;
-  }
-
-  if (sLocation_id == id) {
+  // WebIDL quickstubs handle location for us, but Xrays don't see those.  So if
+  // we're an Xray, we have to resolve stuff here to make "window.location =
+  // someString" work.
+  if (sLocation_id == id && isXray) {
     // This must be done even if we're just getting the value of
     // window.location (i.e. no checking flags & JSRESOLVE_ASSIGNING
     // here) since we must define window.location to prevent the
@@ -3444,7 +3347,10 @@ nsWindowSH::NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     return NS_OK;
   }
 
-  if (sTop_id == id) {
+  // WebIDL quickstubs handle "top" for us, but Xrays don't see those.  So if
+  // we're an Xray and we want "top" to be JSPROP_PERMANENT, we need to resolve
+  // it here.
+  if (sTop_id == id && isXray) {
     nsCOMPtr<nsIDOMWindow> top;
     nsresult rv = win->GetScriptableTop(getter_AddRefs(top));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -3553,25 +3459,6 @@ nsWindowSH::OuterObject(nsIXPConnectWrappedNative *wrapper, JSContext * cx,
 
   *_retval = winObj;
   return NS_OK;
-}
-
-// DOM Location helper
-
-NS_IMETHODIMP
-nsLocationSH::CheckAccess(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                          JSObject *obj, jsid id, uint32_t mode,
-                          jsval *vp, bool *_retval)
-{
-  if ((mode & JSACC_TYPEMASK) == JSACC_PROTO && (mode & JSACC_WRITE)) {
-    // No setting location.__proto__, ever!
-
-    // Let XPConnect know that the access was not granted.
-    *_retval = false;
-
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  return nsDOMGenericSH::CheckAccess(wrapper, cx, obj, id, mode, vp, _retval);
 }
 
 NS_IMETHODIMP
@@ -3836,7 +3723,6 @@ const JSClass sHTMLDocumentAllClass = {
   (JSResolveOp)nsHTMLDocumentSH::DocumentAllNewResolve,
   JS_ConvertStub,
   nsHTMLDocumentSH::ReleaseDocument,
-  nullptr,                                                  /* checkAccess */
   nsHTMLDocumentSH::CallToGetPropMapper
 };
 

@@ -29,12 +29,12 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsWeakReference.h"
 #include "nsITabChild.h"
+#include "nsITooltipListener.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/TabContext.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/CompositorTypes.h"
 
-struct gfxMatrix;
 class nsICachedFileDescriptorListener;
 class nsIDOMWindowUtils;
 
@@ -158,7 +158,8 @@ class TabChild : public PBrowserChild,
                  public nsITabChild,
                  public nsIObserver,
                  public ipc::MessageManagerCallback,
-                 public TabContext
+                 public TabContext,
+                 public nsITooltipListener
 {
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
     typedef mozilla::layout::RenderFrameChild RenderFrameChild;
@@ -192,6 +193,7 @@ public:
     NS_DECL_NSIDIALOGCREATOR
     NS_DECL_NSITABCHILD
     NS_DECL_NSIOBSERVER
+    NS_DECL_NSITOOLTIPLISTENER
 
     /**
      * MessageManagerCallback methods that we override.

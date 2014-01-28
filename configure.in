@@ -247,9 +247,12 @@ if test -n "$gonkdir" ; then
         AC_SUBST(MOZ_OMX_DECODER)
         MOZ_OMX_ENCODER=1
         AC_SUBST(MOZ_OMX_ENCODER)
+        AC_DEFINE(MOZ_OMX_ENCODER)
         ;;
     19)
         GONK_INCLUDES="-I$gonkdir/frameworks/native/include"
+        MOZ_B2G_BT=1
+        MOZ_B2G_BT_BLUEDROID=1
         MOZ_NFC=1
 
         ;;
@@ -971,11 +974,15 @@ if test -n "$CROSS_COMPILE"; then
     OS_RELEASE=
     case "${target_os}" in
         linux*)       OS_ARCH=Linux OS_TARGET=Linux ;;
-        kfreebsd*-gnu) OS_ARCH=GNU_kFreeBSD OS_TARGET=GNU_kFreeBSD ;;
+        kfreebsd*-gnu) OS_ARCH=GNU_kFreeBSD OS_TARGET=GNU/kFreeBSD ;;
         gnu*)         OS_ARCH=GNU ;;
         solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
         mingw*)       OS_ARCH=WINNT OS_TARGET=WINNT ;;
         darwin*)      OS_ARCH=Darwin OS_TARGET=Darwin ;;
+        dragonfly*)   OS_ARCH=DragonFly OS_TARGET=DragonFly ;;
+        freebsd*)     OS_ARCH=FreeBSD OS_TARGET=FreeBSD ;;
+        netbsd*)      OS_ARCH=NetBSD OS_TARGET=NetBSD ;;
+        openbsd*)     OS_ARCH=OpenBSD OS_TARGET=OpenBSD ;;
     esac
     case "${target}" in
         *-android*|*-linuxandroid*) OS_ARCH=Linux OS_TARGET=Android ;;
@@ -1150,6 +1157,10 @@ arm*)
 
 mips|mipsel)
     CPU_ARCH="mips"
+    ;;
+
+aarch64*)
+    CPU_ARCH=aarch64
     ;;
 esac
 
@@ -1345,12 +1356,14 @@ if test "$GNU_CC"; then
     # -Wpointer-arith - good to have
     # -Wdeclaration-after-statement - MSVC doesn't like these
     # -Werror=return-type - catches missing returns, zero false positives
+    # -Werror=int-to-pointer-cast - catches cast to pointer from integer of different size
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
     # -Wsign-compare - catches comparison of signed and unsigned types
     #
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wall -Wpointer-arith -Wdeclaration-after-statement"
     MOZ_C_SUPPORTS_WARNING(-W, error=return-type, ac_c_has_werror_return_type)
+    MOZ_C_SUPPORTS_WARNING(-W, error=int-to-pointer-cast, ac_c_has_werror_int_to_pointer_cast)
     MOZ_C_SUPPORTS_WARNING(-W, type-limits, ac_c_has_wtype_limits)
     MOZ_C_SUPPORTS_WARNING(-W, empty-body, ac_c_has_wempty_body)
     MOZ_C_SUPPORTS_WARNING(-W, sign-compare, ac_c_has_sign_compare)
@@ -1409,12 +1422,14 @@ if test "$GNU_CXX"; then
     # -Wpointer-arith - good to have
     # -Woverloaded-virtual - ???
     # -Werror=return-type - catches missing returns, zero false positives
+    # -Werror=int-to-pointer-cast - catches cast to pointer from integer of different size
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
     # -Wsign-compare - catches comparison of signed and unsigned types
     #
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual"
     MOZ_CXX_SUPPORTS_WARNING(-W, error=return-type, ac_cxx_has_werror_return_type)
+    MOZ_CXX_SUPPORTS_WARNING(-W, error=int-to-pointer-cast, ac_cxx_has_werror_int_to_pointer_cast)
     MOZ_CXX_SUPPORTS_WARNING(-W, type-limits, ac_cxx_has_wtype_limits)
     MOZ_CXX_SUPPORTS_WARNING(-W, empty-body, ac_cxx_has_wempty_body)
     MOZ_CXX_SUPPORTS_WARNING(-W, sign-compare, ac_cxx_has_sign_compare)
@@ -5531,6 +5546,11 @@ if test -n "$MOZ_OPUS"; then
     AC_DEFINE(MOZ_OPUS)
 fi
 
+if test -n "$MOZ_WEBM_ENCODER"; then
+    AC_DEFINE(MOZ_WEBM_ENCODER)
+fi
+AC_SUBST(MOZ_WEBM_ENCODER)
+
 dnl ==================================
 dnl = Check alsa availability on Linux
 dnl ==================================
@@ -7020,7 +7040,7 @@ if test "$OS_TARGET" = Android; then
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=memccpy,--wrap=memchr,--wrap=memrchr,--wrap=memcmp,--wrap=memcpy,--wrap=memmove,--wrap=memset,--wrap=memmem,--wrap=memswap,--wrap=index,--wrap=strchr,--wrap=strrchr,--wrap=strlen,--wrap=strcmp,--wrap=strcpy,--wrap=strcat,--wrap=strcasecmp,--wrap=strncasecmp,--wrap=strstr,--wrap=strcasestr,--wrap=strtok,--wrap=strtok_r,--wrap=strerror,--wrap=strerror_r,--wrap=strnlen,--wrap=strncat,--wrap=strncmp,--wrap=strncpy,--wrap=strlcat,--wrap=strlcpy,--wrap=strcspn,--wrap=strpbrk,--wrap=strsep,--wrap=strspn,--wrap=strcoll,--wrap=strxfrm"
     fi
     if test "$MOZ_WIDGET_TOOLKIT" = gonk -a -n "$MOZ_NUWA_PROCESS"; then
-        WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=pthread_create,--wrap=epoll_wait,--wrap=poll,--wrap=pthread_cond_timedwait,--wrap=__pthread_cond_timedwait,--wrap=pthread_cond_wait,--wrap=epoll_create,--wrap=epoll_ctl,--wrap=close,--wrap=pthread_key_create,--wrap=pthread_key_delete,--wrap=socketpair,--wrap=pthread_self,--wrap=pthread_mutex_lock,--wrap=pthread_join,--wrap=pipe,--wrap=pipe2"
+        WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=pthread_create,--wrap=epoll_wait,--wrap=poll,--wrap=pthread_cond_timedwait,--wrap=__pthread_cond_timedwait,--wrap=pthread_cond_wait,--wrap=epoll_create,--wrap=epoll_ctl,--wrap=close,--wrap=pthread_key_create,--wrap=pthread_key_delete,--wrap=socketpair,--wrap=pthread_self,--wrap=pthread_mutex_lock,--wrap=pthread_join,--wrap=pipe,--wrap=pipe2,--wrap=tgkill"
     fi
 fi
 
@@ -7451,7 +7471,10 @@ dnl ========================================================
 dnl = Support for gcc stack unwinding (from gcc 3.3)
 dnl ========================================================
 if test -z "$SKIP_LIBRARY_CHECKS"; then
+    AC_LANG_SAVE
+    AC_LANG_CPLUSPLUS
     MOZ_CHECK_HEADER(unwind.h, AC_CHECK_FUNCS(_Unwind_Backtrace))
+    AC_LANG_RESTORE
 fi
 
 dnl ========================================================
@@ -7733,8 +7756,14 @@ else
   else
     echo '#include <stdio.h>' > dummy-hello.c
     changequote(,)
-    CL_INCLUDES_PREFIX=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/^\([^:]*:[^:]*:\).*stdio.h$/\1/p'`
+    dnl This output is localized, split at the first double space or colon and space.
+    _CL_PREFIX_REGEX="^\([^:]*:.*[ :] \)\(.*stdio.h\)$"
+    CL_INCLUDES_PREFIX=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/'"$_CL_PREFIX_REGEX"'/\1/p'`
+    _CL_STDIO_PATH=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/'"$_CL_PREFIX_REGEX"'/\2/p'`
     changequote([,])
+    if ! test -e "$_CL_STDIO_PATH"; then
+        AC_MSG_ERROR([Unable to parse cl -showIncludes prefix. This compiler's locale has an unsupported formatting.])
+    fi
     if test -z "$CL_INCLUDES_PREFIX"; then
         AC_MSG_ERROR([Cannot find cl -showIncludes prefix.])
     fi

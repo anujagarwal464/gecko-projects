@@ -44,12 +44,12 @@ function setAttributes(aNode, aAttrs) {
   }
 }
 
-function updateCombinedWidgetStyle(aNode, aArea, aModifyAutoclose) {
+function updateCombinedWidgetStyle(aNode, aArea, aModifyCloseMenu) {
   let inPanel = (aArea == CustomizableUI.AREA_PANEL);
   let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
   let attrs = {class: cls};
-  if (aModifyAutoclose) {
-    attrs.noautoclose = inPanel ? true : null;
+  if (aModifyCloseMenu) {
+    attrs.closemenu = inPanel ? "none" : null;
   }
   for (let i = 0, l = aNode.childNodes.length; i < l; ++i) {
     if (aNode.childNodes[i].localName == "separator")
@@ -100,8 +100,8 @@ const CustomizableWidgets = [{
 
               let item = doc.createElementNS(kNSXUL, "toolbarbutton");
               item.setAttribute("label", title || uri);
-              item.setAttribute("tabindex", "0");
               item.setAttribute("targetURI", uri);
+              item.setAttribute("class", "subviewbutton");
               item.addEventListener("command", function (aEvent) {
                 onHistoryVisit(uri, aEvent, item);
               });
@@ -152,12 +152,24 @@ const CustomizableWidgets = [{
 
       let tabsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getTabsFragment(doc.defaultView, "toolbarbutton");
       let separator = doc.getElementById("PanelUI-recentlyClosedTabs-separator");
-      separator.hidden = !tabsFragment.childElementCount;
+      let elementCount = tabsFragment.childElementCount;
+      separator.hidden = !elementCount;
+      while (--elementCount >= 0) {
+        if (tabsFragment.children[elementCount].localName != "toolbarbutton")
+          continue;
+        tabsFragment.children[elementCount].setAttribute("class", "subviewbutton");
+      }
       recentlyClosedTabs.appendChild(tabsFragment);
 
       let windowsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getWindowsFragment(doc.defaultView, "toolbarbutton");
       separator = doc.getElementById("PanelUI-recentlyClosedWindows-separator");
-      separator.hidden = !windowsFragment.childElementCount;
+      elementCount = windowsFragment.childElementCount;
+      separator.hidden = !elementCount;
+      while (--elementCount >= 0) {
+        if (windowsFragment.children[elementCount].localName != "toolbarbutton")
+          continue;
+        windowsFragment.children[elementCount].setAttribute("class", "subviewbutton");
+      }
       recentlyClosedWindows.appendChild(windowsFragment);
     },
     onViewHiding: function(aEvent) {
@@ -243,7 +255,7 @@ const CustomizableWidgets = [{
           item = doc.createElementNS(kNSXUL, "menuseparator");
         } else if (node.localName == "menuitem") {
           item = doc.createElementNS(kNSXUL, "toolbarbutton");
-          item.setAttribute("tabindex", "0");
+          item.setAttribute("class", "subviewbutton");
         } else {
           continue;
         }
@@ -256,7 +268,7 @@ const CustomizableWidgets = [{
       }
       items.appendChild(fragment);
 
-      aEvent.target.addEventListener("command", win.PanelUI.onCommandHandler);
+      aEvent.target.addEventListener("command", win.PanelUI);
     },
     onViewHiding: function(aEvent) {
       let doc = aEvent.target.ownerDocument;
@@ -272,8 +284,7 @@ const CustomizableWidgets = [{
       }
 
       parent.appendChild(items);
-      aEvent.target.removeEventListener("command",
-                                        win.PanelUI.onCommandHandler);
+      aEvent.target.removeEventListener("command", win.PanelUI);
     }
   }, {
     id: "add-ons-button",
@@ -311,7 +322,7 @@ const CustomizableWidgets = [{
       let areaType = CustomizableUI.getAreaType(this.currentArea);
       let inPanel = areaType == CustomizableUI.TYPE_MENU_PANEL;
       let inToolbar = areaType == CustomizableUI.TYPE_TOOLBAR;
-      let noautoclose = inPanel ? "true" : null;
+      let closeMenu = inPanel ? "none" : null;
       let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
 
       if (!this.currentArea)
@@ -319,20 +330,20 @@ const CustomizableWidgets = [{
 
       let buttons = [{
         id: "zoom-out-button",
-        noautoclose: noautoclose,
+        closemenu: closeMenu,
         command: "cmd_fullZoomReduce",
         class: cls,
         label: true,
         tooltiptext: true
       }, {
         id: "zoom-reset-button",
-        noautoclose: noautoclose,
+        closemenu: closeMenu,
         command: "cmd_fullZoomReset",
         class: cls,
         tooltiptext: true
       }, {
         id: "zoom-in-button",
-        noautoclose: noautoclose,
+        closemenu: closeMenu,
         command: "cmd_fullZoomEnlarge",
         class: cls,
         label: true,
@@ -353,8 +364,6 @@ const CustomizableWidgets = [{
           node.appendChild(aDocument.createElementNS(kNSXUL, "separator"));
         let btnNode = aDocument.createElementNS(kNSXUL, "toolbarbutton");
         setAttributes(btnNode, aButton);
-        if (inPanel)
-          btnNode.setAttribute("tabindex", "0");
         node.appendChild(btnNode);
       });
 
@@ -715,6 +724,7 @@ const CustomizableWidgets = [{
           elem.setAttribute("current", "true");
         if (disabled)
           elem.setAttribute("disabled", "true");
+        elem.setAttribute("class", "subviewbutton");
         containerElem.appendChild(elem);
       }
     },

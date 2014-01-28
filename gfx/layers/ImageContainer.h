@@ -201,9 +201,9 @@ public:
   }
 
   ImageBackendData* GetBackendData(LayersBackend aBackend)
-  { return mBackendData[aBackend]; }
+  { return mBackendData[size_t(aBackend)]; }
   void SetBackendData(LayersBackend aBackend, ImageBackendData* aData)
-  { mBackendData[aBackend] = aData; }
+  { mBackendData[size_t(aBackend)] = aData; }
 
   int32_t GetSerial() { return mSerial; }
 
@@ -220,7 +220,7 @@ protected:
     mSent(false)
   {}
 
-  nsAutoPtr<ImageBackendData> mBackendData[mozilla::layers::LAYERS_LAST];
+  nsAutoPtr<ImageBackendData> mBackendData[size_t(mozilla::layers::LayersBackend::LAYERS_LAST)];
 
   void* mImplData;
   int32_t mSerial;
@@ -902,6 +902,7 @@ protected:
   virtual uint8_t* AllocateBuffer(uint32_t aSize);
 
   already_AddRefed<gfxASurface> DeprecatedGetAsSurface();
+  TemporaryRef<gfx::SourceSurface> GetAsSourceSurface();
 
   void SetOffscreenFormat(gfxImageFormat aFormat) { mOffscreenFormat = aFormat; }
   gfxImageFormat GetOffscreenFormat();
@@ -911,7 +912,8 @@ protected:
   Data mData;
   gfx::IntSize mSize;
   gfxImageFormat mOffscreenFormat;
-  nsCountedRef<nsMainThreadSurfaceRef> mSurface;
+  nsCountedRef<nsMainThreadSurfaceRef> mDeprecatedSurface;
+  nsCountedRef<nsMainThreadSourceSurfaceRef> mSourceSurface;
   nsRefPtr<BufferRecycleBin> mRecycleBin;
 };
 
@@ -957,8 +959,6 @@ public:
   gfx::IntSize GetSize() { return mSize; }
 
   CairoImage() : Image(nullptr, CAIRO_SURFACE) {}
-
-private:
 
   nsCountedRef<nsMainThreadSurfaceRef> mDeprecatedSurface;
   gfx::IntSize mSize;

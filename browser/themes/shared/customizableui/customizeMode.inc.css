@@ -3,6 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Customization mode */
+#main-window:-moz-any([customize-entering],[customize-exiting]) #tab-view-deck {
+  pointer-events: none;
+}
+
 #nav-bar[customize-entered] > #nav-bar-customization-target {
   margin: 1px 3px;
 }
@@ -100,7 +104,7 @@ toolbarpaletteitem[place="toolbar"] {
 #wrapper-edit-controls[place="palette"] > #edit-controls > separator,
 #wrapper-zoom-controls[place="palette"] > #zoom-controls > toolbarbutton,
 #wrapper-zoom-controls[place="palette"] > #zoom-controls > separator {
-  margin-top: 24px;
+  margin-top: 20px;
 }
 
 #wrapper-edit-controls[place="palette"] > #edit-controls > toolbarbutton,

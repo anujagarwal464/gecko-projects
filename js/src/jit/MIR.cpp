@@ -539,6 +539,12 @@ MConstant::canProduceFloat32() const
     return true;
 }
 
+MCloneLiteral *
+MCloneLiteral::New(TempAllocator &alloc, MDefinition *obj)
+{
+    return new(alloc) MCloneLiteral(obj);
+}
+
 void
 MControlInstruction::printOpcode(FILE *fp) const
 {
@@ -1914,11 +1920,11 @@ MCompare::infer(BaselineInspector *inspector, jsbytecode *pc)
     }
 
     // Any comparison is allowed except strict eq.
-    if (!strictEq && lhs == MIRType_Double && SafelyCoercesToDouble(getOperand(1))) {
+    if (!strictEq && IsFloatingPointType(lhs) && SafelyCoercesToDouble(getOperand(1))) {
         compareType_ = Compare_DoubleMaybeCoerceRHS;
         return;
     }
-    if (!strictEq && rhs == MIRType_Double && SafelyCoercesToDouble(getOperand(0))) {
+    if (!strictEq && IsFloatingPointType(rhs) && SafelyCoercesToDouble(getOperand(0))) {
         compareType_ = Compare_DoubleMaybeCoerceLHS;
         return;
     }
@@ -2530,9 +2536,6 @@ MCompare::trySpecializeFloat32(TempAllocator &alloc)
 {
     MDefinition *lhs = getOperand(0);
     MDefinition *rhs = getOperand(1);
-
-    if (compareType_ == Compare_Float32)
-        return;
 
     if (lhs->canProduceFloat32() && rhs->canProduceFloat32() && compareType_ == Compare_Double) {
         compareType_ = Compare_Float32;

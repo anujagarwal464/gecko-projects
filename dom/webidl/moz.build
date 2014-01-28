@@ -428,6 +428,7 @@ WEBIDL_FILES = [
     'WheelEvent.webidl',
     'WifiOptions.webidl',
     'Worker.webidl',
+    'WorkerConsole.webidl',
     'WorkerGlobalScope.webidl',
     'WorkerLocation.webidl',
     'WorkerNavigator.webidl',
@@ -511,9 +512,7 @@ if CONFIG['MOZ_B2G_BT']:
     WEBIDL_FILES += [
         'BluetoothAdapter.webidl',
         'BluetoothDevice.webidl',
-        'BluetoothDeviceEvent.webidl',
         'BluetoothManager.webidl',
-        'BluetoothStatusChangedEvent.webidl',
     ]
 
 if CONFIG['MOZ_B2G_RIL']:
@@ -583,3 +582,10 @@ if CONFIG['MOZ_GAMEPAD']:
         'GamepadButtonEvent.webidl',
         'GamepadEvent.webidl',
     ]
+
+if CONFIG['MOZ_B2G_BT']:
+    GENERATED_EVENTS_WEBIDL_FILES += [
+        'BluetoothDeviceEvent.webidl',
+        'BluetoothStatusChangedEvent.webidl',
+    ]
+

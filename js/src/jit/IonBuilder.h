@@ -212,7 +212,8 @@ class IonBuilder : public MIRGenerator
     static int CmpSuccessors(const void *a, const void *b);
 
   public:
-    IonBuilder(JSContext *analysisContext, CompileCompartment *comp, TempAllocator *temp,
+    IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
+               const JitCompileOptions &options, TempAllocator *temp,
                MIRGraph *graph, types::CompilerConstraintList *constraints,
                BaselineInspector *inspector, CompileInfo *info,
                const OptimizationInfo *optimizationInfo, BaselineFrameInspector *baselineFrame,
@@ -556,6 +557,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_initelem();
     bool jsop_initelem_array();
     bool jsop_initelem_getter_setter();
+    bool jsop_mutateproto();
     bool jsop_initprop(PropertyName *name);
     bool jsop_initprop_getter_setter(PropertyName *name);
     bool jsop_regexp(RegExpObject *reobj);
@@ -629,7 +631,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineStrCharCodeAt(CallInfo &callInfo);
     InliningStatus inlineStrFromCharCode(CallInfo &callInfo);
     InliningStatus inlineStrCharAt(CallInfo &callInfo);
-    InliningStatus inlineStrReplaceRegExp(CallInfo &callInfo);
+    InliningStatus inlineStrReplace(CallInfo &callInfo);
 
     // RegExp natives.
     InliningStatus inlineRegExpExec(CallInfo &callInfo);

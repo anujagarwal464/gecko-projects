@@ -1375,7 +1375,7 @@ toolbarbutton[type="socialmark"] > .toolbarbutton-icon {
   -moz-margin-start: 5px;
 }
 
-#bookmarks-menu-button[cui-areatype="toolbar"] > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon {
+#bookmarks-menu-button[cui-areatype="toolbar"]:not(.bookmark-item):not(.overflowedItem) > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon {
   padding-top: 2px;
   padding-bottom: 2px;
 }
@@ -2138,6 +2138,26 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 
 #ctrlTab-showAll {
   margin-top: .5em;
+}
+
+/* Sync Panel */
+
+#sync-popup {
+  padding: 10px;
+}
+
+#sync-popup-icon {
+  width: 32px;
+  background: url("chrome://browser/content/abouthome/sync.png") center center no-repeat;
+}
+
+#sync-popup-inner {
+  width: 0;
+  padding-left: 10px;
+}
+
+#sync-popup-desc-prefs {
+  margin: 0;
 }
 
 /* Status panel */

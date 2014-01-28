@@ -539,7 +539,6 @@ const Class WithObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     nullptr,                 /* finalize */
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
@@ -1694,7 +1693,7 @@ DebugScopes::sweep(JSRuntime *rt)
     }
 }
 
-#if defined(JSGC_GENERATIONAL) and defined(JS_GC_ZEAL)
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
 void
 DebugScopes::checkHashTablesAfterMovingGC(JSRuntime *runtime)
 {

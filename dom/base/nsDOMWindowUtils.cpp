@@ -2402,7 +2402,7 @@ nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
   mgr->StopFrameTimeRecording(startIndex, tmpFrameIntervals);
   *frameCount = tmpFrameIntervals.Length();
 
-  *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
+  *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float));
 
   /* copy over the frame intervals and paint times into the arrays we just allocated */
   for (uint32_t i = 0; i < *frameCount; i++) {
@@ -2682,12 +2682,12 @@ nsDOMWindowUtils::WrapDOMFile(nsIFile *aFile,
 static bool
 CheckLeafLayers(Layer* aLayer, const nsIntPoint& aOffset, nsIntRegion* aCoveredRegion)
 {
-  gfxMatrix transform;
+  gfx::Matrix transform;
   if (!aLayer->GetTransform().Is2D(&transform) ||
       transform.HasNonIntegerTranslation())
     return false;
   transform.NudgeToIntegers();
-  nsIntPoint offset = aOffset + nsIntPoint(transform.x0, transform.y0);
+  nsIntPoint offset = aOffset + nsIntPoint(transform._31, transform._32);
 
   Layer* child = aLayer->GetFirstChild();
   if (child) {

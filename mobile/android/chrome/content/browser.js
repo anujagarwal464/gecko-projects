@@ -63,6 +63,9 @@ XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
                                    "@mozilla.org/uuid-generator;1",
                                    "nsIUUIDGenerator");
 
+XPCOMUtils.defineLazyModuleGetter(this, "SimpleServiceDiscovery",
+                                  "resource://gre/modules/SimpleServiceDiscovery.jsm");
+
 #ifdef NIGHTLY_BUILD
 XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
                                   "resource://shumway/ShumwayUtils.jsm");
@@ -82,6 +85,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
   ["PluginHelper", "chrome://browser/content/PluginHelper.js"],
   ["OfflineApps", "chrome://browser/content/OfflineApps.js"],
   ["Linkifier", "chrome://browser/content/Linkify.js"],
+  ["CastingApps", "chrome://browser/content/CastingApps.js"],
 ].forEach(function (aScript) {
   let [name, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
@@ -330,7 +334,8 @@ var BrowserApp = {
     Services.obs.addObserver(this, "gather-telemetry", false);
     Services.obs.addObserver(this, "keyword-search", false);
 #ifdef MOZ_ANDROID_SYNTHAPKS
-    Services.obs.addObserver(this, "webapps-download-apk", false);
+    Services.obs.addObserver(this, "webapps-runtime-install", false);
+    Services.obs.addObserver(this, "webapps-runtime-install-package", false);
     Services.obs.addObserver(this, "webapps-ask-install", false);
     Services.obs.addObserver(this, "webapps-launch", false);
     Services.obs.addObserver(this, "webapps-uninstall", false);
@@ -376,9 +381,6 @@ var BrowserApp = {
     // TODO: replace with Android implementation of WebappOSUtils.isLaunchable.
     Cu.import("resource://gre/modules/Webapps.jsm");
     DOMApplicationRegistry.allAppsLaunchable = true;
-
-    // TODO: figure out why this is needed here.
-    Cu.import("resource://gre/modules/AppsUtils.jsm");
 #else
     WebappsUI.init();
 #endif
@@ -386,6 +388,7 @@ var BrowserApp = {
     Reader.init();
     UserAgentOverrides.init();
     DesktopUserAgent.init();
+    CastingApps.init();
     Distribution.init();
     Tabs.init();
 #ifdef ACCESSIBILITY
@@ -413,9 +416,8 @@ var BrowserApp = {
         this.isGuest = window.arguments[4];
     }
 
-    let status = this.startupStatus();
     if (pinned) {
-      this._initRuntime(status, url, aUrl => this.addTab(aUrl));
+      this._initRuntime(this._startupStatus, url, aUrl => this.addTab(aUrl));
     } else {
       SearchEngines.init();
       this.initContextMenu();
@@ -432,7 +434,7 @@ var BrowserApp = {
     event.initEvent("UIReady", true, false);
     window.dispatchEvent(event);
 
-    if (status)
+    if (this._startupStatus)
       this.onAppUpdated();
 
     // Store the low-precision buffer pref
@@ -447,18 +449,22 @@ var BrowserApp = {
 #endif
   },
 
-  startupStatus: function() {
-    let savedmstone = null;
+  get _startupStatus() {
+    delete this._startupStatus;
+
+    let savedMilestone = null;
     try {
-      savedmstone = Services.prefs.getCharPref("browser.startup.homepage_override.mstone");
+      savedMilestone = Services.prefs.getCharPref("browser.startup.homepage_override.mstone");
     } catch (e) {
     }
-#expand    let ourmstone = "__MOZ_APP_VERSION__";
-    if (ourmstone != savedmstone) {
-      Services.prefs.setCharPref("browser.startup.homepage_override.mstone", ourmstone);
-      return savedmstone ? "upgrade" : "new";
+#expand    let ourMilestone = "__MOZ_APP_VERSION__";
+    this._startupStatus = "";
+    if (ourMilestone != savedMilestone) {
+      Services.prefs.setCharPref("browser.startup.homepage_override.mstone", ourMilestone);
+      this._startupStatus = savedMilestone ? "upgrade" : "new";
     }
-    return "";
+
+    return this._startupStatus;
   },
 
   /**
@@ -727,6 +733,7 @@ var BrowserApp = {
     UserAgentOverrides.uninit();
     DesktopUserAgent.uninit();
     ExternalApps.uninit();
+    CastingApps.uninit();
     Distribution.uninit();
     Tabs.uninit();
   },
@@ -768,7 +775,6 @@ var BrowserApp = {
       return;
 
     if (this._selectedTab) {
-      Tabs.touch(this._selectedTab);
       this._selectedTab.setActive(false);
     }
 
@@ -776,7 +782,6 @@ var BrowserApp = {
     if (!aTab)
       return;
 
-    Tabs.touch(aTab);
     aTab.setActive(true);
     aTab.setResolution(aTab._zoom, true);
     this.contentDocumentChanged();
@@ -887,8 +892,6 @@ var BrowserApp = {
     evt.initUIEvent("TabOpen", true, false, window, null);
     newTab.browser.dispatchEvent(evt);
 
-    Tabs.expireLruTab();
-
     return newTab;
   },
 
@@ -910,8 +913,8 @@ var BrowserApp = {
 
 #ifdef MOZ_ANDROID_SYNTHAPKS
   _loadWebapp: function(aMessage) {
-    // TODO: figure out when (if ever) to pass "new" to the status parameter.
-    this._initRuntime("", aMessage.url, aUrl => {
+
+    this._initRuntime(this._startupStatus, aMessage.url, aUrl => {
       this.manifestUrl = aMessage.url;
       this.addTab(aUrl, { title: aMessage.name });
     });
@@ -1574,8 +1577,12 @@ var BrowserApp = {
         break;
 
 #ifdef MOZ_ANDROID_SYNTHAPKS
-      case "webapps-download-apk":
-        WebappManager.downloadApk(JSON.parse(aData));
+      case "webapps-runtime-install":
+        WebappManager.install(JSON.parse(aData), aSubject);
+        break;
+
+      case "webapps-runtime-install-package":
+        WebappManager.installPackage(JSON.parse(aData), aSubject);
         break;
 
       case "webapps-ask-install":
@@ -3043,6 +3050,8 @@ Tab.prototype = {
   setActive: function setActive(aActive) {
     if (!this.browser || !this.browser.docShell)
       return;
+
+    this.lastTouchedAt = Date.now();
 
     if (aActive) {
       this.browser.setAttribute("type", "content-primary");
@@ -6784,7 +6793,7 @@ var SearchEngines = {
     SelectionHandler.addAction({
       id: "search_add_action",
       label: Strings.browser.GetStringFromName("contextmenu.addSearchEngine"),
-      icon: "drawable://ic_url_bar_search",
+      icon: "drawable://ab_add_search_engine",
       selector: filter,
       action: function(aElement) {
         SearchEngines.addEngine(aElement);
@@ -7087,6 +7096,7 @@ var WebappsUI = {
     Services.obs.removeObserver(this, "webapps-install-error");
   },
 
+  DEFAULT_ICON: "chrome://browser/skin/images/default-app-icon.png",
   DEFAULT_PREFS_FILENAME: "default-prefs.js",
 
   observe: function observe(aSubject, aTopic, aData) {
@@ -7128,39 +7138,6 @@ var WebappsUI = {
     }
   },
 
-  getBiggestIcon: function getBiggestIcon(aIcons, aOrigin) {
-    const DEFAULT_ICON = "chrome://browser/skin/images/default-app-icon.png";
-    if (!aIcons)
-      return DEFAULT_ICON;
-  
-    let iconSizes = Object.keys(aIcons);
-    if (iconSizes.length == 0)
-      return DEFAULT_ICON;
-    iconSizes.sort(function(a, b) a - b);
-
-    let biggestIcon = aIcons[iconSizes.pop()];
-    let iconURI = null;
-    try {
-      iconURI = Services.io.newURI(biggestIcon, null, null);
-      if (iconURI.scheme == "data") {
-        return iconURI.spec;
-      }
-    } catch (ex) {
-      // we don't have a biggestIcon or its not a valid url
-    }
-
-    // if we have an origin, try to resolve biggestIcon as a relative url
-    if (!iconURI && aOrigin) {
-      try {
-        iconURI = Services.io.newURI(aOrigin.resolve(biggestIcon), null, null);
-      } catch (ex) {
-        console.log("Could not resolve url: " + aOrigin.spec + " " + biggestIcon + " - " + ex);
-      }
-    }
-
-    return iconURI ? iconURI.spec : DEFAULT_ICON;
-  },
-
   doInstall: function doInstall(aData) {
     let jsonManifest = aData.isPackage ? aData.app.updateManifest : aData.app.manifest;
     let manifest = new ManifestHelper(jsonManifest, aData.app.origin);
@@ -7186,7 +7163,7 @@ var WebappsUI = {
 
             // the manifest argument is the manifest from within the zip file,
             // TODO so now would be a good time to ask about permissions.
-            self.makeBase64Icon(self.getBiggestIcon(manifest.icons, Services.io.newURI(aData.app.origin, null, null)),
+            self.makeBase64Icon(localeManifest.biggestIconURL || this.DEFAULT_ICON,
               function(scaledIcon, fullsizeIcon) {
                 // if java returned a profile path to us, try to use it to pre-populate the app cache
                 // also save the icon so that it can be used in the splash screen
@@ -7316,9 +7293,8 @@ var WebappsUI = {
 
       // if the image failed to load, and it was not our default icon, attempt to
       // use our default as a fallback
-      let uri = Services.io.newURI(favicon.src, null, null);
-      if (!/^chrome$/.test(uri.scheme)) {
-        favicon.src = WebappsUI.getBiggestIcon(null);
+      if (favicon.src != WebappsUI.DEFAULT_ICON) {
+        favicon.src = WebappsUI.DEFAULT_ICON;
       }
     };
   
@@ -8264,6 +8240,7 @@ var Tabs = {
     Services.obs.addObserver(this, "Session:Prefetch", false);
 
     BrowserApp.deck.addEventListener("pageshow", this, false);
+    BrowserApp.deck.addEventListener("TabOpen", this, false);
   },
 
   uninit: function() {
@@ -8276,14 +8253,20 @@ var Tabs = {
     Services.obs.removeObserver(this, "Session:Prefetch");
 
     BrowserApp.deck.removeEventListener("pageshow", this);
+    BrowserApp.deck.removeEventListener("TabOpen", this);
   },
 
   observe: function(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "memory-pressure":
         if (aData != "heap-minimize") {
+          // We received a low-memory related notification. This will enable
+          // expirations.
           this._enableTabExpiration = true;
           Services.obs.removeObserver(this, "memory-pressure");
+        } else {
+          // Use "heap-minimize" as a trigger to expire the most stale tab.
+          this.expireLruTab();
         }
         break;
       case "Session:Prefetch":
@@ -8306,11 +8289,11 @@ var Tabs = {
         // Clear the domain cache whenever a page get loaded into any browser.
         this._domains.clear();
         break;
+      case "TabOpen":
+        // Use opening a new tab as a trigger to expire the most stale tab.
+        this.expireLruTab();
+        break;
     }
-  },
-
-  touch: function(aTab) {
-    aTab.lastTouchedAt = Date.now();
   },
 
   // Manage the most-recently-used list of tabs. Each tab has a timestamp

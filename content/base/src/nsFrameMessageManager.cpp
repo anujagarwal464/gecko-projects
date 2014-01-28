@@ -462,7 +462,6 @@ nsFrameMessageManager::GetDelayedFrameScripts(JSContext* aCx, JS::MutableHandle<
 
   JS::Rooted<JSString*> url(aCx);
   JS::Rooted<JSObject*> pair(aCx);
-  JS::Rooted<JS::Value> pairVal(aCx);
   for (uint32_t i = 0; i < mPendingScripts.Length(); ++i) {
     url = JS_NewUCStringCopyN(aCx, mPendingScripts[i].get(), mPendingScripts[i].Length());
     NS_ENSURE_TRUE(url, NS_ERROR_OUT_OF_MEMORY);
@@ -473,8 +472,7 @@ nsFrameMessageManager::GetDelayedFrameScripts(JSContext* aCx, JS::MutableHandle<
     pair = JS_NewArrayObject(aCx, 2, pairElts);
     NS_ENSURE_TRUE(pair, NS_ERROR_OUT_OF_MEMORY);
 
-    pairVal = JS::ObjectValue(*pair);
-    NS_ENSURE_TRUE(JS_SetElement(aCx, array, i, &pairVal),
+    NS_ENSURE_TRUE(JS_SetElement(aCx, array, i, pair),
                    NS_ERROR_OUT_OF_MEMORY);
   }
 
@@ -613,7 +611,7 @@ nsFrameMessageManager::SendMessage(const nsAString& aMessageName,
                       retval[i].Length(), &ret)) {
       return NS_ERROR_UNEXPECTED;
     }
-    NS_ENSURE_TRUE(JS_SetElement(aCx, dataArray, i, &ret),
+    NS_ENSURE_TRUE(JS_SetElement(aCx, dataArray, i, ret),
                    NS_ERROR_OUT_OF_MEMORY);
   }
 
@@ -989,7 +987,7 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
         rv = aPrincipal->GetOrigin(getter_Copies(origin));
         NS_ENSURE_SUCCESS(rv, rv);
 
-        JS::Rooted<JSString*> originValue(cx, JS_InternString(cx, origin.get()));
+        JS::Rooted<JSString*> originValue(cx, JS_NewStringCopyN(cx, origin.get(), origin.Length()));
         JS_DefineProperty(cx, principalObj, "origin", STRING_TO_JSVAL(originValue), nullptr, nullptr, JSPROP_ENUMERATE);
 
         bool browser;

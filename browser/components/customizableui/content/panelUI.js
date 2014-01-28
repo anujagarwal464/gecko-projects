@@ -141,12 +141,6 @@ const PanelUI = {
       let iconAnchor =
         document.getAnonymousElementByAttribute(anchor, "class",
                                                 "toolbarbutton-icon");
-
-      // Only focus the panel if it's opened using the keyboard, so that
-      // cut/copy/paste buttons will work for mouse users.
-      let keyboardOpened = aEvent && aEvent.sourceEvent &&
-                           aEvent.sourceEvent.target.localName == "key";
-      this.panel.setAttribute("noautofocus", !keyboardOpened);
       this.panel.openPopup(iconAnchor || anchor, "bottomcenter topright");
 
       this.panel.addEventListener("popupshown", function onPopupShown() {
@@ -171,6 +165,9 @@ const PanelUI = {
 
   handleEvent: function(aEvent) {
     switch (aEvent.type) {
+      case "command":
+        this.onCommandHandler(aEvent);
+        break;
       case "popupshowing":
         // Fall through
       case "popupshown":
@@ -207,6 +204,8 @@ const PanelUI = {
       return this._readyPromise;
     }
     this._readyPromise = Task.spawn(function() {
+      this.contents.setAttributeNS("http://www.w3.org/XML/1998/namespace", "lang",
+                                   getLocale());
       if (!this._scrollWidth) {
         // In order to properly center the contents of the panel, while ensuring
         // that we have enough space on either side to show a scrollbar, we have to
@@ -330,9 +329,15 @@ const PanelUI = {
    * so that the panel knows if and when to close itself.
    */
   onCommandHandler: function(aEvent) {
-    if (!aEvent.originalTarget.hasAttribute("noautoclose")) {
-      PanelUI.hide();
+    let closemenu = aEvent.originalTarget.getAttribute("closemenu");
+    if (closemenu == "none") {
+      return;
     }
+    if (closemenu == "single") {
+      this.showMainView();
+      return;
+    }
+    this.hide();
   },
 
   /**
@@ -401,14 +406,37 @@ const PanelUI = {
           continue;
         button.setAttribute(attrName, node.getAttribute(attrName));
       }
+      button.setAttribute("class", "subviewbutton");
       fragment.appendChild(button);
     }
     items.appendChild(fragment);
 
-    this.addEventListener("command", PanelUI.onCommandHandler);
+    this.addEventListener("command", PanelUI);
   },
 
   _onHelpViewHide: function(aEvent) {
-    this.removeEventListener("command", PanelUI.onCommandHandler);
+    this.removeEventListener("command", PanelUI);
   }
 };
+
+/**
+ * Gets the currently selected locale for display.
+ * @return  the selected locale or "en-US" if none is selected
+ */
+function getLocale() {
+  try {
+    let locale = Services.prefs.getComplexValue(PREF_SELECTED_LOCALE,
+                                                Ci.nsIPrefLocalizedString);
+    if (locale)
+      return locale;
+  }
+  catch (e) { }
+
+  try {
+    return Services.prefs.getCharPref(PREF_SELECTED_LOCALE);
+  }
+  catch (e) { }
+
+  return "en-US";
+}
+
