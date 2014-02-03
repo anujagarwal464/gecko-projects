@@ -406,6 +406,7 @@ package-tests: \
   stage-cppunittests \
   stage-jittest \
   stage-steeplechase \
+  stage-web-platform-tests \
   $(NULL)
 else
 # This staging area has been built for us by universal/flight.mk
@@ -535,6 +536,10 @@ stage-marionette: make-stage-dir
 
 stage-mozbase: make-stage-dir
 	$(MAKE) -C $(DEPTH)/testing/mozbase stage-package
+
+stage-web-platform-tests: make-stage-dir
+	$(MAKE) -C $(DEPTH)/testing/web-platform-tests stage-package
+
 .PHONY: \
   mochitest \
   mochitest-plain \

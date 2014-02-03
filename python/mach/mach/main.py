@@ -321,6 +321,7 @@ To see more help for a specific command, run:
             # exception here is if _run itself raises. If _run raises, that's a
             # bug in mach (or a loaded command module being silly) and thus
             # should be reported differently.
+            raise
             self._print_error_header(argv, sys.stdout)
             print(MACH_ERROR)
 
@@ -424,6 +425,7 @@ To see more help for a specific command, run:
         except KeyboardInterrupt as ki:
             raise ki
         except Exception as e:
+            raise
             exc_type, exc_value, exc_tb = sys.exc_info()
 
             # The first frame is us and is never used.
