@@ -104,7 +104,7 @@ PuppetWidget::Create(nsIWidget        *aParent,
 
   mSurface = gfxPlatform::GetPlatform()
              ->CreateOffscreenSurface(gfxIntSize(1, 1),
-                                      gfxASurface::ContentFromFormat(gfxImageFormatARGB32));
+                                      gfxASurface::ContentFromFormat(gfxImageFormat::ARGB32));
 
   mIMEComposing = false;
   mNeedIMEStateInit = MightNeedIMEFocus(aInitData);
@@ -127,7 +127,7 @@ PuppetWidget::InitIMEState()
   MOZ_ASSERT(mTabChild);
   if (mNeedIMEStateInit) {
     uint32_t chromeSeqno;
-    mTabChild->SendNotifyIMEFocus(false, &mIMEPreference, &chromeSeqno);
+    mTabChild->SendNotifyIMEFocus(false, &mIMEPreferenceOfParent, &chromeSeqno);
     mIMELastBlurSeqno = mIMELastReceivedSeqno = chromeSeqno;
     mNeedIMEStateInit = false;
   }
@@ -317,7 +317,7 @@ PuppetWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
     // The backend hint is a temporary placeholder until Azure, when
     // all content-process layer managers will be BasicLayerManagers.
 #if defined(MOZ_ENABLE_D3D10_LAYER)
-    if (mozilla::layers::LAYERS_D3D10 == aBackendHint) {
+    if (mozilla::layers::LayersBackend::LAYERS_D3D10 == aBackendHint) {
       nsRefPtr<LayerManagerD3D10> m = new LayerManagerD3D10(this);
       m->AsShadowForwarder()->SetShadowManager(aShadowManager);
       if (m->Initialize()) {
@@ -464,17 +464,14 @@ PuppetWidget::NotifyIMEOfFocusChange(bool aFocus)
   }
 
   uint32_t chromeSeqno;
-  mIMEPreference.mWantUpdates = nsIMEUpdatePreference::NOTIFY_NOTHING;
-  mIMEPreference.mWantHints = false;
-  if (!mTabChild->SendNotifyIMEFocus(aFocus, &mIMEPreference, &chromeSeqno))
+  mIMEPreferenceOfParent.mWantUpdates = nsIMEUpdatePreference::NOTIFY_NOTHING;
+  if (!mTabChild->SendNotifyIMEFocus(aFocus, &mIMEPreferenceOfParent,
+                                     &chromeSeqno)) {
     return NS_ERROR_FAILURE;
+  }
 
   if (aFocus) {
-    if ((mIMEPreference.mWantUpdates &
-           nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE) &&
-        mIMEPreference.mWantHints) {
-      NotifyIMEOfSelectionChange(); // Update selection
-    }
+    NotifyIMEOfSelectionChange(); // Update selection
   } else {
     mIMELastBlurSeqno = chromeSeqno;
   }
@@ -490,8 +487,8 @@ PuppetWidget::NotifyIMEOfUpdateComposition()
 
   NS_ENSURE_TRUE(mTabChild, NS_ERROR_FAILURE);
 
-  mozilla::TextComposition* textComposition =
-    nsIMEStateManager::GetTextComposition(this);
+  nsRefPtr<TextComposition> textComposition =
+    nsIMEStateManager::GetTextCompositionFor(this);
   NS_ENSURE_TRUE(textComposition, NS_ERROR_FAILURE);
 
   nsEventStatus status;
@@ -517,7 +514,15 @@ PuppetWidget::NotifyIMEOfUpdateComposition()
 nsIMEUpdatePreference
 PuppetWidget::GetIMEUpdatePreference()
 {
-  return mIMEPreference;
+#ifdef MOZ_CROSS_PROESS_IME
+  // e10s requires IME information cache into TabParent
+  return nsIMEUpdatePreference(mIMEPreferenceOfParent.mWantUpdates |
+                               nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE |
+                               nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE);
+#else
+  // B2G doesn't handle IME as widget-level.
+  return nsIMEUpdatePreference();
+#endif
 }
 
 NS_IMETHODIMP
@@ -532,18 +537,19 @@ PuppetWidget::NotifyIMEOfTextChange(uint32_t aStart,
   if (!mTabChild)
     return NS_ERROR_FAILURE;
 
-  if (mIMEPreference.mWantHints) {
-    nsEventStatus status;
-    WidgetQueryContentEvent queryEvent(true, NS_QUERY_TEXT_CONTENT, this);
-    InitEvent(queryEvent, nullptr);
-    queryEvent.InitForQueryTextContent(0, UINT32_MAX);
-    DispatchEvent(&queryEvent, status);
+  nsEventStatus status;
+  WidgetQueryContentEvent queryEvent(true, NS_QUERY_TEXT_CONTENT, this);
+  InitEvent(queryEvent, nullptr);
+  queryEvent.InitForQueryTextContent(0, UINT32_MAX);
+  DispatchEvent(&queryEvent, status);
 
-    if (queryEvent.mSucceeded) {
-      mTabChild->SendNotifyIMETextHint(queryEvent.mReply.mString);
-    }
+  if (queryEvent.mSucceeded) {
+    mTabChild->SendNotifyIMETextHint(queryEvent.mReply.mString);
   }
-  if (mIMEPreference.mWantUpdates & nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE) {
+
+  // TabParent doesn't this this to cache.  we don't send the notification
+  // if parent process doesn't request NOTIFY_TEXT_CHANGE.
+  if (mIMEPreferenceOfParent.WantTextChange()) {
     mTabChild->SendNotifyIMETextChange(aStart, aEnd, aNewEnd);
   }
   return NS_OK;
@@ -559,18 +565,15 @@ PuppetWidget::NotifyIMEOfSelectionChange()
   if (!mTabChild)
     return NS_ERROR_FAILURE;
 
-  if (mIMEPreference.mWantUpdates &
-        nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE) {
-    nsEventStatus status;
-    WidgetQueryContentEvent queryEvent(true, NS_QUERY_SELECTED_TEXT, this);
-    InitEvent(queryEvent, nullptr);
-    DispatchEvent(&queryEvent, status);
+  nsEventStatus status;
+  WidgetQueryContentEvent queryEvent(true, NS_QUERY_SELECTED_TEXT, this);
+  InitEvent(queryEvent, nullptr);
+  DispatchEvent(&queryEvent, status);
 
-    if (queryEvent.mSucceeded) {
-      mTabChild->SendNotifyIMESelection(mIMELastReceivedSeqno,
-                                        queryEvent.GetSelectionStart(),
-                                        queryEvent.GetSelectionEnd());
-    }
+  if (queryEvent.mSucceeded) {
+    mTabChild->SendNotifyIMESelection(mIMELastReceivedSeqno,
+                                      queryEvent.GetSelectionStart(),
+                                      queryEvent.GetSelectionEnd());
   }
   return NS_OK;
 }
@@ -613,9 +616,9 @@ PuppetWidget::Paint()
                          nsAutoCString("PuppetWidget"), 0);
 #endif
 
-    if (mozilla::layers::LAYERS_D3D10 == mLayerManager->GetBackendType()) {
+    if (mozilla::layers::LayersBackend::LAYERS_D3D10 == mLayerManager->GetBackendType()) {
       mAttachedWidgetListener->PaintWindow(this, region);
-    } else if (mozilla::layers::LAYERS_CLIENT == mLayerManager->GetBackendType()) {
+    } else if (mozilla::layers::LayersBackend::LAYERS_CLIENT == mLayerManager->GetBackendType()) {
       // Do nothing, the compositor will handle drawing
       if (mTabChild) {
         mTabChild->NotifyPainted();
@@ -625,7 +628,7 @@ PuppetWidget::Paint()
       ctx->Rectangle(gfxRect(0,0,0,0));
       ctx->Clip();
       AutoLayerManagerSetup setupLayerManager(this, ctx,
-                                              BUFFER_NONE);
+                                              BufferMode::BUFFER_NONE);
       mAttachedWidgetListener->PaintWindow(this, region);
       if (mTabChild) {
         mTabChild->NotifyPainted();

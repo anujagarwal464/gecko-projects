@@ -401,6 +401,7 @@ pref("dom.mozBrowserFramesEnabled", true);
 pref("dom.ipc.processCount", 100000);
 
 pref("dom.ipc.browser_frames.oop_by_default", false);
+pref("dom.browser_frames.useAsyncPanZoom", false);
 
 // SMS/MMS
 pref("dom.sms.enabled", true);
@@ -577,6 +578,7 @@ pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
 pref("media.omx.enabled", true);
 pref("media.rtsp.enabled", true);
+pref("media.rtsp.video.enabled", true);
 
 // Disable printing (particularly, window.print())
 pref("dom.disable_window_print", true);
@@ -813,9 +815,6 @@ pref("network.sntp.pools", // Servers separated by ';'.
 pref("network.sntp.port", 123);
 pref("network.sntp.timeout", 30); // In seconds.
 
-// Enable promise
-pref("dom.promise.enabled", false);
-
 // Enable dataStore
 #ifdef RELEASE_BUILD
 pref("dom.datastore.enabled", false);
@@ -864,9 +863,6 @@ pref("media.webspeech.synth.enabled", true);
 pref("dom.mozDownloads.enabled", true);
 pref("dom.downloads.max_retention_days", 7);
 
-// Downloads API
-pref("dom.mozDownloads.enabled", true);
-
 // Inactivity time in milliseconds after which we shut down the OS.File worker.
 pref("osfile.reset_worker_delay", 5000);
 
@@ -888,3 +884,7 @@ pref("apz.asyncscroll.throttle", 40);
 // Using a software canvas can save memory when JS calls getImageData()
 // on the canvas frequently. See bug 884226.
 pref("gfx.canvas.willReadFrequently.enable", true);
+
+// Disable autofocus until we can have it not bring up the keyboard.
+// https://bugzilla.mozilla.org/show_bug.cgi?id=965763
+pref("browser.autofocus", false);

@@ -605,7 +605,7 @@ nsSimplePageSequenceFrame::PrePrintNextPage(nsITimerCallback* aCallback, bool* a
 
         nsRefPtr<gfxASurface> printSurface = renderingSurface->
            CreateSimilarSurface(
-             GFX_CONTENT_COLOR_ALPHA,
+             gfxContentType::COLOR_ALPHA,
              size
            );
 
@@ -841,9 +841,6 @@ NS_IMETHODIMP
 nsSimplePageSequenceFrame::GetSTFPercent(float& aSTFPercent)
 {
   NS_ENSURE_TRUE(mPageData, NS_ERROR_UNEXPECTED);
-  aSTFPercent = 1.0f;
-  if (mPageData && (mPageData->mPageContentXMost > mPageData->mPageContentSize)) {
-    aSTFPercent = float(mPageData->mPageContentSize) / float(mPageData->mPageContentXMost);
-  }
+  aSTFPercent = mPageData->mShrinkToFitRatio;
   return NS_OK;
 }

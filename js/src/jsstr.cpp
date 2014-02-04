@@ -28,7 +28,6 @@
 #include "jsapi.h"
 #include "jsarray.h"
 #include "jsatom.h"
-#include "jsautooplen.h"
 #include "jsbool.h"
 #include "jscntxt.h"
 #include "jsgc.h"
@@ -42,6 +41,7 @@
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/NumericConversions.h"
+#include "vm/Opcodes.h"
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
 #include "vm/ScopeObject.h"
@@ -426,7 +426,7 @@ const Class StringObject::class_ = {
  * calling CheckObjectCoercible(this), then returning ToString(this), as all
  * String.prototype.* methods do (other than toString and valueOf).
  */
-static JS_ALWAYS_INLINE JSString *
+static MOZ_ALWAYS_INLINE JSString *
 ThisToStringForStringProto(JSContext *cx, CallReceiver call)
 {
     JS_CHECK_RECURSION(cx, return nullptr);
@@ -458,7 +458,7 @@ ThisToStringForStringProto(JSContext *cx, CallReceiver call)
     return str;
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 IsString(HandleValue v)
 {
     return v.isString() || (v.isObject() && v.toObject().is<StringObject>());
@@ -484,7 +484,7 @@ str_quote(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 str_toSource_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsString(args.thisv()));
@@ -517,7 +517,7 @@ str_toSource(JSContext *cx, unsigned argc, Value *vp)
 
 #endif /* JS_HAS_TOSOURCE */
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 str_toString_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsString(args.thisv()));
@@ -539,7 +539,7 @@ js_str_toString(JSContext *cx, unsigned argc, Value *vp)
  * Java-like string native methods.
  */
 
-static JS_ALWAYS_INLINE bool
+static MOZ_ALWAYS_INLINE bool
 ValueToIntegerRange(JSContext *cx, HandleValue v, int32_t *out)
 {
     if (v.isInt32()) {
@@ -954,20 +954,20 @@ js_BoyerMooreHorspool(const jschar *text, uint32_t textlen,
 
 struct MemCmp {
     typedef uint32_t Extent;
-    static JS_ALWAYS_INLINE Extent computeExtent(const jschar *, uint32_t patlen) {
+    static MOZ_ALWAYS_INLINE Extent computeExtent(const jschar *, uint32_t patlen) {
         return (patlen - 1) * sizeof(jschar);
     }
-    static JS_ALWAYS_INLINE bool match(const jschar *p, const jschar *t, Extent extent) {
+    static MOZ_ALWAYS_INLINE bool match(const jschar *p, const jschar *t, Extent extent) {
         return memcmp(p, t, extent) == 0;
     }
 };
 
 struct ManualCmp {
     typedef const jschar *Extent;
-    static JS_ALWAYS_INLINE Extent computeExtent(const jschar *pat, uint32_t patlen) {
+    static MOZ_ALWAYS_INLINE Extent computeExtent(const jschar *pat, uint32_t patlen) {
         return pat + patlen;
     }
-    static JS_ALWAYS_INLINE bool match(const jschar *p, const jschar *t, Extent extent) {
+    static MOZ_ALWAYS_INLINE bool match(const jschar *p, const jschar *t, Extent extent) {
         for (; p != extent; ++p, ++t) {
             if (*p != *t)
                 return false;
@@ -1022,7 +1022,7 @@ UnrolledMatch(const jschar *text, uint32_t textlen, const jschar *pat, uint32_t 
     return -1;
 }
 
-static JS_ALWAYS_INLINE int
+static MOZ_ALWAYS_INLINE int
 StringMatch(const jschar *text, uint32_t textlen,
             const jschar *pat, uint32_t patlen)
 {
@@ -2649,16 +2649,16 @@ FlattenSubstrings(JSContext *cx, const jschar *chars,
 }
 
 static JSString *
-AppendSubstrings(JSContext *cx, Handle<JSStableString*> stableStr,
+AppendSubstrings(JSContext *cx, Handle<JSFlatString*> flatStr,
                  const StringRange *ranges, size_t rangesLen)
 {
     JS_ASSERT(rangesLen);
 
     /* For single substrings, construct a dependent string. */
     if (rangesLen == 1)
-        return js_NewDependentString(cx, stableStr, ranges[0].start, ranges[0].length);
+        return js_NewDependentString(cx, flatStr, ranges[0].start, ranges[0].length);
 
-    const jschar *chars = stableStr->getChars(cx);
+    const jschar *chars = flatStr->getChars(cx);
     if (!chars)
         return nullptr;
 
@@ -2680,7 +2680,7 @@ AppendSubstrings(JSContext *cx, Handle<JSStableString*> stableStr,
         if (i == end) {
             /* Not even one range fits JSShortString, use DependentString */
             const StringRange &sr = ranges[i++];
-            part = js_NewDependentString(cx, stableStr, sr.start, sr.length);
+            part = js_NewDependentString(cx, flatStr, sr.start, sr.length);
         } else {
             /* Copy the ranges (linearly) into a JSShortString */
             part = FlattenSubstrings(cx, chars, ranges + i, end - i, substrLen);
@@ -2701,14 +2701,13 @@ AppendSubstrings(JSContext *cx, Handle<JSStableString*> stableStr,
 static bool
 StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, MutableHandleValue rval)
 {
-    Rooted<JSStableString*> stableStr(cx, str->ensureStable(cx));
-    if (!stableStr)
+    Rooted<JSFlatString*> flatStr(cx, str->ensureFlat(cx));
+    if (!flatStr)
         return false;
 
     Vector<StringRange, 16, SystemAllocPolicy> ranges;
 
-    StableCharPtr chars = stableStr->chars();
-    size_t charsLen = stableStr->length();
+    size_t charsLen = flatStr->length();
 
     MatchPair match;
     size_t startIndex = 0; /* Index used for iterating through the string. */
@@ -2720,7 +2719,8 @@ StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, Mutabl
         if (!JS_CHECK_OPERATION_LIMIT(cx))
             return false;
 
-        RegExpRunStatus status = re.executeMatchOnly(cx, chars.get(), charsLen, &startIndex, match);
+        RegExpRunStatus status =
+            re.executeMatchOnly(cx, flatStr->chars(), charsLen, &startIndex, match);
         if (status == RegExpRunStatus_Error)
             return false;
         if (status == RegExpRunStatus_Success_NotFound)
@@ -2746,13 +2746,13 @@ StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, Mutabl
     /* If unmatched, return the input string. */
     if (!lastIndex) {
         if (startIndex > 0)
-            cx->global()->getRegExpStatics()->updateLazily(cx, stableStr, &re, lazyIndex);
+            cx->global()->getRegExpStatics()->updateLazily(cx, flatStr, &re, lazyIndex);
         rval.setString(str);
         return true;
     }
 
     /* The last successful match updates the RegExpStatics. */
-    cx->global()->getRegExpStatics()->updateLazily(cx, stableStr, &re, lazyIndex);
+    cx->global()->getRegExpStatics()->updateLazily(cx, flatStr, &re, lazyIndex);
 
     /* Include any remaining part of the string. */
     if (lastIndex < charsLen) {
@@ -2766,7 +2766,7 @@ StrReplaceRegexpRemove(JSContext *cx, HandleString str, RegExpShared &re, Mutabl
         return true;
     }
 
-    JSString *result = AppendSubstrings(cx, stableStr, ranges.begin(), ranges.length());
+    JSString *result = AppendSubstrings(cx, flatStr, ranges.begin(), ranges.length());
     if (!result)
         return false;
 
@@ -3953,16 +3953,16 @@ js_InitStringClass(JSContext *cx, HandleObject obj)
 }
 
 template <AllowGC allowGC>
-JSStableString *
+JSFlatString *
 js_NewString(ThreadSafeContext *cx, jschar *chars, size_t length)
 {
-    return JSStableString::new_<allowGC>(cx, chars, length);
+    return JSFlatString::new_<allowGC>(cx, chars, length);
 }
 
-template JSStableString *
+template JSFlatString *
 js_NewString<CanGC>(ThreadSafeContext *cx, jschar *chars, size_t length);
 
-template JSStableString *
+template JSFlatString *
 js_NewString<NoGC>(ThreadSafeContext *cx, jschar *chars, size_t length);
 
 JSLinearString *

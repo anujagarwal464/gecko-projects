@@ -8,8 +8,6 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "jsautooplen.h"
-
 #include "builtin/Eval.h"
 #include "builtin/TypedObject.h"
 #include "builtin/TypeRepresentation.h"
@@ -22,8 +20,8 @@
 #include "jit/IonSpewer.h"
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
-
 #include "vm/ArgumentsObject.h"
+#include "vm/Opcodes.h"
 #include "vm/RegExpStatics.h"
 
 #include "jsinferinlines.h"
@@ -103,13 +101,14 @@ jit::NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame)
     return inspector;
 }
 
-IonBuilder::IonBuilder(JSContext *analysisContext, CompileCompartment *comp, TempAllocator *temp,
+IonBuilder::IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
+                       const JitCompileOptions &options, TempAllocator *temp,
                        MIRGraph *graph, types::CompilerConstraintList *constraints,
                        BaselineInspector *inspector, CompileInfo *info,
                        const OptimizationInfo *optimizationInfo,
                        BaselineFrameInspector *baselineFrame, size_t inliningDepth,
                        uint32_t loopDepth)
-  : MIRGenerator(comp, temp, graph, info, optimizationInfo),
+  : MIRGenerator(comp, options, temp, graph, info, optimizationInfo),
     backgroundCodegen_(nullptr),
     analysisContext(analysisContext),
     baselineFrame_(baselineFrame),
@@ -1586,6 +1585,11 @@ IonBuilder::inspectOpcode(JSOp op)
         return jsop_initprop(name);
       }
 
+      case JSOP_MUTATEPROTO:
+      {
+        return jsop_mutateproto();
+      }
+
       case JSOP_INITPROP_GETTER:
       case JSOP_INITPROP_SETTER: {
         PropertyName *name = info().getAtom(pc)->asPropertyName();
@@ -2173,6 +2177,18 @@ IonBuilder::processDoWhileCondEnd(CFGState &state)
     MBasicBlock *successor = newBlock(current, GetNextPc(pc), loopDepth_ - 1);
     if (!successor)
         return ControlStatus_Error;
+
+    // Test for do {} while(false) and don't create a loop in that case.
+    if (vins->isConstant()) {
+        MConstant *cte = vins->toConstant();
+        if (cte->value().isBoolean() && !cte->value().toBoolean()) {
+            current->end(MGoto::New(alloc(), successor));
+            current = nullptr;
+
+            state.loop.successor = successor;
+            return processBrokenLoop(state);
+        }
+    }
 
     // Create the test instruction and end the current block.
     MTest *test = MTest::New(alloc(), vins, state.loop.entry, successor);
@@ -3899,7 +3915,7 @@ IonBuilder::inlineScriptedCall(CallInfo &callInfo, JSFunction *target)
     unlock();
 
     // Build the graph.
-    IonBuilder inlineBuilder(analysisContext, compartment, &alloc(), &graph(), constraints(),
+    IonBuilder inlineBuilder(analysisContext, compartment, options, &alloc(), &graph(), constraints(),
                              &inspector, info, &optimizationInfo(), nullptr, inliningDepth_ + 1,
                              loopDepth_);
     if (!inlineBuilder.buildInline(this, outerResumePoint, callInfo)) {
@@ -5523,6 +5539,17 @@ IonBuilder::jsop_initelem_array()
 }
 
 bool
+IonBuilder::jsop_mutateproto()
+{
+    MDefinition *value = current->pop();
+    MDefinition *obj = current->peek(-1);
+
+    MMutateProto *mutate = MMutateProto::New(alloc(), obj, value);
+    current->add(mutate);
+    return resumeAfter(mutate);
+}
+
+bool
 IonBuilder::jsop_initprop(PropertyName *name)
 {
     MDefinition *value = current->pop();
@@ -6608,7 +6635,7 @@ IonBuilder::getElemTryTypedObject(bool *emitted, MDefinition *obj, MDefinition *
 
     switch (elemTypeReprs.kind()) {
       case TypeRepresentation::X4:
-        // FIXME (bug 894104): load into a MIRType_float32x4 etc
+        // FIXME (bug 894105): load into a MIRType_float32x4 etc
         return true;
 
       case TypeRepresentation::Struct:
@@ -7323,10 +7350,13 @@ IonBuilder::jsop_setelem()
     MDefinition *index = current->pop();
     MDefinition *object = current->pop();
 
+    if (!setElemTryTypedObject(&emitted, object, index, value) || emitted)
+        return emitted;
+
     if (!setElemTryTypedStatic(&emitted, object, index, value) || emitted)
         return emitted;
 
-    if (!setElemTryTyped(&emitted, object, index, value) || emitted)
+    if (!setElemTryTypedArray(&emitted, object, index, value) || emitted)
         return emitted;
 
     if (!setElemTryDense(&emitted, object, index, value) || emitted)
@@ -7347,6 +7377,86 @@ IonBuilder::jsop_setelem()
     current->push(value);
 
     return resumeAfter(ins);
+}
+
+bool
+IonBuilder::setElemTryTypedObject(bool *emitted, MDefinition *obj,
+                                  MDefinition *index, MDefinition *value)
+{
+    JS_ASSERT(*emitted == false);
+
+    TypeRepresentationSet objTypeReprs;
+    if (!lookupTypeRepresentationSet(obj, &objTypeReprs))
+        return false;
+
+    if (!objTypeReprs.allOfArrayKind())
+        return true;
+
+    TypeRepresentationSet elemTypeReprs;
+    if (!objTypeReprs.arrayElementType(*this, &elemTypeReprs))
+        return false;
+    if (elemTypeReprs.empty())
+        return true;
+
+    JS_ASSERT(TypeRepresentation::isSized(elemTypeReprs.kind()));
+
+    size_t elemSize;
+    if (!elemTypeReprs.allHaveSameSize(&elemSize))
+        return true;
+
+    switch (elemTypeReprs.kind()) {
+      case TypeRepresentation::X4:
+        // FIXME (bug 894105): store a MIRType_float32x4 etc
+        return true;
+
+      case TypeRepresentation::Reference:
+      case TypeRepresentation::Struct:
+      case TypeRepresentation::SizedArray:
+      case TypeRepresentation::UnsizedArray:
+        // For now, only optimize storing scalars.
+        return true;
+
+      case TypeRepresentation::Scalar:
+        return setElemTryScalarPropOfTypedObject(emitted,
+                                                 obj,
+                                                 index,
+                                                 objTypeReprs,
+                                                 value,
+                                                 elemTypeReprs,
+                                                 elemSize);
+    }
+
+    MOZ_ASSUME_UNREACHABLE("Bad kind");
+}
+
+bool
+IonBuilder::setElemTryScalarPropOfTypedObject(bool *emitted,
+                                              MDefinition *obj,
+                                              MDefinition *index,
+                                              TypeRepresentationSet objTypeReprs,
+                                              MDefinition *value,
+                                              TypeRepresentationSet elemTypeReprs,
+                                              size_t elemSize)
+{
+    // Must always be storing the same scalar type
+    if (!elemTypeReprs.singleton())
+        return true;
+
+    ScalarTypeRepresentation *elemTypeRepr =
+        elemTypeReprs.getTypeRepresentation()->asScalar();
+
+    MDefinition *indexAsByteOffset;
+    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, &indexAsByteOffset, objTypeReprs))
+        return false;
+
+    // Store the element
+    if (!storeScalarTypedObjectValue(obj, indexAsByteOffset, elemTypeRepr, value))
+        return false;
+
+    current->push(value);
+
+    *emitted = true;
+    return true;
 }
 
 bool
@@ -7401,8 +7511,8 @@ IonBuilder::setElemTryTypedStatic(bool *emitted, MDefinition *object,
 }
 
 bool
-IonBuilder::setElemTryTyped(bool *emitted, MDefinition *object,
-                            MDefinition *index, MDefinition *value)
+IonBuilder::setElemTryTypedArray(bool *emitted, MDefinition *object,
+                                 MDefinition *index, MDefinition *value)
 {
     JS_ASSERT(*emitted == false);
 
@@ -9105,6 +9215,14 @@ IonBuilder::jsop_regexp(RegExpObject *reobj)
 bool
 IonBuilder::jsop_object(JSObject *obj)
 {
+    if (options.cloneSingletons()) {
+        MCloneLiteral *clone = MCloneLiteral::New(alloc(), constant(ObjectValue(*obj)));
+        current->add(clone);
+        current->push(clone);
+        return resumeAfter(clone);
+    }
+
+    compartment->setSingletonsAsValues();
     pushConstant(ObjectValue(*obj));
     return true;
 }

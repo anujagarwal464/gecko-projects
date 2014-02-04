@@ -138,6 +138,7 @@ struct NullPtr
 
 namespace gc {
 struct Cell;
+template<typename T>
 struct PersistentRootedMarker;
 } /* namespace gc */
 
@@ -831,12 +832,6 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
     Rooted(const Rooted &) MOZ_DELETE;
 };
 
-#if !(defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING))
-// Defined in vm/String.h.
-template <>
-class Rooted<JSStableString *>;
-#endif
-
 } /* namespace JS */
 
 namespace js {
@@ -1190,7 +1185,8 @@ template<typename T>
 class PersistentRooted : private mozilla::LinkedListElement<PersistentRooted<T> > {
     friend class mozilla::LinkedList<PersistentRooted>;
     friend class mozilla::LinkedListElement<PersistentRooted>;
-    friend class js::gc::PersistentRootedMarker;
+
+    friend class js::gc::PersistentRootedMarker<T>;
 
     void registerWithRuntime(JSRuntime *rt) {
         JS::shadow::Runtime *srt = JS::shadow::Runtime::asShadowRuntime(rt);

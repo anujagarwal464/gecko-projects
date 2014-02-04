@@ -21,7 +21,6 @@
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "LayersTypes.h"
 
-struct gfxMatrix;
 struct nsIntSize;
 
 namespace mozilla {
@@ -214,7 +213,8 @@ public:
    */
   struct PaintState {
     PaintState()
-      : mMode(SURFACE_NONE)
+      : mMode(SurfaceMode::SURFACE_NONE)
+      , mContentType(gfxContentType::SENTINEL)
       , mDidSelfCopy(false)
     {}
 
@@ -222,6 +222,7 @@ public:
     nsIntRegion mRegionToInvalidate;
     SurfaceMode mMode;
     DrawRegionClip mClip;
+    ContentType mContentType;
     bool mDidSelfCopy;
   };
 
@@ -292,7 +293,7 @@ public:
               float aOpacity,
               gfx::CompositionOp aOp,
               gfxASurface* aMask,
-              const gfxMatrix* aMaskTransform);
+              const gfx::Matrix* aMaskTransform);
 
 protected:
   TemporaryRef<gfx::DrawTarget>
@@ -391,7 +392,6 @@ protected:
   gfx::DrawTarget*
   BorrowDrawTargetForQuadrantUpdate(const nsIntRect& aBounds,
                                     ContextSource aSource);
-  void ReturnDrawTarget(gfx::DrawTarget* aReturned);
 
   static bool IsClippingCheap(gfx::DrawTarget* aTarget, const nsIntRegion& aRegion);
 

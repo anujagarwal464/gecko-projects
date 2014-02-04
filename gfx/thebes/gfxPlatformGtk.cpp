@@ -242,10 +242,10 @@ gfxPlatformGtk::GetOffscreenFormat()
     // Make sure there is a screen
     GdkScreen *screen = gdk_screen_get_default();
     if (screen && gdk_visual_get_depth(gdk_visual_get_system()) == 16) {
-        return gfxImageFormatRGB16_565;
+        return gfxImageFormat::RGB16_565;
     }
 
-    return gfxImageFormatRGB24;
+    return gfxImageFormat::RGB24;
 }
 
 static int sDepth = 0;
@@ -452,14 +452,5 @@ gfxPlatformGtk::GetGdkDrawable(cairo_surface_t *target)
 TemporaryRef<ScaledFont>
 gfxPlatformGtk::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
 {
-    NativeFont nativeFont;
-
-    if (aTarget->GetType() == BackendType::CAIRO || aTarget->GetType() == BackendType::SKIA) {
-        nativeFont.mType = NativeFontType::CAIRO_FONT_FACE;
-        nativeFont.mFont = aFont->GetCairoScaledFont();
-        return Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
-    }
-
-    return nullptr;
-
+    return GetScaledFontForFontWithCairoSkia(aTarget, aFont);
 }

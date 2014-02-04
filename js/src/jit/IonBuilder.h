@@ -212,7 +212,8 @@ class IonBuilder : public MIRGenerator
     static int CmpSuccessors(const void *a, const void *b);
 
   public:
-    IonBuilder(JSContext *analysisContext, CompileCompartment *comp, TempAllocator *temp,
+    IonBuilder(JSContext *analysisContext, CompileCompartment *comp,
+               const JitCompileOptions &options, TempAllocator *temp,
                MIRGraph *graph, types::CompilerConstraintList *constraints,
                BaselineInspector *inspector, CompileInfo *info,
                const OptimizationInfo *optimizationInfo, BaselineFrameInspector *baselineFrame,
@@ -290,8 +291,8 @@ class IonBuilder : public MIRGenerator
     // linking each break to the new block.
     MBasicBlock *createBreakCatchBlock(DeferredEdge *edge, jsbytecode *pc);
 
-    // Finishes loops that do not actually loop, containing only breaks or
-    // returns.
+    // Finishes loops that do not actually loop, containing only breaks and
+    // returns or a do while loop with a condition that is constant false.
     ControlStatus processBrokenLoop(CFGState &state);
 
     // Computes loop phis, places them in all successors of a loop, then
@@ -463,8 +464,10 @@ class IonBuilder : public MIRGenerator
                                        TypeRepresentationSet objTypeReprs);
 
     // jsop_setelem() helpers.
-    bool setElemTryTyped(bool *emitted, MDefinition *object,
+    bool setElemTryTypedArray(bool *emitted, MDefinition *object,
                          MDefinition *index, MDefinition *value);
+    bool setElemTryTypedObject(bool *emitted, MDefinition *obj,
+                               MDefinition *index, MDefinition *value);
     bool setElemTryTypedStatic(bool *emitted, MDefinition *object,
                                MDefinition *index, MDefinition *value);
     bool setElemTryDense(bool *emitted, MDefinition *object,
@@ -473,6 +476,13 @@ class IonBuilder : public MIRGenerator
                              MDefinition *index, MDefinition *value);
     bool setElemTryCache(bool *emitted, MDefinition *object,
                          MDefinition *index, MDefinition *value);
+    bool setElemTryScalarPropOfTypedObject(bool *emitted,
+                                           MDefinition *obj,
+                                           MDefinition *index,
+                                           TypeRepresentationSet objTypeReprs,
+                                           MDefinition *value,
+                                           TypeRepresentationSet elemTypeReprs,
+                                           size_t elemSize);
 
     // jsop_getelem() helpers.
     bool getElemTryDense(bool *emitted, MDefinition *obj, MDefinition *index);
@@ -556,6 +566,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_initelem();
     bool jsop_initelem_array();
     bool jsop_initelem_getter_setter();
+    bool jsop_mutateproto();
     bool jsop_initprop(PropertyName *name);
     bool jsop_initprop_getter_setter(PropertyName *name);
     bool jsop_regexp(RegExpObject *reobj);

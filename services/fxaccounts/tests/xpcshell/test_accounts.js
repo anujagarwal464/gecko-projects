@@ -11,6 +11,12 @@ Cu.import("resource://gre/modules/FxAccountsCommon.js");
 Cu.import("resource://gre/modules/Promise.jsm");
 Cu.import("resource://gre/modules/Log.jsm");
 
+const ONE_HOUR_MS = 1000 * 60 * 60;
+const ONE_DAY_MS = ONE_HOUR_MS * 24;
+const TWO_MINUTES_MS = 1000 * 60 * 2;
+
+initTestLogging("Trace");
+
 // XXX until bug 937114 is fixed
 Cu.importGlobalProperties(['atob']);
 
@@ -62,6 +68,11 @@ function MockFxAccountsClient() {
       deferred.resolve(response);
     });
     return deferred.promise;
+  };
+
+  this.resendVerificationEmail = function(sessionToken) {
+    // Return the session token to show that we received it in the first place
+    return Promise.resolve(sessionToken);
   };
 
   this.signCertificate = function() { throw "no" };
@@ -116,13 +127,13 @@ MockFxAccounts.prototype = {
 
 add_test(function test_non_https_remote_server_uri() {
   Services.prefs.setCharPref(
-    "firefox.accounts.remoteUrl",
+    "identity.fxaccounts.remote.uri",
     "http://example.com/browser/browser/base/content/test/general/accounts_testRemoteCommands.html");
   do_check_throws_message(function () {
     fxAccounts.getAccountsURI();
   }, "Firefox Accounts server must use HTTPS");
 
-  Services.prefs.clearUserPref("firefox.accounts.remoteUrl");
+  Services.prefs.clearUserPref("identity.fxaccounts.remote.uri");
 
   run_next_test();
 });
@@ -168,9 +179,7 @@ add_task(function test_get_signed_in_user_initially_unset() {
   do_check_eq(result, null);
 });
 
-/*
- * Sanity-check that our mocked client is working correctly
- */
+// Sanity-check that our mocked client is working correctly
 add_test(function test_client_mock() {
   do_test_pending();
 
@@ -188,12 +197,10 @@ add_test(function test_client_mock() {
     });
 });
 
-/*
- * Sign in a user, and after a little while, verify the user's email.
- * Right after signing in the user, we should get the 'onlogin' notification.
- * Polling should detect that the email is verified, and eventually
- * 'onverified' should be observed
- */
+// Sign in a user, and after a little while, verify the user's email.
+// Right after signing in the user, we should get the 'onlogin' notification.
+// Polling should detect that the email is verified, and eventually
+// 'onverified' should be observed
 add_test(function test_verification_poll() {
   do_test_pending();
 
@@ -224,7 +231,7 @@ add_test(function test_verification_poll() {
       // The user is signing in, but email has not been verified yet
       do_check_eq(user.verified, false);
       do_timeout(200, function() {
-        // Mock email verification ...
+        log.debug("Mocking verification of francine's email");
         fxa.internal.fxAccountsClient._email = test_user.email;
         fxa.internal.fxAccountsClient._verified = true;
       });
@@ -232,11 +239,9 @@ add_test(function test_verification_poll() {
   });
 });
 
-/*
- * Sign in the user, but never verify the email.  The check-email
- * poll should time out.  No verifiedlogin event should be observed, and the
- * internal whenVerified promise should be rejected
- */
+// Sign in the user, but never verify the email.  The check-email
+// poll should time out.  No verifiedlogin event should be observed, and the
+// internal whenVerified promise should be rejected
 add_test(function test_polling_timeout() {
   do_test_pending();
 
@@ -303,9 +308,7 @@ add_test(function test_getKeys() {
   });
 });
 
-/*
- * getKeys with no keyFetchToken should trigger signOut
- */
+// getKeys with no keyFetchToken should trigger signOut
 add_test(function test_getKeys_no_token() {
   do_test_pending();
 
@@ -326,11 +329,9 @@ add_test(function test_getKeys_no_token() {
   });
 });
 
-/*
- * Alice (User A) signs up but never verifies her email.  Then Bob (User B)
- * signs in with a verified email.  Ensure that no sign-in events are triggered
- * on Alice's behalf.  In the end, Bob should be the signed-in user.
- */
+// Alice (User A) signs up but never verifies her email.  Then Bob (User B)
+// signs in with a verified email.  Ensure that no sign-in events are triggered
+// on Alice's behalf.  In the end, Bob should be the signed-in user.
 add_test(function test_overlapping_signins() {
   do_test_pending();
 
@@ -388,56 +389,83 @@ add_task(function test_getAssertion() {
   yield fxa.setSignedInUser(creds);
 
   _("== ready to go\n");
-  let now = 138000000*1000;
-  let start = Date.now();
+  // Start with a nice arbitrary but realistic date.  Here we use a nice RFC
+  // 1123 date string like we would get from an HTTP header. Over the course of
+  // the test, we will update 'now', but leave 'start' where it is.
+  let now = Date.parse("Mon, 13 Jan 2014 21:45:06 GMT");
+  let start = now;
   fxa._now_is = now;
+
   let d = fxa.getAssertion("audience.example.com");
   // At this point, a thread has been spawned to generate the keys.
   _("-- back from fxa.getAssertion\n");
   fxa._d_signCertificate.resolve("cert1");
   let assertion = yield d;
-  let finish = Date.now();
   do_check_eq(fxa._getCertificateSigned_calls.length, 1);
   do_check_eq(fxa._getCertificateSigned_calls[0][0], "sessionToken");
   do_check_neq(assertion, null);
-  _("ASSERTION: "+assertion+"\n");
+  _("ASSERTION: " + assertion + "\n");
   let pieces = assertion.split("~");
   do_check_eq(pieces[0], "cert1");
   do_check_neq(fxa.internal.keyPair, undefined);
-  _(fxa.internal.keyPair.validUntil+"\n");
+  _(fxa.internal.keyPair.validUntil + "\n");
   let p2 = pieces[1].split(".");
   let header = JSON.parse(atob(p2[0]));
-  _("HEADER: "+JSON.stringify(header)+"\n");
+  _("HEADER: " + JSON.stringify(header) + "\n");
   do_check_eq(header.alg, "DS128");
   let payload = JSON.parse(atob(p2[1]));
-  _("PAYLOAD: "+JSON.stringify(payload)+"\n");
+  _("PAYLOAD: " + JSON.stringify(payload) + "\n");
   do_check_eq(payload.aud, "audience.example.com");
-  // FxAccounts KEY_LIFETIME
-  do_check_eq(fxa.internal.keyPair.validUntil, now + (12*3600*1000));
-  // FxAccounts CERT_LIFETIME
-  do_check_eq(fxa.internal.cert.validUntil, now + (6*3600*1000));
-  _("delta: "+(new Date(payload.exp) - now)+"\n");
+  do_check_eq(fxa.internal.keyPair.validUntil, start + KEY_LIFETIME);
+  do_check_eq(fxa.internal.cert.validUntil, start + CERT_LIFETIME);
+  _("delta: " + Date.parse(payload.exp - start) + "\n");
   let exp = Number(payload.exp);
-  // jwcrypto.jsm uses an unmocked Date.now()+2min to decide on the
-  // expiration time, so we test that it's inside a specific timebox
-  do_check_true(start + 2*60*1000 <= exp);
-  do_check_true(exp <= finish + 2*60*1000);
+
+  do_check_eq(exp, now + TWO_MINUTES_MS);
 
   // Reset for next call.
   fxa._d_signCertificate = Promise.defer();
 
-  // Getting a new assertion "soon" (i.e. w/o incrementing "now"), even for
+  // Getting a new assertion "soon" (i.e., w/o incrementing "now"), even for
   // a new audience, should not provoke key generation or a signing request.
   assertion = yield fxa.getAssertion("other.example.com");
+
+  // There were no additional calls - same number of getcert calls as before
   do_check_eq(fxa._getCertificateSigned_calls.length, 1);
 
-  // But "waiting" (i.e. incrementing "now") will need a new key+signature.
-  fxa._now_is = now + 24*3600*1000;
-  start = Date.now();
-  d = fxa.getAssertion("third.example.com");
+  // Wait an hour; assertion expires, but not the certificate
+  now += ONE_HOUR_MS;
+  fxa._now_is = now;
+
+  // This won't block on anything - will make an assertion, but not get a
+  // new certificate.
+  assertion = yield fxa.getAssertion("third.example.com");
+
+  // Test will time out if that failed (i.e., if that had to go get a new cert)
+  pieces = assertion.split("~");
+  do_check_eq(pieces[0], "cert1");
+  p2 = pieces[1].split(".");
+  header = JSON.parse(atob(p2[0]));
+  payload = JSON.parse(atob(p2[1]));
+  do_check_eq(payload.aud, "third.example.com");
+
+  // The keypair and cert should have the same validity as before, but the
+  // expiration time of the assertion should be different.  We compare this to
+  // the initial start time, to which they are relative, not the current value
+  // of "now".
+
+  do_check_eq(fxa.internal.keyPair.validUntil, start + KEY_LIFETIME);
+  do_check_eq(fxa.internal.cert.validUntil, start + CERT_LIFETIME);
+  exp = Number(payload.exp);
+  do_check_eq(exp, now + TWO_MINUTES_MS);
+
+  // Now we wait even longer, and expect both assertion and cert to expire.  So
+  // we will have to get a new keypair and cert.
+  now += ONE_DAY_MS;
+  fxa._now_is = now;
+  d = fxa.getAssertion("fourth.example.com");
   fxa._d_signCertificate.resolve("cert2");
   assertion = yield d;
-  finish = Date.now();
   do_check_eq(fxa._getCertificateSigned_calls.length, 2);
   do_check_eq(fxa._getCertificateSigned_calls[1][0], "sessionToken");
   pieces = assertion.split("~");
@@ -445,16 +473,71 @@ add_task(function test_getAssertion() {
   p2 = pieces[1].split(".");
   header = JSON.parse(atob(p2[0]));
   payload = JSON.parse(atob(p2[1]));
-  do_check_eq(payload.aud, "third.example.com");
-  // 12*3600*1000 === FxAccounts KEY_LIFETIME
-  do_check_eq(fxa.internal.keyPair.validUntil, now + 24*3600*1000 + (12*3600*1000));
-  // 6*3600*1000 === FxAccounts CERT_LIFETIME
-  do_check_eq(fxa.internal.cert.validUntil, now + 24*3600*1000 + (6*3600*1000));
+  do_check_eq(payload.aud, "fourth.example.com");
+  do_check_eq(fxa.internal.keyPair.validUntil, now + KEY_LIFETIME);
+  do_check_eq(fxa.internal.cert.validUntil, now + CERT_LIFETIME);
   exp = Number(payload.exp);
-  do_check_true(start + 2*60*1000 <= exp);
-  do_check_true(exp <= finish + 2*60*1000);
 
+  do_check_eq(exp, now + TWO_MINUTES_MS);
   _("----- DONE ----\n");
+});
+
+add_task(function test_resend_email_not_signed_in() {
+  let fxa = new MockFxAccounts();
+
+  try {
+    yield fxa.resendVerificationEmail();
+  } catch(err) {
+    do_check_eq(err.message,
+      "Cannot resend verification email; no signed-in user");
+    do_test_finished();
+    run_next_test();
+    return;
+  }
+  do_throw("Should not be able to resend email when nobody is signed in");
+});
+
+add_task(function test_resend_email() {
+  do_test_pending();
+
+  let fxa = new MockFxAccounts();
+  let alice = getTestUser("alice");
+
+  do_check_eq(fxa.internal.generationCount, 0);
+
+  // Alice is the user signing in; her email is unverified.
+  fxa.setSignedInUser(alice).then(() => {
+    log.debug("Alice signing in");
+
+    // We're polling for the first email
+    do_check_eq(fxa.internal.generationCount, 1);
+
+    // The polling timer is ticking
+    do_check_true(fxa.internal.currentTimer > 0);
+
+    fxa.internal.getUserAccountData().then(user => {
+      do_check_eq(user.email, alice.email);
+      do_check_eq(user.verified, false);
+      log.debug("Alice wants verification email resent");
+
+      fxa.resendVerificationEmail().then((result) => {
+        // Mock server response; ensures that the session token actually was
+        // passed to the client to make the hawk call
+        do_check_eq(result, "alice's session token");
+
+        // Timer was not restarted
+        do_check_eq(fxa.internal.generationCount, 1);
+
+        // Timer is still ticking
+        do_check_true(fxa.internal.currentTimer > 0);
+
+        // Ok abort polling before we go on to the next test
+        fxa.internal.abortExistingFlow();
+        do_test_finished();
+        run_next_test();
+      });
+    });
+  });
 });
 
 /*

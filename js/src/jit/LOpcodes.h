@@ -17,6 +17,7 @@
     _(Double)                       \
     _(Float32)                      \
     _(Value)                        \
+    _(CloneLiteral)                 \
     _(Parameter)                    \
     _(Callee)                       \
     _(TableSwitch)                  \
@@ -35,6 +36,7 @@
     _(AbortPar)                     \
     _(InitElem)                     \
     _(InitElemGetterSetter)         \
+    _(MutateProto)                  \
     _(InitProp)                     \
     _(InitPropGetterSetter)         \
     _(CheckOverRecursed)            \
@@ -140,8 +142,10 @@
     _(Float32ToInt32)               \
     _(TruncateDToInt32)             \
     _(TruncateFToInt32)             \
+    _(BooleanToString)              \
     _(IntToString)                  \
     _(DoubleToString)               \
+    _(PrimitiveToString)            \
     _(Start)                        \
     _(OsrEntry)                     \
     _(OsrValue)                     \
@@ -208,7 +212,7 @@
     _(StoreFixedSlotV)              \
     _(StoreFixedSlotT)              \
     _(FunctionEnvironment)          \
-    _(ForkJoinSlice)                \
+    _(ForkJoinContext)              \
     _(GetPropertyCacheV)            \
     _(GetPropertyCacheT)            \
     _(GetPropertyPolymorphicV)      \
@@ -288,11 +292,11 @@
     _(AssertRangeF)                 \
     _(AssertRangeV)
 
-#if defined(JS_CPU_X86)
+#if defined(JS_CODEGEN_X86)
 # include "jit/x86/LOpcodes-x86.h"
-#elif defined(JS_CPU_X64)
+#elif defined(JS_CODEGEN_X64)
 # include "jit/x64/LOpcodes-x64.h"
-#elif defined(JS_CPU_ARM)
+#elif defined(JS_CODEGEN_ARM)
 # include "jit/arm/LOpcodes-arm.h"
 #endif
 

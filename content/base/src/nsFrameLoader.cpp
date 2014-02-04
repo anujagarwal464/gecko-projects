@@ -1293,19 +1293,11 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     otherTabChild->SetChromeMessageManager(ourMessageManager);
   }
   // Swap and setup things in parent message managers.
-  nsFrameMessageManager* ourParentManager = mMessageManager ?
-    mMessageManager->GetParentManager() : nullptr;
-  nsFrameMessageManager* otherParentManager = aOther->mMessageManager ?
-    aOther->mMessageManager->GetParentManager() : nullptr;
   if (mMessageManager) {
-    mMessageManager->RemoveFromParent();
-    mMessageManager->SetParentManager(otherParentManager);
-    mMessageManager->SetCallback(aOther, false);
+    mMessageManager->SetCallback(aOther);
   }
   if (aOther->mMessageManager) {
-    aOther->mMessageManager->RemoveFromParent();
-    aOther->mMessageManager->SetParentManager(ourParentManager);
-    aOther->mMessageManager->SetCallback(this, false);
+    aOther->mMessageManager->SetCallback(this);
   }
   mMessageManager.swap(aOther->mMessageManager);
 
@@ -2058,7 +2050,9 @@ nsFrameLoader::TryRemoteBrowser()
   nsCOMPtr<mozIApplication> ownApp = GetOwnApp();
   nsCOMPtr<mozIApplication> containingApp = GetContainingApp();
   ScrollingBehavior scrollingBehavior = DEFAULT_SCROLLING;
-  if (mOwnerContent->AttrValueIs(kNameSpaceID_None,
+
+  if (Preferences::GetBool("dom.browser_frames.useAsyncPanZoom", false) ||
+      mOwnerContent->AttrValueIs(kNameSpaceID_None,
                                  nsGkAtoms::mozasyncpanzoom,
                                  nsGkAtoms::_true,
                                  eCaseMatters)) {
@@ -2416,8 +2410,8 @@ nsFrameLoader::EnsureMessageManager()
   }
 
   if (mMessageManager) {
-    if (ShouldUseRemoteProcess()) {
-      mMessageManager->SetCallback(mRemoteBrowserShown ? this : nullptr);
+    if (ShouldUseRemoteProcess() && mRemoteBrowserShown) {
+      mMessageManager->InitWithCallback(this);
     }
     return NS_OK;
   }
@@ -2447,7 +2441,7 @@ nsFrameLoader::EnsureMessageManager()
     mChildMessageManager =
       new nsInProcessTabChildGlobal(mDocShell, mOwnerContent, mMessageManager);
     // Force pending frame scripts to be loaded.
-    mMessageManager->SetCallback(this);
+    mMessageManager->InitWithCallback(this);
   }
   return NS_OK;
 }

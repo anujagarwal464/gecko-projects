@@ -98,7 +98,8 @@ static nsresult CompareDictionaries(JSContext* aCx, JSObject *aA,
 
   for (size_t i = 0; i < props.length(); i++) {
     JS::Rooted<JS::Value> bprop(aCx);
-    if (!JS_GetPropertyById(aCx, b, props[i], &bprop)) {
+    JS::Rooted<jsid> id(aCx, props[i]);
+    if (!JS_GetPropertyById(aCx, b, id, &bprop)) {
       LOG(("Error parsing dictionary!\n"));
       return NS_ERROR_UNEXPECTED;
     }
@@ -878,6 +879,7 @@ public:
     if (NS_IsMainThread()) {
       // This is safe since we're on main-thread, and the window can only
       // be invalidated from the main-thread (see OnNavigation)
+      nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
       nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
       error->OnError(aErrorMsg);
 

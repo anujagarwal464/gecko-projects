@@ -18,10 +18,10 @@
 
 #include "jsapi.h"
 #include "jsatom.h"
-#include "jsautooplen.h"
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsgc.h"
+#include "jsobj.h"
 #include "jsopcode.h"
 #include "jstypes.h"
 #include "jsutil.h"
@@ -36,6 +36,7 @@
 #include "vm/ArgumentsObject.h"
 #include "vm/Compression.h"
 #include "vm/Debugger.h"
+#include "vm/Opcodes.h"
 #include "vm/Shape.h"
 #include "vm/Xdr.h"
 
@@ -162,7 +163,8 @@ Bindings::switchToScriptStorage(Binding *newBindingArray)
     JS_ASSERT(bindingArrayUsingTemporaryStorage());
     JS_ASSERT(!(uintptr_t(newBindingArray) & TEMPORARY_STORAGE_BIT));
 
-    PodCopy(newBindingArray, bindingArray(), count());
+    if (count() > 0)
+        PodCopy(newBindingArray, bindingArray(), count());
     bindingArrayAndFlag_ = uintptr_t(newBindingArray);
     return reinterpret_cast<uint8_t *>(newBindingArray + count());
 }
@@ -305,7 +307,9 @@ js::XDRScriptConst(XDRState<mode> *xdr, MutableHandleValue vp)
         SCRIPT_TRUE    = 3,
         SCRIPT_FALSE   = 4,
         SCRIPT_NULL    = 5,
-        SCRIPT_VOID    = 6
+        SCRIPT_OBJECT  = 6,
+        SCRIPT_VOID    = 7,
+        SCRIPT_HOLE    = 8
     };
 
     uint32_t tag;
@@ -322,6 +326,10 @@ js::XDRScriptConst(XDRState<mode> *xdr, MutableHandleValue vp)
             tag = SCRIPT_FALSE;
         } else if (vp.isNull()) {
             tag = SCRIPT_NULL;
+        } else if (vp.isObject()) {
+            tag = SCRIPT_OBJECT;
+        } else if (vp.isMagic(JS_ELEMENTS_HOLE)) {
+            tag = SCRIPT_HOLE;
         } else {
             JS_ASSERT(vp.isUndefined());
             tag = SCRIPT_VOID;
@@ -374,9 +382,25 @@ js::XDRScriptConst(XDRState<mode> *xdr, MutableHandleValue vp)
         if (mode == XDR_DECODE)
             vp.set(NullValue());
         break;
+      case SCRIPT_OBJECT: {
+        RootedObject obj(cx);
+        if (mode == XDR_ENCODE)
+            obj = &vp.toObject();
+
+        if (!XDRObjectLiteral(xdr, &obj))
+            return false;
+
+        if (mode == XDR_DECODE)
+            vp.setObject(*obj);
+        break;
+      }
       case SCRIPT_VOID:
         if (mode == XDR_DECODE)
             vp.set(UndefinedValue());
+        break;
+      case SCRIPT_HOLE:
+        if (mode == XDR_DECODE)
+            vp.setMagic(JS_ELEMENTS_HOLE);
         break;
     }
     return true;
@@ -389,21 +413,27 @@ template bool
 js::XDRScriptConst(XDRState<XDR_DECODE> *, MutableHandleValue);
 
 static inline uint32_t
-FindBlockIndex(JSScript *script, StaticBlockObject &block)
+FindScopeObjectIndex(JSScript *script, NestedScopeObject &scope)
 {
     ObjectArray *objects = script->objects();
     HeapPtrObject *vector = objects->vector;
     unsigned length = objects->length;
     for (unsigned i = 0; i < length; ++i) {
-        if (vector[i] == &block)
+        if (vector[i] == &scope)
             return i;
     }
 
-    MOZ_ASSUME_UNREACHABLE("Block not found");
+    MOZ_ASSUME_UNREACHABLE("Scope not found");
 }
 
 static bool
 SaveSharedScriptData(ExclusiveContext *, Handle<JSScript *>, SharedScriptData *, uint32_t);
+
+enum XDRClassKind {
+    CK_BlockObject = 0,
+    CK_JSFunction  = 1,
+    CK_JSObject    = 2
+};
 
 template<XDRMode mode>
 bool
@@ -723,59 +753,36 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
 
     /*
      * Here looping from 0-to-length to xdr objects is essential to ensure that
-     * all references to enclosing blocks (via FindBlockIndex below) happen
+     * all references to enclosing blocks (via FindScopeObjectIndex below) happen
      * after the enclosing block has been XDR'd.
      */
     for (i = 0; i != nobjects; ++i) {
         HeapPtr<JSObject> *objp = &script->objects()->vector[i];
-        uint32_t isBlock;
+        XDRClassKind classk;
+
         if (mode == XDR_ENCODE) {
             JSObject *obj = *objp;
-            JS_ASSERT(obj->is<JSFunction>() || obj->is<StaticBlockObject>());
-            isBlock = obj->is<BlockObject>() ? 1 : 0;
+            if (obj->is<BlockObject>())
+                classk = CK_BlockObject;
+            else if (obj->is<JSFunction>())
+                classk = CK_JSFunction;
+            else if (obj->is<JSObject>() || obj->is<ArrayObject>())
+                classk = CK_JSObject;
+            else
+                MOZ_ASSUME_UNREACHABLE("Cannot encode this class of object.");
         }
-        if (!xdr->codeUint32(&isBlock))
-            return false;
-        if (isBlock == 0) {
-            /* Code the nested function's enclosing scope. */
-            uint32_t funEnclosingScopeIndex = 0;
-            if (mode == XDR_ENCODE) {
-                JSScript *innerScript = (*objp)->as<JSFunction>().getOrCreateScript(cx);
-                if (!innerScript)
-                    return false;
-                RootedObject staticScope(cx, innerScript->enclosingStaticScope());
-                StaticScopeIter<NoGC> ssi(staticScope);
-                if (ssi.done() || ssi.type() == StaticScopeIter<NoGC>::FUNCTION) {
-                    JS_ASSERT(ssi.done() == !fun);
-                    funEnclosingScopeIndex = UINT32_MAX;
-                } else {
-                    funEnclosingScopeIndex = FindBlockIndex(script, ssi.block());
-                    JS_ASSERT(funEnclosingScopeIndex < i);
-                }
-            }
-            if (!xdr->codeUint32(&funEnclosingScopeIndex))
-                return false;
-            Rooted<JSObject*> funEnclosingScope(cx);
-            if (mode == XDR_DECODE) {
-                if (funEnclosingScopeIndex == UINT32_MAX) {
-                    funEnclosingScope = fun;
-                } else {
-                    JS_ASSERT(funEnclosingScopeIndex < i);
-                    funEnclosingScope = script->objects()->vector[funEnclosingScopeIndex];
-                }
-            }
 
-            RootedObject tmp(cx, *objp);
-            if (!XDRInterpretedFunction(xdr, funEnclosingScope, script, &tmp))
-                return false;
-            *objp = tmp;
-        } else {
+        if (!xdr->codeEnum32(&classk))
+            return false;
+
+        switch (classk) {
+          case CK_BlockObject: {
             /* Code the nested block's enclosing scope. */
-            JS_ASSERT(isBlock == 1);
             uint32_t blockEnclosingScopeIndex = 0;
             if (mode == XDR_ENCODE) {
-                if (StaticBlockObject *block = (*objp)->as<StaticBlockObject>().enclosingBlock())
-                    blockEnclosingScopeIndex = FindBlockIndex(script, *block);
+                NestedScopeObject &scope = (*objp)->as<NestedScopeObject>();
+                if (NestedScopeObject *enclosing = scope.enclosingNestedScope())
+                    blockEnclosingScopeIndex = FindScopeObjectIndex(script, *enclosing);
                 else
                     blockEnclosingScopeIndex = UINT32_MAX;
             }
@@ -795,6 +802,58 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             if (!XDRStaticBlockObject(xdr, blockEnclosingScope, tmp.address()))
                 return false;
             *objp = tmp;
+            break;
+          }
+
+          case CK_JSFunction: {
+            /* Code the nested function's enclosing scope. */
+            uint32_t funEnclosingScopeIndex = 0;
+            if (mode == XDR_ENCODE) {
+                JSScript *innerScript = (*objp)->as<JSFunction>().getOrCreateScript(cx);
+                if (!innerScript)
+                    return false;
+                RootedObject staticScope(cx, innerScript->enclosingStaticScope());
+                StaticScopeIter<NoGC> ssi(staticScope);
+                if (ssi.done() || ssi.type() == StaticScopeIter<NoGC>::FUNCTION) {
+                    JS_ASSERT(ssi.done() == !fun);
+                    funEnclosingScopeIndex = UINT32_MAX;
+                } else {
+                    funEnclosingScopeIndex = FindScopeObjectIndex(script, ssi.block());
+                    JS_ASSERT(funEnclosingScopeIndex < i);
+                }
+            }
+            if (!xdr->codeUint32(&funEnclosingScopeIndex))
+                return false;
+            Rooted<JSObject*> funEnclosingScope(cx);
+            if (mode == XDR_DECODE) {
+                if (funEnclosingScopeIndex == UINT32_MAX) {
+                    funEnclosingScope = fun;
+                } else {
+                    JS_ASSERT(funEnclosingScopeIndex < i);
+                    funEnclosingScope = script->objects()->vector[funEnclosingScopeIndex];
+                }
+            }
+
+            RootedObject tmp(cx, *objp);
+            if (!XDRInterpretedFunction(xdr, funEnclosingScope, script, &tmp))
+                return false;
+            *objp = tmp;
+            break;
+          }
+
+          case CK_JSObject: {
+            /* Code object literal. */
+            RootedObject tmp(cx, *objp);
+            if (!XDRObjectLiteral(xdr, &tmp))
+                return false;
+            *objp = tmp;
+            break;
+          }
+
+          default: {
+            MOZ_ASSUME_UNREACHABLE("Unknown class kind.");
+            return false;
+          }
         }
     }
 
@@ -1150,6 +1209,20 @@ SourceDataCache::purge()
     map_ = nullptr;
 }
 
+size_t
+SourceDataCache::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
+{
+    size_t n = 0;
+    if (map_ && !map_->empty()) {
+        n += map_->sizeOfIncludingThis(mallocSizeOf);
+        for (Map::Range r = map_->all(); !r.empty(); r.popFront()) {
+            const jschar *v = r.front().value();
+            n += mallocSizeOf(v);
+        }
+    }
+    return n;
+}
+
 const jschar *
 ScriptSource::chars(JSContext *cx, const SourceDataCache::AutoSuppressPurge &asp)
 {
@@ -1188,7 +1261,7 @@ ScriptSource::chars(JSContext *cx, const SourceDataCache::AutoSuppressPurge &asp
     return data.source;
 }
 
-JSStableString *
+JSFlatString *
 ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
 {
     JS_ASSERT(start <= stop);
@@ -1196,10 +1269,7 @@ ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
     const jschar *chars = this->chars(cx, asp);
     if (!chars)
         return nullptr;
-    JSFlatString *flatStr = js_NewStringCopyN<CanGC>(cx, chars + start, stop - start);
-    if (!flatStr)
-        return nullptr;
-    return flatStr->ensureStable(cx);
+    return js_NewStringCopyN<CanGC>(cx, chars + start, stop - start);
 }
 
 bool
@@ -1876,9 +1946,13 @@ JSScript::partiallyInit(ExclusiveContext *cx, HandleScript script, uint32_t ncon
 {
     size_t size = ScriptDataSize(script->bindings.count(), nconsts, nobjects, nregexps, ntrynotes,
                                  nblockscopes);
-    script->data = AllocScriptData(cx, size);
-    if (!script->data)
-        return false;
+    if (size > 0) {
+        script->data = AllocScriptData(cx, size);
+        if (!script->data)
+            return false;
+    } else {
+        script->data = nullptr;
+    }
     script->dataSize_ = size;
 
     JS_ASSERT(nTypeSets <= UINT16_MAX);
@@ -2420,16 +2494,16 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
         for (unsigned i = 0; i < nobjects; i++) {
             RootedObject obj(cx, vector[i]);
             RootedObject clone(cx);
-            if (obj->is<StaticBlockObject>()) {
-                Rooted<StaticBlockObject*> innerBlock(cx, &obj->as<StaticBlockObject>());
+            if (obj->is<NestedScopeObject>()) {
+                Rooted<NestedScopeObject*> innerBlock(cx, &obj->as<NestedScopeObject>());
 
                 RootedObject enclosingScope(cx);
-                if (StaticBlockObject *enclosingBlock = innerBlock->enclosingBlock())
-                    enclosingScope = objects[FindBlockIndex(src, *enclosingBlock)];
+                if (NestedScopeObject *enclosingBlock = innerBlock->enclosingNestedScope())
+                    enclosingScope = objects[FindScopeObjectIndex(src, *enclosingBlock)];
                 else
                     enclosingScope = fun;
 
-                clone = CloneStaticBlockObject(cx, enclosingScope, innerBlock);
+                clone = CloneNestedScopeObject(cx, enclosingScope, innerBlock);
             } else if (obj->is<JSFunction>()) {
                 RootedFunction innerFun(cx, &obj->as<JSFunction>());
                 if (innerFun->isNative()) {
@@ -2445,7 +2519,7 @@ js::CloneScript(JSContext *cx, HandleObject enclosingScope, HandleFunction fun, 
                     StaticScopeIter<CanGC> ssi(cx, staticScope);
                     RootedObject enclosingScope(cx);
                     if (!ssi.done() && ssi.type() == StaticScopeIter<CanGC>::BLOCK)
-                        enclosingScope = objects[FindBlockIndex(src, ssi.block())];
+                        enclosingScope = objects[FindScopeObjectIndex(src, ssi.block())];
                     else
                         enclosingScope = fun;
 
@@ -2910,8 +2984,8 @@ LazyScript::finalize(FreeOp *fop)
         fop->free_(table_);
 }
 
-StaticBlockObject *
-JSScript::getBlockScope(jsbytecode *pc)
+NestedScopeObject *
+JSScript::getStaticScope(jsbytecode *pc)
 {
     JS_ASSERT(containsPC(pc));
 
@@ -2924,7 +2998,7 @@ JSScript::getBlockScope(jsbytecode *pc)
         return nullptr;
 
     BlockScopeArray *scopes = blockScopes();
-    StaticBlockObject *blockChain = nullptr;
+    NestedScopeObject *blockChain = nullptr;
 
     // Find the innermost block chain using a binary search.
     size_t bottom = 0;
@@ -2949,7 +3023,7 @@ JSScript::getBlockScope(jsbytecode *pc)
                     if (checkNote->index == BlockScopeNote::NoBlockScopeIndex)
                         blockChain = nullptr;
                     else
-                        blockChain = &getObject(checkNote->index)->as<StaticBlockObject>();
+                        blockChain = &getObject(checkNote->index)->as<NestedScopeObject>();
                     break;
                 }
                 if (checkNote->parent == UINT32_MAX)

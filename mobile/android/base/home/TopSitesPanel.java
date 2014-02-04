@@ -18,7 +18,6 @@ import org.mozilla.gecko.db.BrowserDB.TopSitesCursorWrapper;
 import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.gfx.BitmapUtils;
-import org.mozilla.gecko.home.HomeListView.HomeContextMenuInfo;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.home.PinSiteDialog.OnSiteSelectedListener;
 import org.mozilla.gecko.home.TopSitesGridView.OnEditPinnedSiteListener;
@@ -221,7 +220,12 @@ public class TopSitesPanel extends HomeFragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+
+        // Discard any additional item clicks on the list
+        // as the panel is getting destroyed (see bug 930160).
+        mList.setOnItemClickListener(null);
         mList = null;
+
         mGrid = null;
         mListAdapter = null;
         mGridAdapter = null;

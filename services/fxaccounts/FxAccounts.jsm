@@ -68,6 +68,26 @@ InternalMethods = function(mock) {
 InternalMethods.prototype = {
 
   /**
+   * Return the current time in milliseconds as an integer.  Allows tests to
+   * manipulate the date to simulate certificate expiration.
+   */
+  now: function() {
+    return this.fxAccountsClient.now();
+  },
+
+  /**
+   * Return clock offset in milliseconds, as reported by the fxAccountsClient.
+   * This can be overridden for testing.
+   *
+   * The offset is the number of milliseconds that must be added to the client
+   * clock to make it equal to the server clock.  For example, if the client is
+   * five minutes ahead of the server, the localtimeOffsetMsec will be -300000.
+   */
+  get localtimeOffsetMsec() {
+    return this.fxAccountsClient.localtimeOffsetMsec;
+  },
+
+  /**
    * Ask the server whether the user's email has been verified
    */
   checkEmailStatus: function checkEmailStatus(sessionToken) {
@@ -144,15 +164,14 @@ InternalMethods.prototype = {
       }
       if (!this.whenKeysReadyPromise) {
         this.whenKeysReadyPromise = Promise.defer();
-        return this.fetchAndUnwrapKeys(data.keyFetchToken)
-          .then((data) => {
-            if (this.whenKeysReadyPromise) {
-              this.whenKeysReadyPromise.resolve(data);
-            }
-          });
+        this.fetchAndUnwrapKeys(data.keyFetchToken).then(data => {
+          if (this.whenKeysReadyPromise) {
+            this.whenKeysReadyPromise.resolve(data);
+          }
+        });
       }
       return this.whenKeysReadyPromise.promise;
-      });
+    });
    },
 
   fetchAndUnwrapKeys: function(keyFetchToken) {
@@ -207,9 +226,13 @@ InternalMethods.prototype = {
     log.debug("getAssertionFromCert");
     let payload = {};
     let d = Promise.defer();
+    let options = {
+      localtimeOffsetMsec: internal.localtimeOffsetMsec,
+      now: internal.now()
+    };
     // "audience" should look like "http://123done.org".
     // The generated assertion will expire in two minutes.
-    jwcrypto.generateAssertion(cert, keyPair, audience, function(err, signed) {
+    jwcrypto.generateAssertion(cert, keyPair, audience, options, (err, signed) => {
       if (err) {
         log.error("getAssertionFromCert: " + err);
         d.reject(err);
@@ -229,7 +252,7 @@ InternalMethods.prototype = {
       return Promise.resolve(this.cert.cert);
     }
     // else get our cert signed
-    let willBeValidUntil = this.now() + CERT_LIFETIME;
+    let willBeValidUntil = internal.now() + CERT_LIFETIME;
     return this.getCertificateSigned(data.sessionToken,
                                      keyPair.serializedPublicKey,
                                      CERT_LIFETIME)
@@ -256,7 +279,7 @@ InternalMethods.prototype = {
       return Promise.resolve(this.keyPair.keyPair);
     }
     // Otherwse, create a keypair and set validity limit.
-    let willBeValidUntil = this.now() + KEY_LIFETIME;
+    let willBeValidUntil = internal.now() + KEY_LIFETIME;
     let d = Promise.defer();
     jwcrypto.generateKeyPair("DS160", (err, kp) => {
       if (err) {
@@ -339,11 +362,22 @@ InternalMethods.prototype = {
       return Promise.resolve(data);
     }
     if (!this.whenVerifiedPromise) {
-      this.whenVerifiedPromise = Promise.defer();
       log.debug("whenVerified promise starts polling for verified email");
       this.pollEmailStatus(data.sessionToken, "start");
     }
     return this.whenVerifiedPromise.promise;
+  },
+
+  /**
+   * Resend the verification email to the logged-in user.
+   *
+   * @return Promise
+   *         fulfilled: json data returned from xhr call
+   *         rejected: error
+   */
+  resendVerificationEmail: function(data) {
+    this.pollEmailStatus(data.sessionToken, "start");
+    return this.fxAccountsClient.resendVerificationEmail(data.sessionToken);
   },
 
   notifyObservers: function(topic) {
@@ -351,25 +385,17 @@ InternalMethods.prototype = {
     Services.obs.notifyObservers(null, topic, null);
   },
 
-  /**
-   * Give xpcshell tests an override point for duration testing. This is
-   * necessary because the tests need to manipulate the date in order to
-   * simulate certificate expiration.
-   */
-  now: function() {
-    return Date.now();
-  },
-
   pollEmailStatus: function pollEmailStatus(sessionToken, why) {
     let myGenerationCount = this.generationCount;
     log.debug("entering pollEmailStatus: " + why + " " + myGenerationCount);
     if (why == "start") {
-      if (this.currentTimer) {
-        // safety check - this case should have been caught on
-        // entry with setSignedInUser
-        throw new Error("Already polling for email status");
-      }
+      // If we were already polling, stop and start again.  This could happen
+      // if the user requested the verification email to be resent while we
+      // were already polling for receipt of an earlier email.
       this.pollTimeRemaining = this.POLL_SESSION;
+      if (!this.whenVerifiedPromise) {
+        this.whenVerifiedPromise = Promise.defer();
+      }
     }
 
     this.checkEmailStatus(sessionToken)
@@ -454,6 +480,20 @@ this.FxAccounts = function(mockInternal) {
 this.FxAccounts.prototype = Object.freeze({
   version: DATA_FORMAT_VERSION,
 
+  now: function() {
+    if (this.internal) {
+      return this.internal.now();
+    }
+    return internal.now();
+  },
+
+  get localtimeOffsetMsec() {
+    if (this.internal) {
+      return this.internal.localtimeOffsetMsec;
+    }
+    return internal.localtimeOffsetMsec;
+  },
+
   // set() makes sure that polling is happening, if necessary.
   // get() does not wait for verification, and returns an object even if
   // unverified. The caller of get() must check .verified .
@@ -487,7 +527,7 @@ this.FxAccounts.prototype = Object.freeze({
     log.debug("setSignedInUser - aborting any existing flows");
     internal.abortExistingFlow();
 
-    let record = {version: this.version, accountData: credentials };
+    let record = {version: this.version, accountData: credentials};
     // Cache a clone of the credentials object.
     internal.signedInUser = JSON.parse(JSON.stringify(record));
 
@@ -534,6 +574,22 @@ this.FxAccounts.prototype = Object.freeze({
   },
 
   /**
+   * Resend the verification email fot the currently signed-in user.
+   *
+   */
+  resendVerificationEmail: function resendVerificationEmail() {
+    return this.getSignedInUser().then((data) => {
+      // If the caller is asking for verification to be re-sent, and there is
+      // no signed-in user to begin with, this is probably best regarded as an
+      // error.
+      if (data) {
+        return internal.resendVerificationEmail(data);
+      }
+      throw new Error("Cannot resend verification email; no signed-in user");
+    });
+  },
+
+  /**
    * returns a promise that fires with the assertion.  If there is no verified
    * signed-in user, fires with null.
    */
@@ -569,7 +625,6 @@ this.FxAccounts.prototype = Object.freeze({
     return internal.whenVerified(userData);
   },
 
-
   /**
    * Sign the current user out.
    *
@@ -582,12 +637,31 @@ this.FxAccounts.prototype = Object.freeze({
 
   // Return the URI of the remote UI flows.
   getAccountsURI: function() {
-    let url = Services.urlFormatter.formatURLPref("firefox.accounts.remoteUrl");
+    let url = Services.urlFormatter.formatURLPref("identity.fxaccounts.remote.uri");
     if (!/^https:/.test(url)) { // Comment to un-break emacs js-mode highlighting
       throw new Error("Firefox Accounts server must use HTTPS");
     }
     return url;
+  },
+
+  // Returns a promise that resolves with the URL to use to force a re-signin
+  // of the current account.
+  promiseAccountsForceSigninURI: function() {
+    let url = Services.urlFormatter.formatURLPref("identity.fxaccounts.remote.force_auth.uri");
+    if (!/^https:/.test(url)) { // Comment to un-break emacs js-mode highlighting
+      throw new Error("Firefox Accounts server must use HTTPS");
+    }
+    // but we need to append the email address onto a query string.
+    return this.getSignedInUser().then(accountData => {
+      if (!accountData) {
+        return null;
+      }
+      let newQueryPortion = url.indexOf("?") == -1 ? "?" : "&";
+      newQueryPortion += "email=" + encodeURIComponent(accountData.email);
+      return url + newQueryPortion;
+    });
   }
+
 });
 
 /**

@@ -12,6 +12,7 @@ namespace jit {
 
 #define MIR_OPCODE_LIST(_)                                                  \
     _(Constant)                                                             \
+    _(CloneLiteral)                                                         \
     _(Parameter)                                                            \
     _(Callee)                                                               \
     _(TableSwitch)                                                          \
@@ -92,6 +93,7 @@ namespace jit {
     _(NewStringObject)                                                      \
     _(InitElem)                                                             \
     _(InitElemGetterSetter)                                                 \
+    _(MutateProto)                                                          \
     _(InitProp)                                                             \
     _(InitPropGetterSetter)                                                 \
     _(Start)                                                                \
@@ -209,7 +211,7 @@ namespace jit {
     _(AbortPar)                                                             \
     _(LambdaPar)                                                            \
     _(RestPar)                                                              \
-    _(ForkJoinSlice)                                                        \
+    _(ForkJoinContext)                                                      \
     _(GuardThreadExclusive)                                                 \
     _(CheckInterruptPar)                                                    \
     _(RecompileCheck)

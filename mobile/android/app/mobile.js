@@ -31,7 +31,7 @@ pref("browser.tabs.remote", false);
 // If a tab has not been active for this long (seconds), then it may be
 // turned into a zombie tab to preemptively free up memory. -1 disables time-based
 // expiration (but low-memory conditions may still require the tab to be zombified).
-pref("browser.tabs.expireTime", 3600);
+pref("browser.tabs.expireTime", 900);
 
 // From libpref/src/init/all.js, extended to allow a slightly wider zoom range.
 pref("zoom.minPercent", 20);
@@ -472,6 +472,8 @@ pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
 #if MOZ_UPDATE_CHANNEL == aurora
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/auroranotes/");
+#elif MOZ_UPDATE_CHANNEL == beta
+pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%beta/releasenotes/");
 #else
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/releasenotes/");
 #endif
@@ -800,9 +802,6 @@ pref("browser.ui.linkify.phone", false);
 // Enables/disables Spatial Navigation
 pref("snav.enabled", true);
 
-// URL to fetch about:accounts web content from.
-pref("firefox.accounts.remoteUrl", "https://accounts.dev.lcip.org/mobile");
-
 // This url, if changed, MUST continue to point to an https url. Pulling arbitrary content to inject into
 // this page over http opens us up to a man-in-the-middle attack that we'd rather not face. If you are a downstream
 // repackager of this code using an alternate snippet url, please keep your users safe
@@ -818,7 +817,7 @@ pref("browser.snippets.geoUrl", "https://geo.mozilla.org/country.json");
 pref("browser.snippets.statsUrl", "https://snippets-stats.mozilla.org/mobile");
 
 // These prefs require a restart to take effect.
-pref("browser.snippets.enabled", false);
+pref("browser.snippets.enabled", true);
 pref("browser.snippets.syncPromo.enabled", false);
 
 #ifdef MOZ_ANDROID_SYNTHAPKS
