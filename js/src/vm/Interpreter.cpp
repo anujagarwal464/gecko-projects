@@ -59,6 +59,7 @@ using namespace js::types;
 using mozilla::DebugOnly;
 using mozilla::DoubleEqualsInt32;
 using mozilla::PodCopy;
+using JS::ForOfIterator;
 
 /*
  * Note: when Clang 3.2 (32-bit) inlines the two functions below in Interpret,
@@ -241,12 +242,13 @@ GetPropertyOperation(JSContext *cx, StackFrame *fp, HandleScript script, jsbytec
             return true;
     }
 
+    Rooted<GlobalObject*> global(cx, &fp->global());
     RootedId id(cx, NameToId(script->getName(pc)));
     RootedObject obj(cx);
 
     /* Optimize (.1).toString(). */
     if (lval.isNumber() && id == NameToId(cx->names().toString)) {
-        JSObject *proto = fp->global().getOrCreateNumberPrototype(cx);
+        JSObject *proto = GlobalObject::getOrCreateNumberPrototype(cx, global);
         if (!proto)
             return false;
         if (ClassMethodIsNative(cx, proto, &NumberObject::class_, id, js_num_toString))
@@ -1726,8 +1728,11 @@ CASE(JSOP_POPN)
     JS_ASSERT(GET_UINT16(REGS.pc) <= REGS.stackDepth());
     REGS.sp -= GET_UINT16(REGS.pc);
 #ifdef DEBUG
-    if (StaticBlockObject *block = script->getBlockScope(REGS.pc + JSOP_POPN_LENGTH))
-        JS_ASSERT(REGS.stackDepth() >= block->stackDepth() + block->slotCount());
+    if (NestedScopeObject *scope = script->getStaticScope(REGS.pc + JSOP_POPN_LENGTH)) {
+        JS_ASSERT(scope->is<StaticBlockObject>());
+        StaticBlockObject &blockObj = scope->as<StaticBlockObject>();
+        JS_ASSERT(REGS.stackDepth() >= blockObj.stackDepth() + blockObj.slotCount());
+    }
 #endif
 END_CASE(JSOP_POPN)
 
@@ -1738,8 +1743,11 @@ CASE(JSOP_POPNV)
     REGS.sp -= GET_UINT16(REGS.pc);
     REGS.sp[-1] = val;
 #ifdef DEBUG
-    if (StaticBlockObject *block = script->getBlockScope(REGS.pc + JSOP_POPNV_LENGTH))
-        JS_ASSERT(REGS.stackDepth() >= block->stackDepth() + block->slotCount());
+    if (NestedScopeObject *scope = script->getStaticScope(REGS.pc + JSOP_POPNV_LENGTH)) {
+        JS_ASSERT(scope->is<StaticBlockObject>());
+        StaticBlockObject &blockObj = scope->as<StaticBlockObject>();
+        JS_ASSERT(REGS.stackDepth() >= blockObj.stackDepth() + blockObj.slotCount());
+    }
 #endif
 }
 END_CASE(JSOP_POPNV)
@@ -3114,21 +3122,21 @@ END_CASE(JSOP_ENDINIT)
 
 CASE(JSOP_MUTATEPROTO)
 {
-    /* Load the new [[Prototype]] value into rval. */
     MOZ_ASSERT(REGS.stackDepth() >= 2);
-    RootedValue &rval = rootValue0;
-    rval = REGS.sp[-1];
 
-    /* Load the object being initialized into lval/obj. */
-    RootedObject &obj = rootObject0;
-    obj = &REGS.sp[-2].toObject();
-    MOZ_ASSERT(obj->is<JSObject>());
+    if (REGS.sp[-1].isObjectOrNull()) {
+        RootedObject &newProto = rootObject1;
+        rootObject1 = REGS.sp[-1].toObjectOrNull();
 
-    RootedId &id = rootId0;
-    id = NameToId(cx->names().proto);
+        RootedObject &obj = rootObject0;
+        obj = &REGS.sp[-2].toObject();
+        MOZ_ASSERT(obj->is<JSObject>());
 
-    if (!baseops::SetPropertyHelper<SequentialExecution>(cx, obj, obj, id, 0, &rval, false))
-        goto error;
+        bool succeeded;
+        if (!JSObject::setProto(cx, obj, newProto, &succeeded))
+            goto error;
+        MOZ_ASSERT(succeeded);
+    }
 
     REGS.sp--;
 }
@@ -3367,11 +3375,13 @@ CASE(JSOP_POPBLOCKSCOPE)
 #ifdef DEBUG
     // Pop block from scope chain.
     JS_ASSERT(*(REGS.pc - JSOP_DEBUGLEAVEBLOCK_LENGTH) == JSOP_DEBUGLEAVEBLOCK);
-    StaticBlockObject *blockObj = script->getBlockScope(REGS.pc - JSOP_DEBUGLEAVEBLOCK_LENGTH);
-    JS_ASSERT(blockObj && blockObj->needsClone());
+    NestedScopeObject *scope = script->getStaticScope(REGS.pc - JSOP_DEBUGLEAVEBLOCK_LENGTH);
+    JS_ASSERT(scope && scope->is<StaticBlockObject>());
+    StaticBlockObject &blockObj = scope->as<StaticBlockObject>();
+    JS_ASSERT(blockObj.needsClone());
 
     // FIXME: "Aliased" slots don't need to be on the stack.
-    JS_ASSERT(REGS.stackDepth() >= blockObj->stackDepth() + blockObj->slotCount());
+    JS_ASSERT(REGS.stackDepth() >= blockObj.stackDepth() + blockObj.slotCount());
 #endif
 
     // Pop block from scope chain.
@@ -3381,7 +3391,8 @@ END_CASE(JSOP_POPBLOCKSCOPE)
 
 CASE(JSOP_DEBUGLEAVEBLOCK)
 {
-    JS_ASSERT(script->getBlockScope(REGS.pc));
+    JS_ASSERT(script->getStaticScope(REGS.pc));
+    JS_ASSERT(script->getStaticScope(REGS.pc)->is<StaticBlockObject>());
 
     // FIXME: This opcode should not be necessary.  The debugger shouldn't need
     // help from bytecode to do its job.  See bug 927782.

@@ -73,7 +73,7 @@ nsresult MediaPluginReader::ReadMetadata(MediaInfo* aInfo,
     // that our video frame creation code doesn't overflow.
     nsIntSize displaySize(width, height);
     nsIntSize frameSize(width, height);
-    if (!VideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
+    if (!IsValidVideoRegion(frameSize, pictureRect, displaySize)) {
       return NS_ERROR_FAILURE;
     }
 
@@ -373,9 +373,7 @@ uint8_t *
 MediaPluginReader::ImageBufferCallback::CreateI420Image(size_t aWidth,
                                                         size_t aHeight)
 {
-  ImageFormat format = PLANAR_YCBCR;
-
-  mImage = mImageContainer->CreateImage(&format, 1 /* numFormats */);
+  mImage = mImageContainer->CreateImage(ImageFormat::PLANAR_YCBCR);
   PlanarYCbCrImage *yuvImage = static_cast<PlanarYCbCrImage *>(mImage.get());
 
   if (!yuvImage) {

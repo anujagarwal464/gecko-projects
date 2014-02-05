@@ -129,6 +129,37 @@ js::Nursery::isEmpty() const
     return position() == currentStart_;
 }
 
+JSObject *
+js::Nursery::allocateObject(JSContext *cx, size_t size, size_t numDynamic)
+{
+    /* Attempt to allocate slots contiguously after object, if possible. */
+    if (numDynamic && numDynamic <= MaxNurserySlots) {
+        size_t totalSize = size + sizeof(HeapSlot) * numDynamic;
+        JSObject *obj = static_cast<JSObject *>(allocate(totalSize));
+        if (obj) {
+            obj->setInitialSlots(reinterpret_cast<HeapSlot *>(size_t(obj) + size));
+            return obj;
+        }
+        /* If we failed to allocate as a block, retry with out-of-line slots. */
+    }
+
+    HeapSlot *slots = nullptr;
+    if (numDynamic) {
+        slots = allocateHugeSlots(cx, numDynamic);
+        if (MOZ_UNLIKELY(!slots))
+            return nullptr;
+    }
+
+    JSObject *obj = static_cast<JSObject *>(allocate(size));
+
+    if (obj)
+        obj->setInitialSlots(slots);
+    else
+        freeSlots(cx, slots);
+
+    return obj;
+}
+
 void *
 js::Nursery::allocate(size_t size)
 {
@@ -590,13 +621,15 @@ js::Nursery::moveElementsToTenured(JSObject *dst, JSObject *src, AllocKind dstKi
 
     /* ArrayBuffer stores byte-length, not Value count. */
     if (src->is<ArrayBufferObject>()) {
-        size_t nbytes = sizeof(ObjectElements) + srcHeader->initializedLength;
+        size_t nbytes;
         if (src->hasDynamicElements()) {
+            nbytes = sizeof(ObjectElements) + srcHeader->initializedLength;
             dstHeader = static_cast<ObjectElements *>(zone->malloc_(nbytes));
             if (!dstHeader)
                 CrashAtUnhandlableOOM("Failed to allocate array buffer elements while tenuring.");
         } else {
             dst->setFixedElements();
+            nbytes = GetGCKindSlots(dst->tenuredGetAllocKind()) * sizeof(HeapSlot);
             dstHeader = dst->getElementsHeader();
         }
         js_memcpy(dstHeader, srcHeader, nbytes);
@@ -688,10 +721,6 @@ js::Nursery::collect(JSRuntime *rt, JS::gcreason::Reason reason, TypeObjectList 
     TIME_START(total);
 
     AutoStopVerifyingBarriers av(rt, false);
-
-    TIME_START(waitBgSweep);
-    rt->gcHelperThread.waitBackgroundSweepEnd();
-    TIME_END(waitBgSweep);
 
     /* Move objects pointed to by roots from the nursery to the major heap. */
     MinorCollectionTracer trc(rt, this);
@@ -813,18 +842,17 @@ js::Nursery::collect(JSRuntime *rt, JS::gcreason::Reason reason, TypeObjectList 
         static bool printedHeader = false;
         if (!printedHeader) {
             fprintf(stderr,
-                    "MinorGC: Reason               PRate  Size Time   WaitBg mkVals mkClls mkSlts mkWCll mkRVal mkRCll mkGnrc ckTbls mkRntm mkDbgr clrNOC collct updtIn resize pretnr frSlts clrSB  sweep\n");
+                    "MinorGC: Reason               PRate  Size Time   mkVals mkClls mkSlts mkWCll mkRVal mkRCll mkGnrc ckTbls mkRntm mkDbgr clrNOC collct updtIn resize pretnr frSlts clrSB  sweep\n");
             printedHeader = true;
         }
 
 #define FMT " %6" PRIu64
         fprintf(stderr,
-                "MinorGC: %20s %5.1f%% %4d" FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT "\n",
+                "MinorGC: %20s %5.1f%% %4d" FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT FMT "\n",
                 js::gcstats::ExplainReason(reason),
                 promotionRate * 100,
                 numActiveChunks_,
                 totalTime,
-                TIME_TOTAL(waitBgSweep),
                 TIME_TOTAL(markValues),
                 TIME_TOTAL(markCells),
                 TIME_TOTAL(markSlots),

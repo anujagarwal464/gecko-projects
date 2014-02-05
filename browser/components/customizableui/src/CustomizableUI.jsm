@@ -635,33 +635,33 @@ let CustomizableUIInternal = {
     return [null, null];
   },
 
-  registerMenuPanel: function(aPanel) {
+  registerMenuPanel: function(aPanelContents) {
     if (gBuildAreas.has(CustomizableUI.AREA_PANEL) &&
-        gBuildAreas.get(CustomizableUI.AREA_PANEL).has(aPanel)) {
+        gBuildAreas.get(CustomizableUI.AREA_PANEL).has(aPanelContents)) {
       return;
     }
 
-    let document = aPanel.ownerDocument;
+    let document = aPanelContents.ownerDocument;
 
-    aPanel.toolbox = document.getElementById("navigator-toolbox");
-    aPanel.customizationTarget = aPanel;
+    aPanelContents.toolbox = document.getElementById("navigator-toolbox");
+    aPanelContents.customizationTarget = aPanelContents;
 
-    this.addPanelCloseListeners(aPanel);
+    this.addPanelCloseListeners(this._getPanelForNode(aPanelContents));
 
     let placements = gPlacements.get(CustomizableUI.AREA_PANEL);
-    this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanel);
-    for (let child of aPanel.children) {
+    this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanelContents);
+    for (let child of aPanelContents.children) {
       if (child.localName != "toolbarbutton") {
         if (child.localName == "toolbaritem") {
-          this.ensureButtonContextMenu(child, aPanel);
+          this.ensureButtonContextMenu(child, aPanelContents);
         }
         continue;
       }
-      this.ensureButtonContextMenu(child, aPanel);
+      this.ensureButtonContextMenu(child, aPanelContents);
       child.setAttribute("wrap", "true");
     }
 
-    this.registerBuildArea(CustomizableUI.AREA_PANEL, aPanel);
+    this.registerBuildArea(CustomizableUI.AREA_PANEL, aPanelContents);
   },
 
   onWidgetAdded: function(aWidgetId, aArea, aPosition) {
@@ -703,6 +703,8 @@ let CustomizableUIInternal = {
       // We remove location attributes here to make sure they're gone too when a
       // widget is removed from a toolbar to the palette. See bug 930950.
       this.removeLocationAttributes(widgetNode);
+      // We also need to remove the panel context menu if it's there:
+      this.ensureButtonContextMenu(widgetNode);
       widgetNode.removeAttribute("wrap");
       if (gPalette.has(aWidgetId) || this.isSpecialWidget(aWidgetId)) {
         container.removeChild(widgetNode);
@@ -1139,8 +1141,6 @@ let CustomizableUIInternal = {
     LOG("handleWidgetCommand");
 
     if (aWidget.type == "button") {
-      this.maybeAutoHidePanel(aEvent);
-
       if (aWidget.onCommand) {
         try {
           aWidget.onCommand.call(null, aEvent);
@@ -1162,10 +1162,6 @@ let CustomizableUIInternal = {
 
   handleWidgetClick: function(aWidget, aNode, aEvent) {
     LOG("handleWidgetClick");
-    if (aWidget.type == "button") {
-      this.maybeAutoHidePanel(aEvent);
-    }
-
     if (aWidget.onClick) {
       try {
         aWidget.onClick.call(null, aEvent);
@@ -1204,6 +1200,11 @@ let CustomizableUIInternal = {
 
     let target = aEvent.originalTarget;
     let panel = this._getPanelForNode(aEvent.currentTarget);
+    // This can happen in e.g. customize mode. If there's no panel,
+    // there's clearly nothing for us to close; pretend we're interactive.
+    if (!panel) {
+      return true;
+    }
     // We keep track of:
     // whether we're in an input container (text field)
     let inInput = false;
@@ -1309,9 +1310,34 @@ let CustomizableUIInternal = {
       }
     }
 
-    if (aEvent.target.getAttribute("closemenu") == "none" ||
-        aEvent.target.getAttribute("widget-type") == "view") {
+    // We can't use event.target because we might have passed a panelview
+    // anonymous content boundary as well, and so target points to the
+    // panelmultiview in that case. Unfortunately, this means we get
+    // anonymous child nodes instead of the real ones, so looking for the 
+    // 'stoooop, don't close me' attributes is more involved.
+    let target = aEvent.originalTarget;
+    let closemenu = "auto";
+    let widgetType = "button";
+    while (target.parentNode && target.localName != "panel") {
+      closemenu = target.getAttribute("closemenu");
+      widgetType = target.getAttribute("widget-type");
+      if (closemenu == "none" || closemenu == "single" ||
+          widgetType == "view") {
+        break;
+      }
+      target = target.parentNode;
+    }
+    if (closemenu == "none" || widgetType == "view") {
       return;
+    }
+
+    if (closemenu == "single") {
+      let panel = this._getPanelForNode(target);
+      let multiview = panel.querySelector("panelmultiview");
+      if (multiview.showingSubView) {
+        multiview.showMainView();
+        return;
+      }
     }
 
     // If we get here, we can actually hide the popup:
@@ -1953,7 +1979,12 @@ let CustomizableUIInternal = {
       let widgetNode = window.document.getElementById(aWidgetId) ||
                        window.gNavToolbox.palette.getElementsByAttribute("id", aWidgetId)[0];
       if (widgetNode) {
+        let container = widgetNode.parentNode
+        this.notifyListeners("onWidgetBeforeDOMChange", widgetNode, null,
+                             container, true);
         widgetNode.remove();
+        this.notifyListeners("onWidgetAfterDOMChange", widgetNode, null,
+                             container, true);
       }
       if (widget.type == "view") {
         let viewNode = window.document.getElementById(widget.viewId);
@@ -3397,7 +3428,7 @@ OverflowableToolbar.prototype = {
   },
 
   onWidgetBeforeDOMChange: function(aNode, aNextNode, aContainer) {
-    if (aContainer != this._target) {
+    if (aContainer != this._target && aContainer != this._list) {
       return;
     }
     // When we (re)move an item, update all the items that come after it in the list
@@ -3420,7 +3451,7 @@ OverflowableToolbar.prototype = {
   },
 
   onWidgetAfterDOMChange: function(aNode, aNextNode, aContainer) {
-    if (aContainer != this._target) {
+    if (aContainer != this._target && aContainer != this._list) {
       return;
     }
 

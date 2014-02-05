@@ -25,6 +25,7 @@
  */
 
 class JSFreeOp;
+struct JSFunctionSpec;
 
 namespace js {
 
@@ -416,6 +417,23 @@ struct ClassSizeMeasurement
     JS_CLASS_MEMBERS;
 };
 
+// Callback for the creation of constructor and prototype objects.
+typedef JSObject *(*ClassObjectCreationOp)(JSContext *cx, JSProtoKey key);
+
+// Callback for custom post-processing after class initialization via ClassSpec.
+typedef bool (*FinishClassInitOp)(JSContext *cx, JS::HandleObject ctor,
+                                  JS::HandleObject proto);
+
+struct ClassSpec
+{
+    ClassObjectCreationOp createConstructor;
+    ClassObjectCreationOp createPrototype;
+    const JSFunctionSpec *constructorFunctions;
+    const JSFunctionSpec *prototypeFunctions;
+    FinishClassInitOp finishInit;
+    bool defined() const { return !!createConstructor; }
+};
+
 struct ClassExtension
 {
     JSObjectOp          outerObject;
@@ -442,6 +460,7 @@ struct ClassExtension
     JSWeakmapKeyDelegateOp weakmapKeyDelegateOp;
 };
 
+#define JS_NULL_CLASS_SPEC  {nullptr,nullptr,nullptr,nullptr,nullptr}
 #define JS_NULL_CLASS_EXT   {nullptr,nullptr,nullptr,false,nullptr}
 
 struct ObjectOps
@@ -541,9 +560,9 @@ struct JSClass {
 #define JSCLASS_INTERNAL_FLAG2          (1<<(JSCLASS_HIGH_FLAGS_SHIFT+2))
 #define JSCLASS_INTERNAL_FLAG3          (1<<(JSCLASS_HIGH_FLAGS_SHIFT+3))
 
-// Indicate whether the proto or ctor should be frozen.
-#define JSCLASS_FREEZE_PROTO            (1<<(JSCLASS_HIGH_FLAGS_SHIFT+4))
-#define JSCLASS_FREEZE_CTOR             (1<<(JSCLASS_HIGH_FLAGS_SHIFT+5))
+#define JSCLASS_IS_PROXY                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+4))
+
+// Bit 22 unused.
 
 // Reserved for embeddings.
 #define JSCLASS_USERBIT2                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+6))
@@ -592,9 +611,11 @@ namespace js {
 struct Class
 {
     JS_CLASS_MEMBERS;
+    ClassSpec          spec;
     ClassExtension      ext;
     ObjectOps           ops;
     uint8_t             pad[sizeof(JSClass) - sizeof(ClassSizeMeasurement) -
+                            sizeof(ClassSpec) -
                             sizeof(ClassExtension) - sizeof(ObjectOps)];
 
     /* Class is not native and its map is not a scope. */
@@ -614,6 +635,10 @@ struct Class
 
     bool isCallable() const {
         return this == js::FunctionClassPtr || call;
+    }
+
+    bool isProxy() const {
+        return flags & JSCLASS_IS_PROXY;
     }
 
     static size_t offsetOfFlags() { return offsetof(Class, flags); }

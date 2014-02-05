@@ -291,8 +291,8 @@ class IonBuilder : public MIRGenerator
     // linking each break to the new block.
     MBasicBlock *createBreakCatchBlock(DeferredEdge *edge, jsbytecode *pc);
 
-    // Finishes loops that do not actually loop, containing only breaks or
-    // returns.
+    // Finishes loops that do not actually loop, containing only breaks and
+    // returns or a do while loop with a condition that is constant false.
     ControlStatus processBrokenLoop(CFGState &state);
 
     // Computes loop phis, places them in all successors of a loop, then
@@ -462,10 +462,21 @@ class IonBuilder : public MIRGenerator
                                        MDefinition *index,
                                        MDefinition **indexAsByteOffset,
                                        TypeRepresentationSet objTypeReprs);
+    bool pushDerivedTypedObject(bool *emitted,
+                                MDefinition *obj,
+                                MDefinition *offset,
+                                TypeRepresentationSet derivedTypeReprs,
+                                MDefinition *derivedTypeObj);
+    bool pushScalarLoadFromTypedObject(bool *emitted,
+                                       MDefinition *obj,
+                                       MDefinition *offset,
+                                       ScalarTypeRepresentation* type);
 
     // jsop_setelem() helpers.
-    bool setElemTryTyped(bool *emitted, MDefinition *object,
+    bool setElemTryTypedArray(bool *emitted, MDefinition *object,
                          MDefinition *index, MDefinition *value);
+    bool setElemTryTypedObject(bool *emitted, MDefinition *obj,
+                               MDefinition *index, MDefinition *value);
     bool setElemTryTypedStatic(bool *emitted, MDefinition *object,
                                MDefinition *index, MDefinition *value);
     bool setElemTryDense(bool *emitted, MDefinition *object,
@@ -474,6 +485,13 @@ class IonBuilder : public MIRGenerator
                              MDefinition *index, MDefinition *value);
     bool setElemTryCache(bool *emitted, MDefinition *object,
                          MDefinition *index, MDefinition *value);
+    bool setElemTryScalarPropOfTypedObject(bool *emitted,
+                                           MDefinition *obj,
+                                           MDefinition *index,
+                                           TypeRepresentationSet objTypeReprs,
+                                           MDefinition *value,
+                                           TypeRepresentationSet elemTypeReprs,
+                                           size_t elemSize);
 
     // jsop_getelem() helpers.
     bool getElemTryDense(bool *emitted, MDefinition *obj, MDefinition *index);

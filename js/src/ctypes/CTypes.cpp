@@ -1053,7 +1053,7 @@ InitInt64Class(JSContext* cx,
                const JSFunctionSpec* static_fs)
 {
   // Init type class and constructor
-  RootedObject prototype(cx, JS_InitClass(cx, parent, nullptr, clasp, construct,
+  RootedObject prototype(cx, JS_InitClass(cx, parent, js::NullPtr(), clasp, construct,
                                           0, nullptr, fs, nullptr, static_fs));
   if (!prototype)
     return nullptr;
@@ -4820,10 +4820,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
         return false;
 
       RootedObject fieldType(cx, nullptr);
-      JSFlatString* flat = ExtractStructField(cx, item, fieldType.address());
-      if (!flat)
-        return false;
-      Rooted<JSStableString*> name(cx, flat->ensureStable(cx));
+      Rooted<JSFlatString*> name(cx, ExtractStructField(cx, item, fieldType.address()));
       if (!name)
         return false;
       fieldRoots[i] = JS::ObjectValue(*fieldType);
@@ -4837,7 +4834,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
 
       // Add the field to the StructType's 'prototype' property.
       if (!JS_DefineUCProperty(cx, prototype,
-             name->chars().get(), name->length(), JSVAL_VOID,
+             name->chars(), name->length(), JSVAL_VOID,
              StructType::FieldGetter, StructType::FieldSetter,
              JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_PERMANENT))
         return false;
@@ -5182,7 +5179,7 @@ StructType::FieldsArrayGetter(JSContext* cx, JS::CallArgs args)
   }
 
   MOZ_ASSERT(args.rval().isObject());
-  MOZ_ASSERT(JS_IsArrayObject(cx, &args.rval().toObject()));
+  MOZ_ASSERT(JS_IsArrayObject(cx, args.rval()));
   return true;
 }
 

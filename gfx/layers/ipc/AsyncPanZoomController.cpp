@@ -197,6 +197,20 @@ static int32_t gFlingRepaintInterval = 75;
 static float gMinSkateSpeed = 1.0f;
 
 /**
+ * Whether or not to use the estimated paint duration as a factor when projecting
+ * the displayport in the direction of scrolling. If this value is set to false,
+ * a constant 50ms paint time is used; the projection can be scaled as desired
+ * using the gVelocityBias pref below.
+ */
+static bool gUsePaintDuration = true;
+
+/**
+ * How much to adjust the displayport in the direction of scrolling. This value
+ * is multiplied by the velocity and added to the displayport offset.
+ */
+static float gVelocityBias = 1.0f;
+
+/**
  * Duration of a zoom to animation.
  */
 static const TimeDuration ZOOM_TO_DURATION = TimeDuration::FromSeconds(0.25);
@@ -385,6 +399,8 @@ AsyncPanZoomController::InitializeGlobalState()
   Preferences::AddIntVarCache(&gPanRepaintInterval, "apz.pan_repaint_interval", gPanRepaintInterval);
   Preferences::AddIntVarCache(&gFlingRepaintInterval, "apz.fling_repaint_interval", gFlingRepaintInterval);
   Preferences::AddFloatVarCache(&gMinSkateSpeed, "apz.min_skate_speed", gMinSkateSpeed);
+  Preferences::AddBoolVarCache(&gUsePaintDuration, "apz.use_paint_duration", gUsePaintDuration);
+  Preferences::AddFloatVarCache(&gVelocityBias, "apz.velocity_bias", gVelocityBias);
   Preferences::AddIntVarCache(&gContentResponseTimeout, "apz.content_response_timeout", gContentResponseTimeout);
   Preferences::AddIntVarCache(&gNumPaintDurationSamples, "apz.num_paint_duration_samples", gNumPaintDurationSamples);
   Preferences::AddFloatVarCache(&gTouchStartTolerance, "apz.touch_start_tolerance", gTouchStartTolerance);
@@ -495,7 +511,7 @@ AsyncPanZoomController::IsDestroyed()
 /* static */float
 AsyncPanZoomController::GetTouchStartTolerance()
 {
-  return gTouchStartTolerance;
+  return (gTouchStartTolerance * APZCTreeManager::GetDPI());
 }
 
 /* static */AsyncPanZoomController::AxisLockMode AsyncPanZoomController::GetAxisLockMode()
@@ -652,7 +668,7 @@ nsEventStatus AsyncPanZoomController::OnTouchMove(const MultiTouchInput& aEvent)
       return nsEventStatus_eIgnore;
 
     case TOUCHING: {
-      float panThreshold = gTouchStartTolerance * APZCTreeManager::GetDPI();
+      float panThreshold = GetTouchStartTolerance();
       UpdateWithTouchAtDevicePoint(aEvent);
 
       if (PanDistance() < panThreshold) {
@@ -853,17 +869,8 @@ nsEventStatus AsyncPanZoomController::OnScale(const PinchGestureInput& aEvent) {
 
 nsEventStatus AsyncPanZoomController::OnScaleEnd(const PinchGestureInput& aEvent) {
   APZC_LOG("%p got a scale-end in state %d\n", this, mState);
-  // When a pinch ends, it might either turn into a pan (if only one finger
-  // was lifted) or not (if both fingers were lifted). GestureEventListener
-  // sets mCurrentSpan to a negative value in the latter case, and sets
-  // mFocusPoint to the remaining touch point in the former case.
-  if (aEvent.mCurrentSpan >= 0) {
-    SetState(PANNING);
-    mX.StartTouch(aEvent.mFocusPoint.x);
-    mY.StartTouch(aEvent.mFocusPoint.y);
-  } else {
-    SetState(NOTHING);
-  }
+
+  SetState(NOTHING);
 
   {
     ReentrantMonitorAutoEnter lock(mMonitor);
@@ -1290,8 +1297,12 @@ EnlargeDisplayPortAlongAxis(float* aOutOffset, float* aOutLength,
   *aOutOffset -= (newLength - (*aOutLength)) / 2;
   *aOutLength = newLength;
 
-  // Project the displayport out based on the estimated time it will take to paint
-  *aOutOffset += (aVelocity * aEstimatedPaintDurationMillis);
+  // Project the displayport out based on the estimated time it will take to paint,
+  // if the gUsePaintDuration flag is set. If not, just use a constant 50ms paint
+  // time. Setting the gVelocityBias pref appropriately can cancel this out if so
+  // desired.
+  double paintFactor = (gUsePaintDuration ? aEstimatedPaintDurationMillis : 50.0);
+  *aOutOffset += (aVelocity * paintFactor * gVelocityBias);
 }
 
 /* static */
@@ -1308,6 +1319,15 @@ const CSSRect AsyncPanZoomController::CalculatePendingDisplayPort(
   CSSPoint scrollOffset = aFrameMetrics.mScrollOffset;
   CSSRect displayPort(scrollOffset, compositionBounds.Size());
   CSSPoint velocity = aVelocity / aFrameMetrics.mZoom;
+
+  // If scrolling is disabled here then our actual velocity is going
+  // to be zero, so treat the displayport accordingly.
+  if (aFrameMetrics.GetDisableScrollingX()) {
+    velocity.x = 0;
+  }
+  if (aFrameMetrics.GetDisableScrollingY()) {
+    velocity.y = 0;
+  }
 
   // Enlarge the displayport along both axes depending on how fast we're moving
   // on that axis and how long it takes to paint. Apply some heuristics to try
