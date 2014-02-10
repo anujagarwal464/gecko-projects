@@ -440,7 +440,7 @@ gfxPlatform::Init()
 #endif
 
     gPlatform->mScreenReferenceSurface =
-        gPlatform->CreateOffscreenSurface(gfxIntSize(1,1),
+        gPlatform->CreateOffscreenSurface(IntSize(1, 1),
                                           gfxContentType::COLOR_ALPHA);
     if (!gPlatform->mScreenReferenceSurface) {
         NS_RUNTIMEABORT("Could not initialize mScreenReferenceSurface");
@@ -633,7 +633,7 @@ already_AddRefed<gfxASurface>
 gfxPlatform::OptimizeImage(gfxImageSurface *aSurface,
                            gfxImageFormat format)
 {
-    const gfxIntSize& surfaceSize = aSurface->GetSize();
+    IntSize surfaceSize = aSurface->GetSize().ToIntSize();
 
 #ifdef XP_WIN
     if (gfxWindowsPlatform::GetPlatform()->GetRenderMode() ==
@@ -992,7 +992,7 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
   // CreateOffscreenSurface() and CreateDrawTargetForSurface() for all
   // backends).
   if (aBackend == BackendType::CAIRO) {
-    nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(ThebesIntSize(aSize),
+    nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(aSize,
                                                         ContentForFormat(aFormat));
     if (!surf || surf->CairoStatus()) {
       return nullptr;
@@ -1611,19 +1611,17 @@ gfxPlatform::UseLowPrecisionBuffer()
 float
 gfxPlatform::GetLowPrecisionResolution()
 {
-    static float sLowPrecisionResolution;
+    static int32_t sLowPrecisionResolutionX1000 = 250;
     static bool sLowPrecisionResolutionPrefCached = false;
 
     if (!sLowPrecisionResolutionPrefCached) {
-        int32_t lowPrecisionResolution = 250;
         sLowPrecisionResolutionPrefCached = true;
-        mozilla::Preferences::AddIntVarCache(&lowPrecisionResolution,
+        mozilla::Preferences::AddIntVarCache(&sLowPrecisionResolutionX1000,
                                              "layers.low-precision-resolution",
-                                             250);
-        sLowPrecisionResolution = lowPrecisionResolution / 1000.f;
+                                             sLowPrecisionResolutionX1000);
     }
 
-    return sLowPrecisionResolution;
+    return sLowPrecisionResolutionX1000/1000.f;
 }
 
 bool

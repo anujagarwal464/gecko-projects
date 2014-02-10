@@ -3937,8 +3937,8 @@ DebuggerSource_getIntroductionType(JSContext *cx, unsigned argc, Value *vp)
     THIS_DEBUGSOURCE_REFERENT(cx, argc, vp, "(get introductionOffset)", args, obj, sourceObject);
 
     ScriptSource *ss = sourceObject->source();
-    if (ss->hasIntroducerType()) {
-        JSString *str = js_NewStringCopyZ<CanGC>(cx, ss->introducerType());
+    if (ss->hasIntroductionType()) {
+        JSString *str = js_NewStringCopyZ<CanGC>(cx, ss->introductionType());
         if (!str)
             return false;
         args.rval().setString(str);
@@ -5591,7 +5591,8 @@ IsDeclarative(Env *env)
 static bool
 IsWith(Env *env)
 {
-    return env->is<DebugScopeObject>() && env->as<DebugScopeObject>().scope().is<WithObject>();
+    return env->is<DebugScopeObject>() &&
+           env->as<DebugScopeObject>().scope().is<DynamicWithObject>();
 }
 
 static bool
@@ -5641,7 +5642,7 @@ DebuggerEnv_getObject(JSContext *cx, unsigned argc, Value *vp)
 
     JSObject *obj;
     if (IsWith(env)) {
-        obj = &env->as<DebugScopeObject>().scope().as<WithObject>().object();
+        obj = &env->as<DebugScopeObject>().scope().as<DynamicWithObject>().object();
     } else {
         obj = env;
         JS_ASSERT(!obj->is<DebugScopeObject>());

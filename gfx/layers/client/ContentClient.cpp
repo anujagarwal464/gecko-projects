@@ -63,7 +63,8 @@ ContentClient::CreateContentClient(CompositableForwarder* aForwarder)
   } else
 #endif
   {
-    useDoubleBuffering = LayerManagerComposite::SupportsDirectTexturing() ||
+    useDoubleBuffering = (LayerManagerComposite::SupportsDirectTexturing() &&
+                         backend != LayersBackend::LAYERS_D3D9) ||
                          backend == LayersBackend::LAYERS_BASIC;
   }
 
@@ -293,9 +294,11 @@ ContentClientRemoteBuffer::Updated(const nsIntRegion& aRegionToDraw,
                                                aDidSelfCopy);
 
   MOZ_ASSERT(mTextureClient);
-  mForwarder->UseTexture(this, mTextureClient);
   if (mTextureClientOnWhite) {
-    mForwarder->UseTexture(this, mTextureClientOnWhite);
+    mForwarder->UseComponentAlphaTextures(this, mTextureClient,
+                                          mTextureClientOnWhite);
+  } else {
+    mForwarder->UseTexture(this, mTextureClient);
   }
   mForwarder->UpdateTextureRegion(this,
                                   ThebesBufferData(BufferRect(),

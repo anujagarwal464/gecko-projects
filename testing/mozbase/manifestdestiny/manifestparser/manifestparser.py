@@ -276,7 +276,7 @@ def parse(text, **values):
     :rtype: the final value of the expression.
     :raises: :py:exc::ParseError: will be raised if parsing fails.
     """
-    return ExpressionParser(text, values).parse()
+    return ExpressionParser(text, values, strict=True).parse()
 
 
 ### path normalization
@@ -400,6 +400,7 @@ class ManifestParser(object):
     def __init__(self, manifests=(), defaults=None, strict=True):
         self._defaults = defaults or {}
         self.tests = []
+        self.manifest_defaults = {}
         self.strict = strict
         self.rootdir = None
         self.relativeRoot = None
@@ -433,6 +434,7 @@ class ManifestParser(object):
 
         # read the configuration
         sections = read_ini(fp=fp, variables=defaults, strict=self.strict)
+        self.manifest_defaults[filename] = defaults
 
         # get the tests
         for section, data in sections:
@@ -514,7 +516,6 @@ class ManifestParser(object):
 
         # process each file
         for filename in filenames:
-
             # set the per file defaults
             defaults = _defaults.copy()
             here = None

@@ -2844,6 +2844,30 @@
     "extended_statistics_ok": true,
     "description": "PLACES: Number of keywords"
   },
+  "PLACES_BACKUPS_DAYSFROMLAST": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 15,
+    "description": "PLACES: Days from last backup"
+  },
+  "PLACES_BACKUPS_BOOKMARKSTREE_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": 50,
+    "high": 2000,
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "PLACES: Time to build the bookmarks tree"
+  },
+  "PLACES_BACKUPS_TOJSON_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": 50,
+    "high": 2000,
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "PLACES: Time to convert and write the backup"
+  },
   "FENNEC_FAVICONS_COUNT": {
     "expires_in_version": "never",
     "kind": "exponential",
@@ -4335,6 +4359,13 @@
     "high": "20000",
     "n_buckets": 15,
     "description": "Time (ms) for a WAL checkpoint after collecting all measurements."
+  },
+  "CRASH_STORE_COMPRESSED_BYTES": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "1000000",
+    "n_buckets": 202,
+    "description": "Size (in bytes) of the compressed crash store JSON file."
   },
   "PDF_VIEWER_USED": {
     "expires_in_version": "never",

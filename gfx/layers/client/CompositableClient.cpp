@@ -17,6 +17,9 @@
 #include "gfxWindowsPlatform.h"
 #include "gfx2DGlue.h"
 #endif
+#ifdef MOZ_X11
+#include "mozilla/layers/TextureClientX11.h"
+#endif
 
 using namespace mozilla::gfx;
 
@@ -204,14 +207,24 @@ CompositableClient::CreateTextureClientForDrawing(SurfaceFormat aFormat,
   if (parentBackend == LayersBackend::LAYERS_D3D9 &&
       !GetForwarder()->ForwardsToDifferentProcess() &&
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
-    // non-DIB textures don't work with alpha, see notes in TextureD3D9.
-    if (ContentForFormat(aFormat) != gfxContentType::COLOR) {
+    if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
       result = new DIBTextureClientD3D9(aFormat, aTextureFlags);
     } else {
       result = new CairoTextureClientD3D9(aFormat, aTextureFlags);
     }
   }
 #endif
+
+#ifdef MOZ_X11
+  LayersBackend parentBackend = GetForwarder()->GetCompositorBackendType();
+  if (parentBackend == LayersBackend::LAYERS_BASIC &&
+      gfxPlatform::GetPlatform()->ScreenReferenceSurface()->GetType() == gfxSurfaceType::Xlib &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK))
+  {
+    result = new TextureClientX11(aFormat, aTextureFlags);
+  }
+#endif
+
   // Can't do any better than a buffer texture client.
   if (!result) {
     result = CreateBufferTextureClient(aFormat, aTextureFlags);
