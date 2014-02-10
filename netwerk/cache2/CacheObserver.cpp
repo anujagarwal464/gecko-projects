@@ -23,7 +23,7 @@ CacheObserver* CacheObserver::sSelf = nullptr;
 static uint32_t const kDefaultMemoryLimit = 50 * 1024; // 50 MB
 uint32_t CacheObserver::sMemoryLimit = kDefaultMemoryLimit;
 
-static uint32_t const kDefaultUseNewCache = 1; // Use the new cache by default
+static uint32_t const kDefaultUseNewCache = 0; // Don't use the new cache by default
 uint32_t CacheObserver::sUseNewCache = kDefaultUseNewCache;
 
 static int32_t const kDefaultHalfLifeExperiment = -1; // Disabled
