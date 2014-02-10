@@ -230,6 +230,25 @@ CompositableParentManager::ReceiveCompositableUpdate(const CompositableOperation
 
       if (IsAsync()) {
         ScheduleComposition(op);
+        // Async layer updates don't trigger invalidation, manually tell the layer
+        // that its content have changed.
+        if (compositable->GetLayer()) {
+          compositable->GetLayer()->SetInvalidRectToVisibleRegion();
+        }
+      }
+      break;
+    }
+    case CompositableOperation::TOpUseComponentAlphaTextures: {
+      const OpUseComponentAlphaTextures& op = aEdit.get_OpUseComponentAlphaTextures();
+      CompositableHost* compositable = AsCompositable(op);
+      RefPtr<TextureHost> texOnBlack = TextureHost::AsTextureHost(op.textureOnBlackParent());
+      RefPtr<TextureHost> texOnWhite = TextureHost::AsTextureHost(op.textureOnWhiteParent());
+
+      MOZ_ASSERT(texOnBlack && texOnWhite);
+      compositable->UseComponentAlphaTextures(texOnBlack, texOnWhite);
+
+      if (IsAsync()) {
+        ScheduleComposition(op);
       }
       break;
     }

@@ -8,10 +8,12 @@ package org.mozilla.gecko.webapp;
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoProfile;
+import org.mozilla.gecko.favicons.decoders.FaviconDecoder;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.ActivityResultHandler;
 import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.GeckoEventListener;
+import org.mozilla.gecko.util.GeckoEventResponder;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.WebAppAllocator;
 
@@ -20,24 +22,30 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.util.Log;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-public class EventListener implements GeckoEventListener {
+public class EventListener implements GeckoEventListener, GeckoEventResponder {
 
     private static final String LOGTAG = "GeckoWebAppEventListener";
 
     private EventListener() { }
 
     private static EventListener mEventListener;
+    private String mCurrentResponse = "";
 
     private static EventListener getEventListener() {
         if (mEventListener == null) {
@@ -60,6 +68,7 @@ public class EventListener implements GeckoEventListener {
         registerEventListener("WebApps:PostInstall");
         registerEventListener("WebApps:Open");
         registerEventListener("WebApps:Uninstall");
+        registerEventListener("WebApps:GetApkVersions");
     }
 
     public static void unregisterEvents() {
@@ -68,6 +77,7 @@ public class EventListener implements GeckoEventListener {
         unregisterEventListener("WebApps:PostInstall");
         unregisterEventListener("WebApps:Open");
         unregisterEventListener("WebApps:Uninstall");
+        unregisterEventListener("WebApps:GetApkVersions");
     }
 
     @Override
@@ -95,10 +105,26 @@ public class EventListener implements GeckoEventListener {
                 GeckoAppShell.getGeckoInterface().getActivity().startActivity(intent);
             } else if (!AppConstants.MOZ_ANDROID_SYNTHAPKS && event.equals("WebApps:Uninstall")) {
                 uninstallWebApp(message.getString("origin"));
+            } else if (!AppConstants.MOZ_ANDROID_SYNTHAPKS && event.equals("WebApps:PreInstall")) {
+                String name = message.getString("name");
+                String manifestURL = message.getString("manifestURL");
+                String origin = message.getString("origin");
+
+                // preInstallWebapp will return a File object pointing to the profile directory of the webapp
+                mCurrentResponse = preInstallWebApp(name, manifestURL, origin).toString();
+            } else if (event.equals("WebApps:GetApkVersions")) {
+                mCurrentResponse = getApkVersions(GeckoAppShell.getGeckoInterface().getActivity(),
+                                                  message.getJSONArray("packageNames")).toString();
             }
         } catch (Exception e) {
             Log.e(LOGTAG, "Exception handling message \"" + event + "\":", e);
         }
+    }
+
+    public String getResponse(JSONObject origMessage) {
+        String res = mCurrentResponse;
+        mCurrentResponse = "";
+        return res;
     }
 
     // Not used by MOZ_ANDROID_SYNTHAPKS.
@@ -114,7 +140,9 @@ public class EventListener implements GeckoEventListener {
         int index = allocator.getIndexForApp(aOriginalOrigin);
 
         assert aIconURL != null;
-        Bitmap icon = BitmapUtils.getBitmapFromDataURI(aIconURL);
+
+        final int preferredSize = GeckoAppShell.getPreferredIconSize();
+        Bitmap icon = FaviconDecoder.getMostSuitableBitmapFromDataURI(aIconURL, preferredSize);
 
         assert aOrigin != null && index != -1;
         allocator.updateAppAllocation(aOrigin, index, icon);
@@ -189,11 +217,17 @@ public class EventListener implements GeckoEventListener {
         filter.addDataScheme("package");
         context.registerReceiver(receiver, filter);
 
-        // Now call the package installer.
         File file = new File(filePath);
+        if (!file.exists()) {
+            Log.wtf(LOGTAG, "APK file doesn't exist at path " + filePath);
+            // TODO: propagate the error back to the mozApps.install caller.
+            return;
+        }
+
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(Uri.fromFile(file), "application/vnd.android.package-archive");
 
+        // Now call the package installer.
         GeckoAppShell.sActivityHelper.startIntentForActivity(context, intent, new ActivityResultHandler() {
             @Override
             public void onActivityResult(int resultCode, Intent data) {
@@ -213,5 +247,41 @@ public class EventListener implements GeckoEventListener {
                 }
             }
         });
+    }
+
+    private static final int DEFAULT_VERSION_CODE = -1;
+
+    public static JSONObject getApkVersions(Activity context, JSONArray packageNames) {
+        Set<String> packageNameSet = new HashSet<String>();
+        for (int i = 0; i < packageNames.length(); i++) {
+            try {
+                packageNameSet.add(packageNames.getString(i));
+            } catch (JSONException e) {
+                Log.w(LOGTAG, "exception populating settings item", e);
+            }
+        }
+
+        final PackageManager pm = context.getPackageManager();
+        List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+
+        JSONObject jsonMessage = new JSONObject();
+
+        for (ApplicationInfo app : apps) {
+            if (packageNameSet.contains(app.packageName)) {
+                int versionCode = DEFAULT_VERSION_CODE;
+                try {
+                    versionCode = pm.getPackageInfo(app.packageName, 0).versionCode;
+                } catch (PackageManager.NameNotFoundException e) {
+                    Log.e(LOGTAG, "couldn't get version for app " + app.packageName, e);
+                }
+                try {
+                    jsonMessage.put(app.packageName, versionCode);
+                } catch (JSONException e) {
+                    Log.e(LOGTAG, "unable to store version code field for app " + app.packageName, e);
+                }
+            }
+        }
+
+        return jsonMessage;
     }
 }

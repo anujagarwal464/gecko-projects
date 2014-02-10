@@ -38,6 +38,8 @@ class AbstractMediaDecoder;
 
 class GStreamerReader : public MediaDecoderReader
 {
+  typedef gfx::IntRect IntRect;
+
 public:
   GStreamerReader(AbstractMediaDecoder* aDecoder);
   virtual ~GStreamerReader();
@@ -136,6 +138,23 @@ private:
   static void EosCb(GstAppSink* aSink, gpointer aUserData);
   void Eos();
 
+  /* Called when an element is added inside playbin. We use it to find the
+   * decodebin instance.
+   */
+  static void PlayElementAddedCb(GstBin *aBin, GstElement *aElement,
+                                 gpointer *aUserData);
+
+  /* Called during decoding, to decide whether a (sub)stream should be decoded or
+   * ignored */
+  static bool ShouldAutoplugFactory(GstElementFactory* aFactory, GstCaps* aCaps);
+
+  /* Called by decodebin during autoplugging. We use it to apply our
+   * container/codec whitelist.
+   */
+  static GValueArray* AutoplugSortCb(GstElement* aElement,
+                                     GstPad* aPad, GstCaps* aCaps,
+                                     GValueArray* aFactories);
+
   // Try to find MP3 headers in this stream using our MP3 frame parser.
   nsresult ParseMP3Headers();
 
@@ -162,7 +181,7 @@ private:
   /* the actual audio app sink */
   GstAppSink* mAudioAppSink;
   GstVideoFormat mFormat;
-  nsIntRect mPicture;
+  IntRect mPicture;
   int mVideoSinkBufferCount;
   int mAudioSinkBufferCount;
   GstAppSrcCallbacks mSrcCallbacks;

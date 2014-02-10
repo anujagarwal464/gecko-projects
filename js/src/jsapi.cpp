@@ -615,6 +615,10 @@ JS_ShutDown(void)
     }
 #endif
 
+#ifdef JS_THREADSAFE
+    WorkerThreadState().finish();
+#endif
+
     PRMJ_NowShutdown();
 
 #if EXPOSE_INTL_API
@@ -1302,7 +1306,9 @@ JS_ResolveStandardClass(JSContext *cx, HandleObject obj, HandleId id, bool *reso
         if (stdnm->clasp->flags & JSCLASS_IS_ANONYMOUS)
             return true;
 
-        if (!obj->as<GlobalObject>().ensureConstructor(cx, JSCLASS_CACHED_PROTO_KEY(stdnm->clasp)))
+        Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
+        JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(stdnm->clasp);
+        if (!GlobalObject::ensureConstructor(cx, global, key))
             return false;
 
         *resolved = true;
@@ -4308,6 +4314,10 @@ JS::ReadOnlyCompileOptions::copyPODOptions(const ReadOnlyCompileOptions &rhs)
     werrorOption = rhs.werrorOption;
     asmJSOption = rhs.asmJSOption;
     sourcePolicy = rhs.sourcePolicy;
+    introductionType = rhs.introductionType;
+    introductionLineno = rhs.introductionLineno;
+    introductionOffset = rhs.introductionOffset;
+    hasIntroductionInfo = rhs.hasIntroductionInfo;
 }
 
 JSPrincipals *
@@ -4334,6 +4344,7 @@ JS::OwningCompileOptions::~OwningCompileOptions()
     // OwningCompileOptions always owns these, so these casts are okay.
     js_free(const_cast<char *>(filename_));
     js_free(const_cast<jschar *>(sourceMapURL_));
+    js_free(const_cast<char *>(introducerFilename_));
 }
 
 bool
@@ -4344,9 +4355,11 @@ JS::OwningCompileOptions::copy(JSContext *cx, const ReadOnlyCompileOptions &rhs)
     setPrincipals(rhs.principals());
     setOriginPrincipals(rhs.originPrincipals());
     setElement(rhs.element());
+    setElementAttributeName(rhs.elementAttributeName());
 
     return (setFileAndLine(cx, rhs.filename(), rhs.lineno) &&
-            setSourceMapURL(cx, rhs.sourceMapURL()));
+            setSourceMapURL(cx, rhs.sourceMapURL()) &&
+            setIntroducerFilename(cx, rhs.introducerFilename()));
 }
 
 bool
@@ -4390,6 +4403,23 @@ JS::OwningCompileOptions::setSourceMapURL(JSContext *cx, const jschar *s)
     js_free(const_cast<jschar *>(sourceMapURL_));
 
     sourceMapURL_ = copy;
+    return true;
+}
+
+bool
+JS::OwningCompileOptions::setIntroducerFilename(JSContext *cx, const char *s)
+{
+    char *copy = nullptr;
+    if (s) {
+        copy = JS_strdup(cx, s);
+        if (!copy)
+            return false;
+    }
+
+    // OwningCompileOptions always owns introducerFilename_, so this cast is okay.
+    js_free(const_cast<char *>(introducerFilename_));
+
+    introducerFilename_ = copy;
     return true;
 }
 
@@ -4529,7 +4559,7 @@ JS::FinishOffThreadScript(JSContext *maybecx, JSRuntime *rt, void *token)
     if (maybecx)
         lfc.construct(maybecx);
 
-    return rt->workerThreadState->finishParseTask(maybecx, rt, token);
+    return WorkerThreadState().finishParseTask(maybecx, rt, token);
 #else
     MOZ_ASSUME_UNREACHABLE("Off thread compilation is not available.");
 #endif
