@@ -6,6 +6,12 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+// Log on level :5, instead of default :4.
+#undef LOG
+#define LOG(args) LOG5(args)
+#undef LOG_ENABLED
+#define LOG_ENABLED() LOG5_ENABLED()
+
 #include "nsHttpConnectionMgr.h"
 #include "nsHttpConnection.h"
 #include "nsHttpPipeline.h"
@@ -66,6 +72,7 @@ nsHttpConnectionMgr::nsHttpConnectionMgr()
     , mNumHalfOpenConns(0)
     , mTimeOfNextWakeUp(UINT64_MAX)
     , mTimeoutTickArmed(false)
+    , mTimeoutTickNext(1)
 {
     LOG(("Creating nsHttpConnectionMgr @%x\n", this));
 }
@@ -2439,8 +2446,14 @@ nsHttpConnectionMgr::ActivateTimeoutTick()
     // Upon running the tick will rearm itself if there are active
     // connections available.
 
-    if (mTimeoutTick && mTimeoutTickArmed)
+    if (mTimeoutTick && mTimeoutTickArmed) {
+        // make sure we get one iteration on a quick tick
+        if (mTimeoutTickNext > 1) {
+            mTimeoutTickNext = 1;
+            mTimeoutTick->SetDelay(1000);
+        }
         return;
+    }
 
     if (!mTimeoutTick) {
         mTimeoutTick = do_CreateInstance(NS_TIMER_CONTRACTID);
@@ -2462,10 +2475,16 @@ nsHttpConnectionMgr::TimeoutTick()
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
     MOZ_ASSERT(mTimeoutTick, "no readtimeout tick");
 
-    LOG(("nsHttpConnectionMgr::TimeoutTick active=%d\n",
-         mNumActiveConns));
-
+    LOG(("nsHttpConnectionMgr::TimeoutTick active=%d\n", mNumActiveConns));
+    // The next tick will be between 1 second and 1 hr
+    // Set it to the max value here, and the TimeoutTickCB()s can
+    // reduce it to their local needs.
+    mTimeoutTickNext = 3600; // 1hr
     mCT.Enumerate(TimeoutTickCB, this);
+    if (mTimeoutTick) {
+        mTimeoutTickNext = std::max(mTimeoutTickNext, 1U);
+        mTimeoutTick->SetDelay(mTimeoutTickNext * 1000);
+    }
 }
 
 PLDHashOperator
@@ -2480,8 +2499,10 @@ nsHttpConnectionMgr::TimeoutTickCB(const nsACString &key,
 
     // first call the tick handler for each active connection
     PRIntervalTime now = PR_IntervalNow();
-    for (uint32_t index = 0; index < ent->mActiveConns.Length(); ++index)
-        ent->mActiveConns[index]->ReadTimeoutTick(now);
+    for (uint32_t index = 0; index < ent->mActiveConns.Length(); ++index) {
+        uint32_t connNextTimeout =  ent->mActiveConns[index]->ReadTimeoutTick(now);
+        self->mTimeoutTickNext = std::min(self->mTimeoutTickNext, connNextTimeout);
+    }
 
     // now check for any stalled half open sockets
     if (ent->mHalfOpens.Length()) {
@@ -2513,7 +2534,9 @@ nsHttpConnectionMgr::TimeoutTickCB(const nsACString &key,
             }
         }
     }
-
+    if (ent->mHalfOpens.Length()) {
+        self->mTimeoutTickNext = 1;
+    }
     return PL_DHASH_NEXT;
 }
 
@@ -2600,7 +2623,8 @@ nsHttpConnectionMgr::OnMsgSpeculativeConnect(int32_t, void *param)
     }
 
     if (mNumHalfOpenConns < parallelSpeculativeConnectLimit &&
-        (ignoreIdle || !ent->mIdleConns.Length()) &&
+        ((ignoreIdle && (ent->mIdleConns.Length() < parallelSpeculativeConnectLimit)) ||
+         !ent->mIdleConns.Length()) &&
         !RestrictConnections(ent, ignorePossibleSpdyConnections) &&
         !AtActiveConnectionLimit(ent, args->mTrans->Caps())) {
         CreateTransport(ent, args->mTrans, args->mTrans->Caps(), true);

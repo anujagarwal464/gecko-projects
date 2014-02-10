@@ -165,6 +165,7 @@
 #include "nsIDOMHTMLElement.h"
 #include "nsIDragSession.h"
 #include "nsIFrameInlines.h"
+#include "mozilla/gfx/2D.h"
 
 #ifdef ANDROID
 #include "nsIDocShellTreeOwner.h"
@@ -176,7 +177,9 @@
 using namespace mozilla;
 using namespace mozilla::css;
 using namespace mozilla::dom;
+using namespace mozilla::gfx;
 using namespace mozilla::layers;
+using namespace mozilla::gfx;
 
 CapturingContentInfo nsIPresShell::gCaptureInfo =
   { false /* mAllowed */, false /* mPointerLock */, false /* mRetargetToElement */,
@@ -1056,6 +1059,11 @@ PresShell::Destroy()
     mReflowContinueTimer = nullptr;
   }
 
+  if (mDelayedPaintTimer) {
+    mDelayedPaintTimer->Cancel();
+    mDelayedPaintTimer = nullptr;
+  }
+
   mSynthMouseMoveEvent.Revoke();
 
   mUpdateImageVisibilityEvent.Revoke();
@@ -1173,6 +1181,8 @@ PresShell::Destroy()
   }
 
   mHaveShutDown = true;
+
+  EvictTouches();
 }
 
 void
@@ -3541,9 +3551,41 @@ PresShell::GetRectVisibility(nsIFrame* aFrame,
   return nsRectVisibility_kVisible;
 }
 
-void
-PresShell::ScheduleViewManagerFlush()
+class PaintTimerCallBack MOZ_FINAL : public nsITimerCallback
 {
+public:
+  PaintTimerCallBack(PresShell* aShell) : mShell(aShell) {}
+
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHODIMP Notify(nsITimer* aTimer) MOZ_FINAL
+  {
+    mShell->SetNextPaintCompressed();
+    mShell->AddInvalidateHiddenPresShellObserver(mShell->GetPresContext()->RefreshDriver());
+    mShell->ScheduleViewManagerFlush();
+    return NS_OK;
+  }
+
+private:
+  PresShell* mShell;
+};
+
+NS_IMPL_ISUPPORTS1(PaintTimerCallBack, nsITimerCallback)
+
+void
+PresShell::ScheduleViewManagerFlush(PaintType aType)
+{
+  if (aType == PAINT_DELAYED_COMPRESS) {
+    // Delay paint for 1 second.
+    static const uint32_t kPaintDelayPeriod = 1000;
+    if (!mDelayedPaintTimer) {
+      mDelayedPaintTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+      nsRefPtr<PaintTimerCallBack> cb = new PaintTimerCallBack(this);
+      mDelayedPaintTimer->InitWithCallback(cb, kPaintDelayPeriod, nsITimer::TYPE_ONE_SHOT);
+    }
+    return;
+  }
+
   nsPresContext* presContext = GetPresContext();
   if (presContext) {
     presContext->RefreshDriver()->ScheduleViewManagerFlush();
@@ -4761,7 +4803,7 @@ PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
     // use the nearest ancestor frame that includes all continuations as the
     // root for building the display list
     while (ancestorFrame &&
-           nsLayoutUtils::GetNextContinuationOrSpecialSibling(ancestorFrame))
+           nsLayoutUtils::GetNextContinuationOrIBSplitSibling(ancestorFrame))
       ancestorFrame = ancestorFrame->GetParent();
   }
 
@@ -4809,7 +4851,7 @@ PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
   return info;
 }
 
-already_AddRefed<gfxASurface>
+TemporaryRef<SourceSurface>
 PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
                                nsISelection* aSelection,
                                nsIntRegion* aRegion,
@@ -4878,8 +4920,14 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   context.Rectangle(gfxRect(0, 0, pixelArea.width, pixelArea.height));
   context.Fill();
 
+
+  RefPtr<DrawTarget> dt =
+    gfxPlatform::GetPlatform()->
+      CreateDrawTargetForSurface(surface, gfx::IntSize(pixelArea.width, pixelArea.height));
+
+  nsRefPtr<gfxContext> ctx = new gfxContext(dt);
   nsRefPtr<nsRenderingContext> rc = new nsRenderingContext();
-  rc->Init(deviceContext, surface);
+  rc->Init(deviceContext, ctx);
 
   if (aRegion) {
     // Convert aRegion from CSS pixels to dev pixels
@@ -4927,10 +4975,10 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   // restore the old selection display state
   frameSelection->SetDisplaySelection(oldDisplaySelection);
 
-  return surface.forget();
+  return dt->Snapshot();
 }
 
-already_AddRefed<gfxASurface>
+TemporaryRef<SourceSurface>
 PresShell::RenderNode(nsIDOMNode* aNode,
                       nsIntRegion* aRegion,
                       nsIntPoint& aPoint,
@@ -4976,7 +5024,7 @@ PresShell::RenderNode(nsIDOMNode* aNode,
                              aScreenRect);
 }
 
-already_AddRefed<gfxASurface>
+TemporaryRef<SourceSurface>
 PresShell::RenderSelection(nsISelection* aSelection,
                            nsIntPoint& aPoint,
                            nsIntRect* aScreenRect)
@@ -5800,7 +5848,8 @@ PresShell::Paint(nsView*        aViewToPaint,
       layerManager->BeginTransaction();
     }
 
-    if (!(frame->GetStateBits() & NS_FRAME_UPDATE_LAYER_TREE)) {
+    if (!(frame->GetStateBits() & NS_FRAME_UPDATE_LAYER_TREE) &&
+        !mNextPaintCompressed) {
       NotifySubDocInvalidationFunc computeInvalidFunc =
         presContext->MayHavePaintEventListenerInSubDocument() ? nsPresContext::NotifySubDocInvalidation : 0;
       bool computeInvalidRect = computeInvalidFunc ||
@@ -5850,6 +5899,10 @@ PresShell::Paint(nsView*        aViewToPaint,
   uint32_t flags = nsLayoutUtils::PAINT_WIDGET_LAYERS | nsLayoutUtils::PAINT_EXISTING_TRANSACTION;
   if (!(aFlags & PAINT_COMPOSITE)) {
     flags |= nsLayoutUtils::PAINT_NO_COMPOSITE;
+  }
+  if (mNextPaintCompressed) {
+    flags |= nsLayoutUtils::PAINT_COMPRESSED;
+    mNextPaintCompressed = false;
   }
 
   if (frame) {
@@ -6126,40 +6179,37 @@ PresShell::RecordMouseLocation(WidgetGUIEvent* aEvent)
 }
 
 static void
-EvictTouchPoint(nsRefPtr<dom::Touch>& aTouch)
+EvictTouchPoint(nsRefPtr<dom::Touch>& aTouch,
+                nsIDocument* aLimitToDocument = nullptr)
 {
-  nsIWidget *widget = nullptr;
-  // is there an easier/better way to dig out the widget?
   nsCOMPtr<nsINode> node(do_QueryInterface(aTouch->mTarget));
-  if (!node) {
-    return;
+  if (node) {
+    nsIDocument* doc = node->GetCurrentDoc();
+    if (doc && (!aLimitToDocument || aLimitToDocument == doc)) {
+      nsIPresShell* presShell = doc->GetShell();
+      if (presShell) {
+        nsIFrame* frame = presShell->GetRootFrame();
+        if (frame) {
+          nsPoint pt(aTouch->mRefPoint.x, aTouch->mRefPoint.y);
+          nsCOMPtr<nsIWidget> widget = frame->GetView()->GetNearestWidget(&pt);
+          if (widget) {
+            WidgetTouchEvent event(true, NS_TOUCH_END, widget);
+            event.widget = widget;
+            event.time = PR_IntervalNow();
+            event.touches.AppendElement(aTouch);
+            nsEventStatus status;
+            widget->DispatchEvent(&event, status);
+            return;
+          }
+        }
+      }
+    }
   }
-  nsIDocument* doc = node->GetCurrentDoc();
-  if (!doc) {
-    return;
+  if (!node || !aLimitToDocument || node->OwnerDoc() == aLimitToDocument) {
+    // We couldn't dispatch touchend. Remove the touch from gCaptureTouchList
+    // explicitly.
+    nsIPresShell::gCaptureTouchList->Remove(aTouch->Identifier());
   }
-  nsIPresShell *presShell = doc->GetShell();
-  if (!presShell) {
-    return;
-  }
-  nsIFrame* frame = presShell->GetRootFrame();
-  if (!frame) {
-    return;
-  }
-  nsPoint pt(aTouch->mRefPoint.x, aTouch->mRefPoint.y);
-  widget = frame->GetView()->GetNearestWidget(&pt);
-
-  if (!widget) {
-    return;
-  }
-  
-  WidgetTouchEvent event(true, NS_TOUCH_END, widget);
-  event.widget = widget;
-  event.time = PR_IntervalNow();
-  event.touches.AppendElement(aTouch);
-
-  nsEventStatus status;
-  widget->DispatchEvent(&event, status);
 }
 
 static PLDHashOperator
@@ -6170,6 +6220,16 @@ AppendToTouchList(const uint32_t& aKey, nsRefPtr<dom::Touch>& aData, void *aTouc
   aData->mChanged = false;
   touches->AppendElement(aData);
   return PL_DHASH_NEXT;
+}
+
+void
+PresShell::EvictTouches()
+{
+  nsTArray< nsRefPtr<dom::Touch> > touches;
+  gCaptureTouchList->Enumerate(&AppendToTouchList, &touches);
+  for (uint32_t i = 0; i < touches.Length(); ++i) {
+    EvictTouchPoint(touches[i], mDocument);
+  }
 }
 
 static PLDHashOperator
@@ -8864,7 +8924,7 @@ DumpToPNG(nsIPresShell* shell, nsAString& name) {
 
   nsRefPtr<gfxASurface> surface = 
     gfxPlatform::GetPlatform()->
-    CreateOffscreenSurface(gfxIntSize(width, height),
+    CreateOffscreenSurface(IntSize(width, height),
       gfxASurface::ContentFromFormat(gfxImageFormat::ARGB32));
   NS_ENSURE_TRUE(surface, NS_ERROR_OUT_OF_MEMORY);
 

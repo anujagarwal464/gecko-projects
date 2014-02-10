@@ -5,6 +5,7 @@
 from __future__ import print_function, unicode_literals
 
 import os
+import re
 import subprocess
 
 from mach.decorators import (
@@ -19,7 +20,7 @@ from mozbuild.base import (
 
 
 def is_valgrind_build(cls):
-    """Must be a build with --enable-valgrind and --disable-jemalloc."""
+    '''Must be a build with --enable-valgrind and --disable-jemalloc.'''
     defines = cls.config_environment.defines
     return 'MOZ_VALGRIND' in defines and 'MOZ_MEMORY' not in defines
 
@@ -52,6 +53,7 @@ class MachCommands(MachCommandBase):
         from mozprofile.permissions import ServerLocations
         from mozrunner import FirefoxRunner
         from mozrunner.utils import findInPath
+        from valgrind.output_handler import OutputHandler
 
         build_dir = os.path.join(self.topsrcdir, 'build')
 
@@ -91,13 +93,15 @@ class MachCommands(MachCommandBase):
             env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
             env['XPCOM_DEBUG_BREAK'] = 'warn'
 
+            outputHandler = OutputHandler()
+            kp_kwargs = {'processOutputLine': [outputHandler]}
+
             valgrind = 'valgrind'
             if not os.path.exists(valgrind):
                 valgrind = findInPath(valgrind)
 
             valgrind_args = [
                 valgrind,
-                '--error-exitcode=1',
                 '--smc-check=all-non-file',
                 '--vex-iropt-register-updates=allregs-at-mem-access',
                 '--gen-suppressions=all',
@@ -121,18 +125,34 @@ class MachCommands(MachCommandBase):
             if os.path.isfile(supps_file2):
                 valgrind_args.append('--suppressions=' + supps_file2)
 
+            exitcode = None
             try:
                 runner = FirefoxRunner(profile=profile,
                                        binary=self.get_binary_path(),
                                        cmdargs=firefox_args,
-                                       env=env)
+                                       env=env,
+                                       kp_kwargs=kp_kwargs)
                 runner.start(debug_args=valgrind_args)
-                status = runner.wait()
+                exitcode = runner.wait()
 
             finally:
+                errs = outputHandler.error_count
+                supps = outputHandler.suppression_count
+                if errs != supps:
+                    status = 1  # turns the TBPL job orange
+                    print('TEST-UNEXPECTED-FAILURE | valgrind-test | error parsing:', errs, "errors seen, but", supps, "generated suppressions seen")
+
+                elif errs == 0:
+                    status = 0
+                    print('TEST-PASS | valgrind-test | valgrind found no errors')
+                else:
+                    status = 1  # turns the TBPL job orange
+                    # We've already printed details of the errors.
+
+                if exitcode != 0:
+                    status = 2  # turns the TBPL job red
+                    print('TEST-UNEXPECTED-FAIL | valgrind-test | non-zero exit code from Valgrind')
+
                 httpd.stop()
-                if status != 0:
-                    status = 1 # normalize status, in case it's larger than 127
-                    print('TEST-UNEXPECTED-FAIL | valgrind-test | non-zero exit code')
 
             return status

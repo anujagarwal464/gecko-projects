@@ -1,2 +1,3 @@
-\mfbt/
-\js/
+^mfbt/.*
+^js/.*
+^media/.*

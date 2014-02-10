@@ -30,7 +30,7 @@ class OutOfLineNewArray;
 class OutOfLineNewObject;
 class CheckOverRecursedFailure;
 class CheckOverRecursedFailurePar;
-class OutOfLineCheckInterruptPar;
+class OutOfLineInterruptCheckPar;
 class OutOfLineInterruptCheckImplicit;
 class OutOfLineUnboxFloatingPoint;
 class OutOfLineStoreElementHole;
@@ -87,8 +87,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitTestVAndBranch(LTestVAndBranch *lir);
     bool visitFunctionDispatch(LFunctionDispatch *lir);
     bool visitTypeObjectDispatch(LTypeObjectDispatch *lir);
+    bool visitBooleanToString(LBooleanToString *lir);
+    void emitIntToString(Register input, Register output, Label *ool);
     bool visitIntToString(LIntToString *lir);
     bool visitDoubleToString(LDoubleToString *lir);
+    bool visitPrimitiveToString(LPrimitiveToString *lir);
     bool visitInteger(LInteger *lir);
     bool visitRegExp(LRegExp *lir);
     bool visitRegExpExec(LRegExpExec *lir);
@@ -209,7 +212,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitStringSplit(LStringSplit *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
-    bool visitForkJoinSlice(LForkJoinSlice *lir);
+    bool visitForkJoinContext(LForkJoinContext *lir);
     bool visitGuardThreadExclusive(LGuardThreadExclusive *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
     bool visitCallGetElement(LCallGetElement *lir);
@@ -288,8 +291,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCheckOverRecursedPar(LCheckOverRecursedPar *lir);
     bool visitCheckOverRecursedFailurePar(CheckOverRecursedFailurePar *ool);
 
-    bool visitCheckInterruptPar(LCheckInterruptPar *lir);
-    bool visitOutOfLineCheckInterruptPar(OutOfLineCheckInterruptPar *ool);
+    bool visitInterruptCheckPar(LInterruptCheckPar *lir);
+    bool visitOutOfLineInterruptCheckPar(OutOfLineInterruptCheckPar *ool);
 
     bool visitInterruptCheckImplicit(LInterruptCheckImplicit *ins);
     bool visitOutOfLineInterruptCheckImplicit(OutOfLineInterruptCheckImplicit *ins);
@@ -362,7 +365,7 @@ class CodeGenerator : public CodeGeneratorSpecific
 
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
 
-    bool emitAllocateGCThingPar(LInstruction *lir, const Register &objReg, const Register &sliceReg,
+    bool emitAllocateGCThingPar(LInstruction *lir, const Register &objReg, const Register &cxReg,
                                 const Register &tempReg1, const Register &tempReg2,
                                 JSObject *templateObj);
 

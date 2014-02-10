@@ -161,10 +161,10 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitMaybeToDoubleElement(MMaybeToDoubleElement *ins);
     bool visitLoadSlot(MLoadSlot *ins);
     bool visitFunctionEnvironment(MFunctionEnvironment *ins);
-    bool visitForkJoinSlice(MForkJoinSlice *ins);
+    bool visitForkJoinContext(MForkJoinContext *ins);
     bool visitGuardThreadExclusive(MGuardThreadExclusive *ins);
     bool visitInterruptCheck(MInterruptCheck *ins);
-    bool visitCheckInterruptPar(MCheckInterruptPar *ins);
+    bool visitInterruptCheckPar(MInterruptCheckPar *ins);
     bool visitStoreSlot(MStoreSlot *ins);
     bool visitTypeBarrier(MTypeBarrier *ins);
     bool visitMonitorTypes(MMonitorTypes *ins);

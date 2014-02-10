@@ -66,7 +66,7 @@
 <!ENTITY settings_title "Settings">
 <!ENTITY pref_category_advanced "Advanced">
 <!ENTITY pref_category_customize "Customize">
-<!ENTITY pref_category_search2 "Search settings">
+<!ENTITY pref_category_search3 "Search">
 <!ENTITY pref_category_display "Display">
 <!ENTITY pref_category_privacy_short "Privacy">
 <!ENTITY pref_category_vendor "&vendorShortName;">
@@ -210,6 +210,7 @@ size. -->
 <!ENTITY save_as_pdf "Save as PDF">
 <!ENTITY find_in_page "Find in Page">
 <!ENTITY desktop_mode "Request Desktop Site">
+<!ENTITY page "Page">
 <!ENTITY tools "Tools">
 <!ENTITY new_tab "New Tab">
 <!ENTITY new_private_tab "New Private Tab">

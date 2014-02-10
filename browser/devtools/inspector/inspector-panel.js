@@ -101,6 +101,10 @@ InspectorPanel.prototype = {
     return this._target.client.traits.editOuterHTML;
   },
 
+  get hasUrlToImageDataResolver() {
+    return this._target.client.traits.urlToImageDataResolver;
+  },
+
   _deferredOpen: function(defaultSelection) {
     let deferred = promise.defer();
 
@@ -549,11 +553,13 @@ InspectorPanel.prototype = {
    * Disable the delete item if needed. Update the pseudo classes.
    */
   _setupNodeMenu: function InspectorPanel_setupNodeMenu() {
+    let isSelectionElement = this.selection.isElementNode();
+
     // Set the pseudo classes
     for (let name of ["hover", "active", "focus"]) {
       let menu = this.panelDoc.getElementById("node-menu-pseudo-" + name);
 
-      if (this.selection.isElementNode()) {
+      if (isSelectionElement) {
         let checked = this.selection.nodeFront.hasPseudoClassLock(":" + name);
         menu.setAttribute("checked", checked);
         menu.removeAttribute("disabled");
@@ -575,8 +581,7 @@ InspectorPanel.prototype = {
     let unique = this.panelDoc.getElementById("node-menu-copyuniqueselector");
     let copyInnerHTML = this.panelDoc.getElementById("node-menu-copyinner");
     let copyOuterHTML = this.panelDoc.getElementById("node-menu-copyouter");
-    let selectionIsElement = this.selection.isElementNode();
-    if (selectionIsElement) {
+    if (isSelectionElement) {
       unique.removeAttribute("disabled");
       copyInnerHTML.removeAttribute("disabled");
       copyOuterHTML.removeAttribute("disabled");
@@ -586,11 +591,23 @@ InspectorPanel.prototype = {
       copyOuterHTML.setAttribute("disabled", "true");
     }
 
+    // Enable the "edit HTML" item if the selection is an element and the root
+    // actor has the appropriate trait (isOuterHTMLEditable)
     let editHTML = this.panelDoc.getElementById("node-menu-edithtml");
-    if (this.isOuterHTMLEditable && selectionIsElement) {
+    if (this.isOuterHTMLEditable && isSelectionElement) {
       editHTML.removeAttribute("disabled");
     } else {
       editHTML.setAttribute("disabled", "true");
+    }
+
+    // Enable the "copy image data-uri" item if the selection is previewable
+    // which essentially checks if it's an image or canvas tag
+    let copyImageData = this.panelDoc.getElementById("node-menu-copyimagedatauri");
+    let markupContainer = this.markup.getContainer(this.selection.nodeFront);
+    if (markupContainer && markupContainer.isPreviewable()) {
+      copyImageData.removeAttribute("disabled");
+    } else {
+      copyImageData.setAttribute("disabled", "true");
     }
   },
 
@@ -717,7 +734,19 @@ InspectorPanel.prototype = {
     this._copyLongStr(this.walker.outerHTML(this.selection.nodeFront));
   },
 
-  _copyLongStr: function(promise) {
+  /**
+   * Copy the data-uri for the currently selected image in the clipboard.
+   */
+  copyImageDataUri: function InspectorPanel_copyImageDataUri()
+  {
+    let container = this.markup.getContainer(this.selection.nodeFront);
+    if (container && container.isPreviewable()) {
+      container.copyImageDataUri();
+    }
+  },
+
+  _copyLongStr: function InspectorPanel_copyLongStr(promise)
+  {
     return promise.then(longstr => {
       return longstr.string().then(toCopy => {
         longstr.release().then(null, console.error);

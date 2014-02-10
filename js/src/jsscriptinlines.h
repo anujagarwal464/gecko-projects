@@ -60,8 +60,13 @@ JSScript::functionDelazifying() const
 {
     js::AutoThreadSafeAccess ts(this);
     JS_ASSERT(js::CurrentThreadCanWriteCompilationData());
-    if (function_ && function_->isInterpretedLazy())
+    if (function_ && function_->isInterpretedLazy()) {
         function_->setUnlazifiedScript(const_cast<JSScript *>(this));
+        // If this script has a LazyScript, make sure the LazyScript has a
+        // reference to the script when delazifying its canonical function.
+        if (lazyScript && !lazyScript->maybeScript())
+            lazyScript->initScript(const_cast<JSScript *>(this));
+    }
     return function_;
 }
 
@@ -144,7 +149,7 @@ JSScript::principals()
 }
 
 inline JSFunction *
-JSScript::originalFunction() const {
+JSScript::donorFunction() const {
     if (!isCallsiteClone())
         return nullptr;
     return &enclosingScopeOrOriginalFunction_->as<JSFunction>();

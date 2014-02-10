@@ -12,7 +12,6 @@ contract @mozilla.org/network/protocol/about;1?what=downloads {322ba47e-7047-4f7
 contract @mozilla.org/network/protocol/about;1?what=reader {322ba47e-7047-4f71-aebf-cb7d69325cd9}
 contract @mozilla.org/network/protocol/about;1?what=feedback {322ba47e-7047-4f71-aebf-cb7d69325cd9}
 contract @mozilla.org/network/protocol/about;1?what=privatebrowsing {322ba47e-7047-4f71-aebf-cb7d69325cd9}
-contract @mozilla.org/network/protocol/about;1?what=accounts {322ba47e-7047-4f71-aebf-cb7d69325cd9}
 #ifdef MOZ_SERVICES_HEALTHREPORT
 contract @mozilla.org/network/protocol/about;1?what=healthreport {322ba47e-7047-4f71-aebf-cb7d69325cd9}
 #endif
@@ -106,6 +105,11 @@ component {a78d7e59-b558-4321-a3d6-dffe2f1e76dd} Snippets.js
 contract @mozilla.org/snippets;1 {a78d7e59-b558-4321-a3d6-dffe2f1e76dd}
 category profile-after-change Snippets @mozilla.org/snippets;1
 category update-timer Snippets @mozilla.org/snippets;1,getService,snippets-update-timer,browser.snippets.updateInterval,86400
+
+# WebappsUpdateTimer.js
+component {8f7002cb-e959-4f0a-a2e8-563232564385} WebappsUpdateTimer.js
+contract @mozilla.org/b2g/webapps-update-timer;1 {8f7002cb-e959-4f0a-a2e8-563232564385}
+category update-timer WebappsUpdateTimer @mozilla.org/b2g/webapps-update-timer;1,getService,background-update-timer,browser.webapps.updateInterval,86400
 
 # ColorPicker.js
 component {430b987f-bb9f-46a3-99a5-241749220b29} ColorPicker.js

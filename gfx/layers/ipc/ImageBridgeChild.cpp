@@ -115,6 +115,16 @@ ImageBridgeChild::UseTexture(CompositableClient* aCompositable,
 }
 
 void
+ImageBridgeChild::UseComponentAlphaTextures(CompositableClient* aCompositable,
+                                            TextureClient* aTextureOnBlack,
+                                            TextureClient* aTextureOnWhite)
+{
+  mTxn->AddNoSwapEdit(OpUseComponentAlphaTextures(nullptr, aCompositable->GetIPDLActor(),
+                                                  nullptr, aTextureOnBlack->GetIPDLActor(),
+                                                  nullptr, aTextureOnWhite->GetIPDLActor()));
+}
+
+void
 ImageBridgeChild::UpdatedTexture(CompositableClient* aCompositable,
                                  TextureClient* aTexture,
                                  nsIntRegion* aRegion)
@@ -443,15 +453,15 @@ ImageBridgeChild::BeginTransaction()
   mTxn->Begin();
 }
 
-class MOZ_STACK_CLASS AutoForceRemoveTextures
+class MOZ_STACK_CLASS AutoRemoveTextures
 {
 public:
-  AutoForceRemoveTextures(ImageBridgeChild* aImageBridge)
+  AutoRemoveTextures(ImageBridgeChild* aImageBridge)
     : mImageBridge(aImageBridge) {}
 
-  ~AutoForceRemoveTextures()
+  ~AutoRemoveTextures()
   {
-    mImageBridge->ForceRemoveTexturesIfNecessary();
+    mImageBridge->RemoveTexturesIfNecessary();
   }
 private:
   ImageBridgeChild* mImageBridge;
@@ -463,7 +473,7 @@ ImageBridgeChild::EndTransaction()
   MOZ_ASSERT(!mTxn->Finished(), "forgot BeginTransaction?");
 
   AutoEndTransaction _(mTxn);
-  AutoForceRemoveTextures autoForceRemoveTextures(this);
+  AutoRemoveTextures autoRemoveTextures(this);
 
   if (mTxn->IsEmpty()) {
     return;

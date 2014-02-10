@@ -22,7 +22,7 @@
 using namespace insanity::pkix;
 using namespace mozilla::psm;
 
-#ifdef MOZ_LOGGING
+#ifdef PR_LOGGING
 static PRLogModuleInfo* gCertVerifierLog = nullptr;
 #endif
 
@@ -53,11 +53,62 @@ CertVerifier::~CertVerifier()
 void
 InitCertVerifierLog()
 {
-#ifdef MOZ_LOGGING
+#ifdef PR_LOGGING
   if (!gCertVerifierLog) {
     gCertVerifierLog = PR_NewLogModule("certverifier");
   }
 #endif
+}
+
+#if 0
+// Once we migrate to insanity::pkix or change the overridable error
+// logic this will become unnecesary.
+static SECStatus
+insertErrorIntoVerifyLog(CERTCertificate* cert, const PRErrorCode err,
+                         CERTVerifyLog* verifyLog){
+  CERTVerifyLogNode* node;
+  node = (CERTVerifyLogNode *)PORT_ArenaAlloc(verifyLog->arena,
+                                              sizeof(CERTVerifyLogNode));
+  if (!node) {
+    PR_SetError(PR_UNKNOWN_ERROR, 0);
+    return SECFailure;
+  }
+  node->cert = CERT_DupCertificate(cert);
+  node->error = err;
+  node->depth = 0;
+  node->arg = nullptr;
+  //and at to head!
+  node->prev = nullptr;
+  node->next = verifyLog->head;
+  if (verifyLog->head) {
+    verifyLog->head->prev = node;
+  }
+  verifyLog->head = node;
+  if (!verifyLog->tail) {
+    verifyLog->tail = node;
+  }
+  verifyLog->count++;
+
+  return SECSuccess;
+}
+#endif
+
+SECStatus chainValidationCallback(void* state, const CERTCertList* certList,
+                                  PRBool* chainOK)
+{
+  *chainOK = PR_FALSE;
+
+  PR_LOG(gCertVerifierLog, PR_LOG_DEBUG, ("verifycert: Inside the Callback \n"));
+
+  // On sanity failure we fail closed.
+  if (!certList) {
+    PR_LOG(gCertVerifierLog, PR_LOG_DEBUG, ("verifycert: Short circuit, callback, "
+                                            "sanity check failed \n"));
+    PR_SetError(PR_INVALID_STATE_ERROR, 0);
+    return SECFailure;
+  }
+  *chainOK = PR_TRUE;
+  return SECSuccess;
 }
 
 static SECStatus
@@ -267,7 +318,7 @@ CertVerifier::VerifyCert(CERTCertificate* cert,
   rev.chainTests.number_of_defined_methods = cert_revocation_method_ocsp + 1;
 
   const bool localOnly = flags & FLAG_LOCAL_ONLY;
-  CERTValInParam cvin[6];
+  CERTValInParam cvin[7];
 
   // Parameters for both EV and DV validation
   cvin[0].type = cert_pi_useAIACertFetch;
@@ -277,6 +328,16 @@ CertVerifier::VerifyCert(CERTCertificate* cert,
   cvin[2].type = cert_pi_date;
   cvin[2].value.scalar.time = time;
   i = 3;
+
+  CERTChainVerifyCallback callbackContainer;
+  if (usage == certificateUsageSSLServer) {
+    callbackContainer.isChainValid = chainValidationCallback;
+    callbackContainer.isChainValidArg = nullptr;
+    cvin[i].type = cert_pi_chainVerifyCallback;
+    cvin[i].value.pointer.chainVerifyCallback = &callbackContainer;
+    ++i;
+  }
+
   const size_t evParamLocation = i;
 
   if (evPolicy != SEC_OID_UNKNOWN) {

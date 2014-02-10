@@ -835,7 +835,9 @@ StackFrames.prototype = {
     // Don't change the editor's location if the execution was paused by a
     // public client evaluation. This is useful for adding overlays on
     // top of the editor, like a variable inspection popup.
-    if (this._currentFrameDescription != FRAME_TYPE.PUBLIC_CLIENT_EVAL) {
+    let isClientEval = this._currentFrameDescription == FRAME_TYPE.PUBLIC_CLIENT_EVAL;
+    let isPopupShown = DebuggerView.VariableBubble.contentsShown();
+    if (!isClientEval && !isPopupShown) {
       // Move the editor's caret to the proper url and line.
       DebuggerView.setEditorLocation(where.url, where.line);
       // Highlight the breakpoint at the specified url and line if it exists.
@@ -1183,6 +1185,12 @@ SourceScripts.prototype = {
       let msg = "Error getting sources: " + aResponse.message;
       Cu.reportError(msg);
       dumpn(msg);
+      return;
+    }
+
+    if (aResponse.sources.length === 0) {
+      DebuggerView.Sources.emptyText = L10N.getStr("noSourcesText");
+      window.emit(EVENTS.SOURCES_ADDED);
       return;
     }
 
@@ -1688,11 +1696,10 @@ EventListeners.prototype = {
           if (aResponse.error) {
             const msg = "Error getting function definition site: " + aResponse.message;
             DevToolsUtils.reportException("scheduleEventListenersFetch", msg);
-            deferred.reject(msg);
-            return;
+          } else {
+            aListener.function.url = aResponse.url;
           }
 
-          aListener.function.url = aResponse.url;
           deferred.resolve(aListener);
         });
 

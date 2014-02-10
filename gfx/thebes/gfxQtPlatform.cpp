@@ -109,6 +109,10 @@ gfxQtPlatform::gfxQtPlatform()
     if (pixmap.paintEngine())
         sDefaultQtPaintEngineType = pixmap.paintEngine()->type();
 #endif
+    uint32_t canvasMask = BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
+    uint32_t contentMask = BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
+    InitBackendPrefs(canvasMask, BackendType::CAIRO,
+                     contentMask, BackendType::CAIRO);
 }
 
 gfxQtPlatform::~gfxQtPlatform()
@@ -162,7 +166,7 @@ gfxQtPlatform::GetXScreen(QWidget* aWindow)
 #endif
 
 already_AddRefed<gfxASurface>
-gfxQtPlatform::CreateOffscreenSurface(const gfxIntSize& size,
+gfxQtPlatform::CreateOffscreenSurface(const IntSize& size,
                                       gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> newSurface = nullptr;
@@ -171,14 +175,14 @@ gfxQtPlatform::CreateOffscreenSurface(const gfxIntSize& size,
 
 #ifdef CAIRO_HAS_QT_SURFACE
     if (mRenderMode == RENDER_QPAINTER) {
-      newSurface = new gfxQPainterSurface(size, imageFormat);
+      newSurface = new gfxQPainterSurface(ThebesIntSize(size), imageFormat);
       return newSurface.forget();
     }
 #endif
 
     if ((mRenderMode == RENDER_BUFFERED || mRenderMode == RENDER_DIRECT) &&
         sDefaultQtPaintEngineType != QPaintEngine::X11) {
-      newSurface = new gfxImageSurface(size, imageFormat);
+      newSurface = new gfxImageSurface(ThebesIntSize(size), imageFormat);
       return newSurface.forget();
     }
 
@@ -187,7 +191,8 @@ gfxQtPlatform::CreateOffscreenSurface(const gfxIntSize& size,
         gfxXlibSurface::FindRenderFormat(GetXDisplay(), imageFormat);
 
     Screen* screen = GetXScreen();
-    newSurface = gfxXlibSurface::Create(screen, xrenderFormat, size);
+    newSurface = gfxXlibSurface::Create(screen, xrenderFormat,
+                                        ThebesIntSize(size));
 #endif
 
     if (newSurface) {
@@ -306,3 +311,8 @@ gfxQtPlatform::GetScreenDepth() const
     return mScreenDepth;
 }
 
+TemporaryRef<ScaledFont>
+gfxQtPlatform::GetScaledFontForFont(DrawTarget* aTarget, gfxFont* aFont)
+{
+    return GetScaledFontForFontWithCairoSkia(aTarget, aFont);
+}

@@ -103,7 +103,7 @@ void
 ImageClientSingle::FlushAllImages(bool aExceptFront)
 {
   if (!aExceptFront && mFrontBuffer) {
-    GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+    GetForwarder()->HoldUntilTransaction(mFrontBuffer);
     mFrontBuffer = nullptr;
   }
 }
@@ -112,11 +112,11 @@ void
 ImageClientBuffered::FlushAllImages(bool aExceptFront)
 {
   if (!aExceptFront && mFrontBuffer) {
-    GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+    GetForwarder()->HoldUntilTransaction(mFrontBuffer);
     mFrontBuffer = nullptr;
   }
   if (mBackBuffer) {
-    GetForwarder()->AddForceRemovingTexture(mBackBuffer);
+    GetForwarder()->HoldUntilTransaction(mBackBuffer);
     mBackBuffer = nullptr;
   }
 }
@@ -140,14 +140,9 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
     // fast path: no need to allocate and/or copy image data
     RefPtr<TextureClient> texture = image->AsSharedImage()->GetTextureClient();
 
-    if (texture->IsSharedWithCompositor()) {
-      // XXX - temporary fix for bug 911941
-      // This will be changed with bug 912907
-      return false;
-    }
 
     if (mFrontBuffer) {
-      GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+      GetForwarder()->HoldUntilTransaction(mFrontBuffer);
     }
     mFrontBuffer = texture;
     if (!AddTextureClient(texture)) {
@@ -156,7 +151,7 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
     }
     GetForwarder()->UpdatedTexture(this, texture, nullptr);
     GetForwarder()->UseTexture(this, texture);
-  } else if (image->GetFormat() == PLANAR_YCBCR) {
+  } else if (image->GetFormat() == ImageFormat::PLANAR_YCBCR) {
     PlanarYCbCrImage* ycbcr = static_cast<PlanarYCbCrImage*>(image);
     const PlanarYCbCrData* data = ycbcr->GetData();
     if (!data) {
@@ -164,7 +159,7 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
     }
 
     if (mFrontBuffer && mFrontBuffer->IsImmutable()) {
-      GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+      GetForwarder()->HoldUntilTransaction(mFrontBuffer);
       mFrontBuffer = nullptr;
     }
 
@@ -201,13 +196,13 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
       return false;
     }
 
-  } else if (image->GetFormat() == SHARED_TEXTURE) {
+  } else if (image->GetFormat() == ImageFormat::SHARED_TEXTURE) {
     SharedTextureImage* sharedImage = static_cast<SharedTextureImage*>(image);
     const SharedTextureImage::Data *data = sharedImage->GetData();
     gfx::IntSize size = gfx::IntSize(image->GetSize().width, image->GetSize().height);
 
     if (mFrontBuffer) {
-      GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+      GetForwarder()->HoldUntilTransaction(mFrontBuffer);
       mFrontBuffer = nullptr;
     }
 
@@ -228,7 +223,7 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
 
     if (mFrontBuffer &&
         (mFrontBuffer->IsImmutable() || mFrontBuffer->GetSize() != size)) {
-      GetForwarder()->AddForceRemovingTexture(mFrontBuffer);
+      GetForwarder()->HoldUntilTransaction(mFrontBuffer);
       mFrontBuffer = nullptr;
     }
 
@@ -368,7 +363,7 @@ DeprecatedImageClientSingle::UpdateImage(ImageContainer* aContainer,
     return true;
   }
 
-  if (image->GetFormat() == PLANAR_YCBCR &&
+  if (image->GetFormat() == ImageFormat::PLANAR_YCBCR &&
       EnsureDeprecatedTextureClient(TEXTURE_YCBCR)) {
     PlanarYCbCrImage* ycbcr = static_cast<PlanarYCbCrImage*>(image);
 
@@ -393,7 +388,7 @@ DeprecatedImageClientSingle::UpdateImage(ImageContainer* aContainer,
         return false;
       }
     }
-  } else if (image->GetFormat() == SHARED_TEXTURE &&
+  } else if (image->GetFormat() == ImageFormat::SHARED_TEXTURE &&
              EnsureDeprecatedTextureClient(TEXTURE_SHARED_GL_EXTERNAL)) {
     SharedTextureImage* sharedImage = static_cast<SharedTextureImage*>(image);
     const SharedTextureImage::Data *data = sharedImage->GetData();
@@ -403,7 +398,7 @@ DeprecatedImageClientSingle::UpdateImage(ImageContainer* aContainer,
                                     data->mSize,
                                     data->mInverted);
     mDeprecatedTextureClient->SetDescriptor(SurfaceDescriptor(texture));
-  } else if (image->GetFormat() == SHARED_RGB &&
+  } else if (image->GetFormat() == ImageFormat::SHARED_RGB &&
              EnsureDeprecatedTextureClient(TEXTURE_SHMEM)) {
     nsIntRect rect(0, 0,
                    image->GetSize().width,
@@ -418,7 +413,7 @@ DeprecatedImageClientSingle::UpdateImage(ImageContainer* aContainer,
     }
     mDeprecatedTextureClient->SetDescriptor(desc);
 #ifdef MOZ_WIDGET_GONK
-  } else if (image->GetFormat() == GRALLOC_PLANAR_YCBCR) {
+  } else if (image->GetFormat() == ImageFormat::GRALLOC_PLANAR_YCBCR) {
     EnsureDeprecatedTextureClient(TEXTURE_SHARED_GL_EXTERNAL);
 
     nsIntRect rect(0, 0,
@@ -450,7 +445,7 @@ DeprecatedImageClientSingle::UpdateImage(ImageContainer* aContainer,
 
   Updated();
 
-  if (image->GetFormat() == PLANAR_YCBCR) {
+  if (image->GetFormat() == ImageFormat::PLANAR_YCBCR) {
     PlanarYCbCrImage* ycbcr = static_cast<PlanarYCbCrImage*>(image);
     UpdatePictureRect(ycbcr->GetData()->GetPictureRect());
   }
@@ -492,49 +487,45 @@ ImageClientBridge::UpdateImage(ImageContainer* aContainer, uint32_t aContentFlag
 }
 
 already_AddRefed<Image>
-ImageClientSingle::CreateImage(const uint32_t *aFormats,
-                               uint32_t aNumFormats)
+ImageClientSingle::CreateImage(ImageFormat aFormat)
 {
   nsRefPtr<Image> img;
-  for (uint32_t i = 0; i < aNumFormats; i++) {
-    switch (aFormats[i]) {
-      case PLANAR_YCBCR:
-        img = new SharedPlanarYCbCrImage(this);
-        return img.forget();
-      case SHARED_RGB:
-        img = new SharedRGBImage(this);
-        return img.forget();
+  switch (aFormat) {
+    case ImageFormat::PLANAR_YCBCR:
+      img = new SharedPlanarYCbCrImage(this);
+      return img.forget();
+    case ImageFormat::SHARED_RGB:
+      img = new SharedRGBImage(this);
+      return img.forget();
 #ifdef MOZ_WIDGET_GONK
-      case GRALLOC_PLANAR_YCBCR:
-        img = new GrallocImage();
-        return img.forget();
+    case ImageFormat::GRALLOC_PLANAR_YCBCR:
+      img = new GrallocImage();
+      return img.forget();
 #endif
-    }
+    default:
+      return nullptr;
   }
-  return nullptr;
 }
 
 already_AddRefed<Image>
-DeprecatedImageClientSingle::CreateImage(const uint32_t *aFormats,
-                                         uint32_t aNumFormats)
+DeprecatedImageClientSingle::CreateImage(ImageFormat aFormat)
 {
   nsRefPtr<Image> img;
-  for (uint32_t i = 0; i < aNumFormats; i++) {
-    switch (aFormats[i]) {
-      case PLANAR_YCBCR:
-        img = new DeprecatedSharedPlanarYCbCrImage(GetForwarder());
-        return img.forget();
-      case SHARED_RGB:
-        img = new DeprecatedSharedRGBImage(GetForwarder());
-        return img.forget();
+  switch (aFormat) {
+    case ImageFormat::PLANAR_YCBCR:
+      img = new DeprecatedSharedPlanarYCbCrImage(GetForwarder());
+      return img.forget();
+    case ImageFormat::SHARED_RGB:
+      img = new DeprecatedSharedRGBImage(GetForwarder());
+      return img.forget();
 #ifdef MOZ_WIDGET_GONK
-      case GRALLOC_PLANAR_YCBCR:
-        img = new GrallocImage();
-        return img.forget();
+    case ImageFormat::GRALLOC_PLANAR_YCBCR:
+      img = new GrallocImage();
+      return img.forget();
 #endif
-    }
+    default:
+      return nullptr;
   }
-  return nullptr;
 }
 
 

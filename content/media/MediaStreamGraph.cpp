@@ -72,6 +72,8 @@ MediaStreamGraphImpl::FinishStream(MediaStream* aStream)
   // on UpdateCurrentTime to notify our listeners once the stream end
   // has been reached.
   EnsureNextIteration();
+
+  SetStreamOrderDirty();
 }
 
 void
@@ -80,6 +82,8 @@ MediaStreamGraphImpl::AddStream(MediaStream* aStream)
   aStream->mBufferStartTime = mCurrentTime;
   *mStreams.AppendElement() = already_AddRefed<MediaStream>(aStream);
   STREAM_LOG(PR_LOG_DEBUG, ("Adding media stream %p to the graph", aStream));
+
+  SetStreamOrderDirty();
 }
 
 void
@@ -96,6 +100,8 @@ MediaStreamGraphImpl::RemoveStream(MediaStream* aStream)
       }
     }
   }
+
+  SetStreamOrderDirty();
 
   // This unrefs the stream, probably destroying it
   mStreams.RemoveElement(aStream);
@@ -430,6 +436,7 @@ MediaStreamGraphImpl::UpdateCurrentTime()
           stream->StreamTimeToGraphTime(stream->GetStreamBuffer().GetAllTracksEnd()))  {
       stream->mNotifiedFinished = true;
       stream->mLastPlayedVideoFrame.SetNull();
+      SetStreamOrderDirty();
       for (uint32_t j = 0; j < stream->mListeners.Length(); ++j) {
         MediaStreamListener* l = stream->mListeners[j];
         l->NotifyFinished(this);
@@ -711,7 +718,7 @@ MediaStreamGraphImpl::RecomputeBlockingAt(const nsTArray<MediaStream*>& aStreams
         STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p is blocked due to being finished", stream));
         // We'll block indefinitely
         MarkStreamBlocking(stream);
-        *aEnd = aEndBlockingDecisions;
+        *aEnd = std::min(*aEnd, aEndBlockingDecisions);
         continue;
       } else {
         STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p is finished, but not blocked yet (end at %f, with blocking at %f)",
@@ -734,7 +741,7 @@ MediaStreamGraphImpl::RecomputeBlockingAt(const nsTArray<MediaStream*>& aStreams
     if (underrun) {
       // We'll block indefinitely
       MarkStreamBlocking(stream);
-      *aEnd = aEndBlockingDecisions;
+      *aEnd = std::min(*aEnd, aEndBlockingDecisions);
       continue;
     }
   }
@@ -955,9 +962,8 @@ MediaStreamGraphImpl::PlayVideo(MediaStream* aStream)
     VideoFrameContainer* output = aStream->mVideoOutputs[i];
 
     if (frame->GetForceBlack()) {
-      static const ImageFormat formats[1] = { PLANAR_YCBCR };
       nsRefPtr<Image> image =
-        output->GetImageContainer()->CreateImage(formats, 1);
+        output->GetImageContainer()->CreateImage(ImageFormat::PLANAR_YCBCR);
       if (image) {
         // Sets the image to a single black pixel, which will be scaled to fill
         // the rendered size.
@@ -1117,6 +1123,28 @@ MediaStreamGraphImpl::AllFinishedStreamsNotified()
 }
 
 void
+MediaStreamGraphImpl::PauseAllAudioOutputs()
+{
+  for (uint32_t i = 0; i < mStreams.Length(); ++i) {
+    MediaStream* s = mStreams[i];
+    for (uint32_t j = 0; j < s->mAudioOutputStreams.Length(); ++j) {
+      s->mAudioOutputStreams[j].mStream->Pause();
+    }
+  }
+}
+
+void
+MediaStreamGraphImpl::ResumeAllAudioOutputs()
+{
+  for (uint32_t i = 0; i < mStreams.Length(); ++i) {
+    MediaStream* s = mStreams[i];
+    for (uint32_t j = 0; j < s->mAudioOutputStreams.Length(); ++j) {
+      s->mAudioOutputStreams[j].mStream->Resume();
+    }
+  }
+}
+
+void
 MediaStreamGraphImpl::RunThread()
 {
   nsTArray<MessageBlock> messageQueue;
@@ -1147,7 +1175,9 @@ MediaStreamGraphImpl::RunThread()
     }
     messageQueue.Clear();
 
-    UpdateStreamOrder();
+    if (mStreamOrderDirty) {
+      UpdateStreamOrder();
+    }
 
     // Find the sampling rate that we need to use for non-realtime graphs.
     TrackRate sampleRate = IdealAudioRate();
@@ -1180,7 +1210,6 @@ MediaStreamGraphImpl::RunThread()
     RecomputeBlocking(endBlockingDecisions);
 
     // Play stream contents.
-    uint32_t audioStreamsActive = 0;
     bool allBlockedForever = true;
     // True when we've done ProduceOutput for all processed streams.
     bool doneAllProducing = false;
@@ -1221,7 +1250,6 @@ MediaStreamGraphImpl::RunThread()
         // Only playback audio and video in real-time mode
         CreateOrDestroyAudioStreams(prevComputedTime, stream);
         PlayAudio(stream, prevComputedTime, mStateComputedTime);
-        audioStreamsActive += stream->mAudioOutputStreams.Length();
         PlayVideo(stream);
       }
       SourceMediaStream* is = stream->AsSourceStream();
@@ -1233,7 +1261,7 @@ MediaStreamGraphImpl::RunThread()
         allBlockedForever = false;
       }
     }
-    if (ensureNextIteration || !allBlockedForever || audioStreamsActive > 0) {
+    if (ensureNextIteration || !allBlockedForever) {
       EnsureNextIteration();
     }
 
@@ -1261,6 +1289,7 @@ MediaStreamGraphImpl::RunThread()
       if (mRealtime) {
         PRIntervalTime timeout = PR_INTERVAL_NO_TIMEOUT;
         TimeStamp now = TimeStamp::Now();
+        bool pausedOutputs = false;
         if (mNeedAnotherIteration) {
           int64_t timeoutMS = MEDIA_GRAPH_TARGET_PERIOD_MS -
             int64_t((now - mCurrentTimeStamp).ToMilliseconds());
@@ -1273,12 +1302,17 @@ MediaStreamGraphImpl::RunThread()
           mWaitState = WAITSTATE_WAITING_FOR_NEXT_ITERATION;
         } else {
           mWaitState = WAITSTATE_WAITING_INDEFINITELY;
+          PauseAllAudioOutputs();
+          pausedOutputs = true;
         }
         if (timeout > 0) {
           mMonitor.Wait(timeout);
           STREAM_LOG(PR_LOG_DEBUG+1, ("Resuming after timeout; at %f, elapsed=%f",
                                      (TimeStamp::Now() - mInitialTimeStamp).ToSeconds(),
                                      (TimeStamp::Now() - now).ToSeconds()));
+        }
+        if (pausedOutputs) {
+          ResumeAllAudioOutputs();
         }
       }
       mWaitState = WAITSTATE_RUNNING;
@@ -1531,7 +1565,8 @@ MediaStreamGraphImpl::RunInStableState()
       }
     }
 
-    if (mLifecycleState == LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP) {
+    if (mForceShutDown &&
+        mLifecycleState == LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP) {
       // Defer calls to RunDuringShutdown() to happen while mMonitor is not held.
       for (uint32_t i = 0; i < mMessageQueue.Length(); ++i) {
         MessageBlock& mb = mMessageQueue[i];
@@ -2253,6 +2288,8 @@ MediaInputPort::Disconnect()
   mSource = nullptr;
   mDest->RemoveInput(this);
   mDest = nullptr;
+
+  GraphImpl()->SetStreamOrderDirty();
 }
 
 MediaInputPort::InputInterval
@@ -2331,6 +2368,7 @@ ProcessedMediaStream::AllocateInputPort(MediaStream* aStream, uint32_t aFlags,
     {
       mPort->Init();
       // The graph holds its reference implicitly
+      mPort->GraphImpl()->SetStreamOrderDirty();
       mPort.forget();
     }
     virtual void RunDuringShutdown()
@@ -2384,6 +2422,7 @@ ProcessedMediaStream::DestroyImpl()
     mInputs[i]->Disconnect();
   }
   MediaStream::DestroyImpl();
+  GraphImpl()->SetStreamOrderDirty();
 }
 
 /**

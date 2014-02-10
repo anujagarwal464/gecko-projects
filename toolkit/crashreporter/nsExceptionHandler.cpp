@@ -322,8 +322,16 @@ nsTArray<nsAutoPtr<DelayedNote> >* gDelayedAnnotations;
 typedef LPTOP_LEVEL_EXCEPTION_FILTER (WINAPI *SetUnhandledExceptionFilter_func)
   (LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExceptionFilter);
 static SetUnhandledExceptionFilter_func stub_SetUnhandledExceptionFilter = 0;
+static LPTOP_LEVEL_EXCEPTION_FILTER previousUnhandledExceptionFilter = nullptr;
 static WindowsDllInterceptor gKernel32Intercept;
 static bool gBlockUnhandledExceptionFilter = true;
+
+static void NotePreviousUnhandledExceptionFilter()
+{
+  // Set a dummy value to get the previous filter, then restore
+  previousUnhandledExceptionFilter = SetUnhandledExceptionFilter(nullptr);
+  SetUnhandledExceptionFilter(previousUnhandledExceptionFilter);
+}
 
 static LPTOP_LEVEL_EXCEPTION_FILTER WINAPI
 patched_SetUnhandledExceptionFilter (LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExceptionFilter)
@@ -331,6 +339,13 @@ patched_SetUnhandledExceptionFilter (LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExce
   if (!gBlockUnhandledExceptionFilter) {
     // don't intercept
     return stub_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
+  }
+
+  if (lpTopLevelExceptionFilter == previousUnhandledExceptionFilter) {
+    // OK to swap back and forth between the previous filter
+    previousUnhandledExceptionFilter =
+      stub_SetUnhandledExceptionFilter(lpTopLevelExceptionFilter);
+    return previousUnhandledExceptionFilter;
   }
 
   // intercept attempts to change the filter
@@ -1016,6 +1031,10 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory,
   // now set the exception handler
 #ifdef XP_LINUX
   MinidumpDescriptor descriptor(tempPath.get());
+#endif
+
+#ifdef XP_WIN
+  NotePreviousUnhandledExceptionFilter();
 #endif
 
   gExceptionHandler = new google_breakpad::
@@ -1717,6 +1736,13 @@ nsresult WriteMinidumpForException(EXCEPTION_POINTERS* aExceptionInfo)
     return NS_ERROR_NOT_INITIALIZED;
 
   return gExceptionHandler->WriteMinidumpForException(aExceptionInfo) ? NS_OK : NS_ERROR_FAILURE;
+}
+#endif
+
+#ifdef XP_LINUX
+bool WriteMinidumpForSigInfo(int signo, siginfo_t* info, void* uc)
+{
+  return gExceptionHandler->HandleSignal(signo, info, uc);
 }
 #endif
 

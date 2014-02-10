@@ -10,6 +10,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/Preferences.h"
 
+#include "gfx2DGlue.h"
 #include "gfxFT2FontList.h"
 #include "gfxImageSurface.h"
 #include "mozilla/dom/ContentChild.h"
@@ -135,11 +136,12 @@ gfxAndroidPlatform::~gfxAndroidPlatform()
 }
 
 already_AddRefed<gfxASurface>
-gfxAndroidPlatform::CreateOffscreenSurface(const gfxIntSize& size,
-                                      gfxContentType contentType)
+gfxAndroidPlatform::CreateOffscreenSurface(const IntSize& size,
+                                           gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> newSurface;
-    newSurface = new gfxImageSurface(size, OptimalFormatForContent(contentType));
+    newSurface = new gfxImageSurface(ThebesIntSize(size),
+                                     OptimalFormatForContent(contentType));
 
     return newSurface.forget();
 }
@@ -354,14 +356,7 @@ gfxAndroidPlatform::MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
 TemporaryRef<ScaledFont>
 gfxAndroidPlatform::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
 {
-    NativeFont nativeFont;
-    if (aTarget->GetType() == BackendType::CAIRO || aTarget->GetType() == BackendType::SKIA) {
-        nativeFont.mType = NativeFontType::CAIRO_FONT_FACE;
-        nativeFont.mFont = aFont->GetCairoScaledFont();
-        return Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
-    }
-
-    return nullptr;
+    return GetScaledFontForFontWithCairoSkia(aTarget, aFont);
 }
 
 bool

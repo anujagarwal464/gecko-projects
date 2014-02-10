@@ -59,7 +59,8 @@ const NFC_IPC_PEER_MSG_NAMES = [
   "NFC:RegisterPeerTarget",
   "NFC:UnregisterPeerTarget",
   "NFC:CheckP2PRegistration",
-  "NFC:NotifyUserAcceptedP2P"
+  "NFC:NotifyUserAcceptedP2P",
+  "NFC:NotifySendFileStatus"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "ppmm",
@@ -309,10 +310,12 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           return null;
         }
 
-        // Add extra permission check for below IPC Peer events:
-        // 'NFC:CheckP2PRegistration' , 'NFC:NotifyUserAcceptedP2P'
+        // Add extra permission check for below events:
+        // 'NFC:CheckP2PRegistration' , 'NFC:NotifyUserAcceptedP2P',
+        // 'NFC:NotifySendFileStatus'
         if ((msg.name == "NFC:CheckP2PRegistration") ||
-            (msg.name == "NFC:NotifyUserAcceptedP2P")) {
+            (msg.name == "NFC:NotifyUserAcceptedP2P") ||
+            (msg.name == "NFC:NotifySendFileStatus")) {
           // ONLY privileged Content can send these events
           if (!msg.target.assertPermission("nfc-manager")) {
             debug("NFC message " + message.name +
@@ -356,6 +359,11 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           // Notify the 'NFC_PEER_EVENT_READY' since user has acknowledged
           this.notifyPeerEvent(msg.json.appId, NFC.NFC_PEER_EVENT_READY);
           break;
+        case "NFC:NotifySendFileStatus":
+          // Upon receiving the status of sendFile operation, send the response
+          // to appropriate content process.
+          this.sendNfcResponseMessage(msg.name + "Response", msg.json);
+          break;
       }
       return null;
     },
@@ -390,6 +398,7 @@ function Nfc() {
 
   Services.obs.addObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED, false);
   Services.obs.addObserver(this, NFC.TOPIC_XPCOM_SHUTDOWN, false);
+  Services.obs.addObserver(this, NFC.TOPIC_HARDWARE_STATE, false);
 
   gMessageManager.init(this);
   let lock = gSettingsService.createLock();
@@ -647,11 +656,28 @@ Nfc.prototype = {
           this.handle(setting.key, setting.value);
         }
         break;
+      case NFC.TOPIC_HARDWARE_STATE:
+        let state = JSON.parse(data);
+        if (state) {
+          let level = this.hardwareStateToPowerlevel(state.nfcHardwareState);
+          this.setConfig({ powerLevel: level });
+        }
+        break;
     }
   },
 
   setConfig: function setConfig(prop) {
     this.sendToWorker("config", prop);
+  },
+
+  hardwareStateToPowerlevel: function hardwareStateToPowerlevel(state) {
+    switch (state) {
+      case 0:   return NFC.NFC_POWER_LEVEL_DISABLED;
+      case 1:   return NFC.NFC_POWER_LEVEL_ENABLED;
+      case 2:   return NFC.NFC_POWER_LEVEL_ENABLED;
+      case 3:   return NFC.NFC_POWER_LEVEL_LOW;
+      default:  return NFC.NFC_POWER_LEVEL_UNKNOWN;
+    }
   }
 };
 

@@ -6,6 +6,7 @@
 
 /* parsing of CSS stylesheets, based on a token stream from the CSS scanner */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 
 #include "nsCSSParser.h"
@@ -46,6 +47,8 @@
 #include "mozilla/CSSVariableValues.h"
 
 using namespace mozilla;
+
+typedef nsCSSProps::KTableValue KTableValue;
 
 const uint32_t
 nsCSSProps::kParserVariantTable[eCSSProperty_COUNT_no_shorthands] = {
@@ -623,7 +626,8 @@ protected:
   bool ParseFontSynthesis(nsCSSValue& aValue);
   bool ParseSingleAlternate(int32_t& aWhichFeature, nsCSSValue& aValue);
   bool ParseFontVariantAlternates(nsCSSValue& aValue);
-  bool ParseBitmaskValues(nsCSSValue& aValue, const int32_t aKeywordTable[],
+  bool ParseBitmaskValues(nsCSSValue& aValue,
+                          const KTableValue aKeywordTable[],
                           const int32_t aMasks[]);
   bool ParseFontVariantEastAsian(nsCSSValue& aValue);
   bool ParseFontVariantLigatures(nsCSSValue& aValue);
@@ -644,7 +648,8 @@ protected:
   bool ParsePadding();
   bool ParseQuotes();
   bool ParseSize();
-  bool ParseTextAlign(nsCSSValue& aValue, const int32_t aTable[]);
+  bool ParseTextAlign(nsCSSValue& aValue,
+                      const KTableValue aTable[]);
   bool ParseTextAlign(nsCSSValue& aValue);
   bool ParseTextAlignLast(nsCSSValue& aValue);
   bool ParseTextDecoration();
@@ -673,6 +678,7 @@ protected:
                                         size_t aNumProperties);
   bool ParseTransition();
   bool ParseAnimation();
+  bool ParseWillChange();
 
   bool ParsePaint(nsCSSProperty aPropID);
   bool ParseDasharray();
@@ -749,16 +755,17 @@ protected:
   // after the opacity
   bool ParseColorOpacity(uint8_t& aOpacity);
   bool ParseColorOpacity(float& aOpacity);
-  bool ParseEnum(nsCSSValue& aValue, const int32_t aKeywordTable[]);
+  bool ParseEnum(nsCSSValue& aValue,
+                 const KTableValue aKeywordTable[]);
   bool ParseVariant(nsCSSValue& aValue,
-                      int32_t aVariantMask,
-                      const int32_t aKeywordTable[]);
+                    int32_t aVariantMask,
+                    const KTableValue aKeywordTable[]);
   bool ParseNonNegativeVariant(nsCSSValue& aValue,
-                                 int32_t aVariantMask,
-                                 const int32_t aKeywordTable[]);
+                               int32_t aVariantMask,
+                               const KTableValue aKeywordTable[]);
   bool ParseOneOrLargerVariant(nsCSSValue& aValue,
-                                 int32_t aVariantMask,
-                                 const int32_t aKeywordTable[]);
+                               int32_t aVariantMask,
+                               const KTableValue aKeywordTable[]);
   bool ParseCounter(nsCSSValue& aValue);
   bool ParseAttr(nsCSSValue& aValue);
   bool SetValueToURL(nsCSSValue& aValue, const nsString& aURL);
@@ -5869,7 +5876,7 @@ static const nsCSSProperty kColumnRuleIDs[] = {
 
 bool
 CSSParserImpl::ParseEnum(nsCSSValue& aValue,
-                         const int32_t aKeywordTable[])
+                         const KTableValue aKeywordTable[])
 {
   nsSubstring* ident = NextIdent();
   if (nullptr == ident) {
@@ -6018,7 +6025,7 @@ CSSParserImpl::TranslateDimension(nsCSSValue& aValue,
 bool
 CSSParserImpl::ParseNonNegativeVariant(nsCSSValue& aValue,
                                        int32_t aVariantMask,
-                                       const int32_t aKeywordTable[])
+                                       const KTableValue aKeywordTable[])
 {
   // The variant mask must only contain non-numeric variants or the ones
   // that we specifically handle.
@@ -6060,7 +6067,7 @@ CSSParserImpl::ParseNonNegativeVariant(nsCSSValue& aValue,
 bool
 CSSParserImpl::ParseOneOrLargerVariant(nsCSSValue& aValue,
                                        int32_t aVariantMask,
-                                       const int32_t aKeywordTable[])
+                                       const KTableValue aKeywordTable[])
 {
   // The variant mask must only contain non-numeric variants or the ones
   // that we specifically handle.
@@ -6090,7 +6097,7 @@ CSSParserImpl::ParseOneOrLargerVariant(nsCSSValue& aValue,
 bool
 CSSParserImpl::ParseVariant(nsCSSValue& aValue,
                             int32_t aVariantMask,
-                            const int32_t aKeywordTable[])
+                            const KTableValue aKeywordTable[])
 {
   NS_ASSERTION(!(mHashlessColorQuirk && (aVariantMask & VARIANT_COLOR)) ||
                !(aVariantMask & VARIANT_NUMBER),
@@ -6748,7 +6755,7 @@ CSSParserImpl::ParseFlexFlow()
     eCSSProperty_flex_direction,
     eCSSProperty_flex_wrap
   };
-  const size_t numProps = NS_ARRAY_LENGTH(kFlexFlowSubprops);
+  const size_t numProps = MOZ_ARRAY_LENGTH(kFlexFlowSubprops);
   nsCSSValue values[numProps];
 
   int32_t found = ParseChoice(values, kFlexFlowSubprops, numProps);
@@ -7829,6 +7836,8 @@ CSSParserImpl::ParsePropertyByFunction(nsCSSProperty aPropID)
     return ParseSize();
   case eCSSProperty_text_decoration:
     return ParseTextDecoration();
+  case eCSSProperty_will_change:
+    return ParseWillChange();
   case eCSSProperty_transform:
     return ParseTransform(false);
   case eCSSProperty__moz_transform:
@@ -7943,7 +7952,7 @@ CSSParserImpl::ParseSingleValueProperty(nsCSSValue& aValue,
        aPropID == eCSSProperty_math_display))
     return false;
 
-  const int32_t *kwtable = nsCSSProps::kKeywordTableTable[aPropID];
+  const KTableValue *kwtable = nsCSSProps::kKeywordTableTable[aPropID];
   switch (nsCSSProps::ValueRestrictions(aPropID)) {
     default:
       NS_ABORT_IF_FALSE(false, "should not be reached");
@@ -9058,7 +9067,7 @@ CSSParserImpl::ParseBorderImage()
   nsCSSValue imageSourceValue;
   while (!CheckEndProperty()) {
     // <border-image-source>
-    if (!foundSource && ParseVariant(imageSourceValue, VARIANT_UO, nullptr)) {
+    if (!foundSource && ParseVariant(imageSourceValue, VARIANT_IMAGE, nullptr)) {
       AppendValue(eCSSProperty_border_image_source, imageSourceValue);
       foundSource = true;
       continue;
@@ -9674,7 +9683,7 @@ CSSParserImpl::ParseColumns()
     eCSSProperty__moz_column_count,
     eCSSProperty__moz_column_width
   };
-  const int32_t numProps = NS_ARRAY_LENGTH(columnIDs);
+  const int32_t numProps = MOZ_ARRAY_LENGTH(columnIDs);
 
   nsCSSValue values[numProps];
   int32_t found = ParseChoice(values, columnIDs, numProps);
@@ -9710,7 +9719,7 @@ CSSParserImpl::ParseContent()
 {
   // We need to divide the 'content' keywords into two classes for
   // ParseVariant's sake, so we can't just use nsCSSProps::kContentKTable.
-  static const int32_t kContentListKWs[] = {
+  static const KTableValue kContentListKWs[] = {
     eCSSKeyword_open_quote, NS_STYLE_CONTENT_OPEN_QUOTE,
     eCSSKeyword_close_quote, NS_STYLE_CONTENT_CLOSE_QUOTE,
     eCSSKeyword_no_open_quote, NS_STYLE_CONTENT_NO_OPEN_QUOTE,
@@ -9718,7 +9727,7 @@ CSSParserImpl::ParseContent()
     eCSSKeyword_UNKNOWN,-1
   };
 
-  static const int32_t kContentSolitaryKWs[] = {
+  static const KTableValue kContentSolitaryKWs[] = {
     eCSSKeyword__moz_alt_content, NS_STYLE_CONTENT_ALT_CONTENT,
     eCSSKeyword_UNKNOWN,-1
   };
@@ -10160,7 +10169,7 @@ CSSParserImpl::ParseFontVariantAlternates(nsCSSValue& aValue)
 
 bool
 CSSParserImpl::ParseBitmaskValues(nsCSSValue& aValue,
-                                  const int32_t aKeywordTable[],
+                                  const KTableValue aKeywordTable[],
                                   const int32_t aMasks[])
 {
   if (!ParseVariant(aValue, VARIANT_HMK, aKeywordTable)) {
@@ -10221,7 +10230,7 @@ static const int32_t maskEastAsian[] = {
 bool
 CSSParserImpl::ParseFontVariantEastAsian(nsCSSValue& aValue)
 {
-  NS_ASSERTION(maskEastAsian[NS_ARRAY_LENGTH(maskEastAsian) - 1] ==
+  NS_ASSERTION(maskEastAsian[ArrayLength(maskEastAsian) - 1] ==
                  MASK_END_VALUE,
                "incorrectly terminated array");
 
@@ -10240,7 +10249,7 @@ static const int32_t maskLigatures[] = {
 bool
 CSSParserImpl::ParseFontVariantLigatures(nsCSSValue& aValue)
 {
-  NS_ASSERTION(maskLigatures[NS_ARRAY_LENGTH(maskLigatures) - 1] ==
+  NS_ASSERTION(maskLigatures[ArrayLength(maskLigatures) - 1] ==
                  MASK_END_VALUE,
                "incorrectly terminated array");
 
@@ -10270,7 +10279,7 @@ static const int32_t maskNumeric[] = {
 bool
 CSSParserImpl::ParseFontVariantNumeric(nsCSSValue& aValue)
 {
-  NS_ASSERTION(maskNumeric[NS_ARRAY_LENGTH(maskNumeric) - 1] ==
+  NS_ASSERTION(maskNumeric[ArrayLength(maskNumeric) - 1] ==
                  MASK_END_VALUE,
                "incorrectly terminated array");
 
@@ -10673,7 +10682,7 @@ CSSParserImpl::ParseListStyle()
     eCSSProperty_list_style_image
   };
 
-  nsCSSValue values[NS_ARRAY_LENGTH(listStyleIDs)];
+  nsCSSValue values[MOZ_ARRAY_LENGTH(listStyleIDs)];
   int32_t found =
     ParseChoice(values, listStyleIDs, ArrayLength(listStyleIDs));
   if (found < 1 || !ExpectEndProperty()) {
@@ -10923,7 +10932,7 @@ CSSParserImpl::ParseTextDecoration()
                  eDecorationBlink | eDecorationPrefAnchors),
                 "text decoration constants need to be bitmasks");
 
-  static const int32_t kTextDecorationKTable[] = {
+  static const KTableValue kTextDecorationKTable[] = {
     eCSSKeyword_none,                   eDecorationNone,
     eCSSKeyword_underline,              eDecorationUnderline,
     eCSSKeyword_overline,               eDecorationOverline,
@@ -10987,7 +10996,7 @@ CSSParserImpl::ParseTextDecoration()
 }
 
 bool
-CSSParserImpl::ParseTextAlign(nsCSSValue& aValue, const int32_t aTable[])
+CSSParserImpl::ParseTextAlign(nsCSSValue& aValue, const KTableValue aTable[])
 {
   if (ParseVariant(aValue, VARIANT_INHERIT, nullptr)) {
     // 'inherit', 'initial' and 'unset' must be alone
@@ -11450,6 +11459,61 @@ static bool GetFunctionParseInformation(nsCSSKeyword aToken,
   // Convert the index into a mask.
   aVariantMask = kVariantMasks[variantIndex];
 
+  return true;
+}
+
+bool CSSParserImpl::ParseWillChange()
+{
+  nsCSSValue listValue;
+  nsCSSValueList* currentListValue = listValue.SetListValue();
+  bool first = true;
+  for (;;) {
+    const uint32_t variantMask = VARIANT_IDENTIFIER |
+                                 VARIANT_INHERIT |
+                                 VARIANT_NONE |
+                                 VARIANT_ALL |
+                                 VARIANT_AUTO;
+    nsCSSValue value;
+    if (!ParseVariant(value, variantMask, nullptr)) {
+      return false;
+    }
+
+    if (value.GetUnit() == eCSSUnit_None ||
+        value.GetUnit() == eCSSUnit_All)
+    {
+      return false;
+    }
+
+    if (value.GetUnit() != eCSSUnit_Ident) {
+      if (first) {
+        AppendValue(eCSSProperty_will_change, value);
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+    nsString str;
+    value.GetStringValue(str);
+    if (str.LowerCaseEqualsLiteral("default")) {
+      return false;
+    }
+
+    currentListValue->mValue = value;
+
+    if (CheckEndProperty()) {
+      break;
+    }
+    if (!ExpectSymbol(',', true)) {
+      REPORT_UNEXPECTED_TOKEN(PEExpectedComma);
+      return false;
+    }
+    currentListValue->mNext = new nsCSSValueList;
+    currentListValue = currentListValue->mNext;
+    first = false;
+  }
+
+  AppendValue(eCSSProperty_will_change, listValue);
   return true;
 }
 
@@ -11986,7 +12050,7 @@ CSSParserImpl::ParseTransition()
     // any keyword.
     eCSSProperty_transition_property
   };
-  static const uint32_t numProps = NS_ARRAY_LENGTH(kTransitionProperties);
+  static const uint32_t numProps = MOZ_ARRAY_LENGTH(kTransitionProperties);
   // this is a shorthand property that accepts -property, -delay,
   // -duration, and -timing-function with some components missing.
   // there can be multiple transitions, separated with commas
@@ -12068,7 +12132,7 @@ CSSParserImpl::ParseAnimation()
     // 'animation-name' accepts any keyword.
     eCSSProperty_animation_name
   };
-  static const uint32_t numProps = NS_ARRAY_LENGTH(kAnimationProperties);
+  static const uint32_t numProps = MOZ_ARRAY_LENGTH(kAnimationProperties);
   // this is a shorthand property that accepts -property, -delay,
   // -duration, and -timing-function with some components missing.
   // there can be multiple animations, separated with commas
@@ -12330,7 +12394,7 @@ CSSParserImpl::ParsePaintOrder()
     ((1 << NS_STYLE_PAINT_ORDER_BITWIDTH) > NS_STYLE_PAINT_ORDER_LAST_VALUE,
      "bitfield width insufficient for paint-order constants");
 
-  static const int32_t kPaintOrderKTable[] = {
+  static const KTableValue kPaintOrderKTable[] = {
     eCSSKeyword_normal,  NS_STYLE_PAINT_ORDER_NORMAL,
     eCSSKeyword_fill,    NS_STYLE_PAINT_ORDER_FILL,
     eCSSKeyword_stroke,  NS_STYLE_PAINT_ORDER_STROKE,
@@ -12338,7 +12402,7 @@ CSSParserImpl::ParsePaintOrder()
     eCSSKeyword_UNKNOWN,-1
   };
 
-  static_assert(NS_ARRAY_LENGTH(kPaintOrderKTable) ==
+  static_assert(MOZ_ARRAY_LENGTH(kPaintOrderKTable) ==
                   2 * (NS_STYLE_PAINT_ORDER_LAST_VALUE + 2),
                 "missing paint-order values in kPaintOrderKTable");
 

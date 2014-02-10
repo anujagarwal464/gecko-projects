@@ -41,7 +41,7 @@
 #include "MediaEngineWebRTC.h"
 #endif
 
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_B2G
 #include "MediaPermissionGonk.h"
 #endif
 
@@ -98,7 +98,8 @@ static nsresult CompareDictionaries(JSContext* aCx, JSObject *aA,
 
   for (size_t i = 0; i < props.length(); i++) {
     JS::Rooted<JS::Value> bprop(aCx);
-    if (!JS_GetPropertyById(aCx, b, props[i], &bprop)) {
+    JS::Rooted<jsid> id(aCx, props[i]);
+    if (!JS_GetPropertyById(aCx, b, id, &bprop)) {
       LOG(("Error parsing dictionary!\n"));
       return NS_ERROR_UNEXPECTED;
     }
@@ -779,7 +780,7 @@ public:
     , mListener(aListener)
     , mPrefs(aPrefs)
     , mDeviceChosen(false)
-    , mBackendChosen(false)
+    , mBackend(nullptr)
     , mManager(MediaManager::GetInstance())
   {}
 
@@ -803,15 +804,11 @@ public:
     , mListener(aListener)
     , mPrefs(aPrefs)
     , mDeviceChosen(false)
-    , mBackendChosen(true)
     , mBackend(aBackend)
     , mManager(MediaManager::GetInstance())
   {}
 
   ~GetUserMediaRunnable() {
-    if (mBackendChosen) {
-      delete mBackend;
-    }
   }
 
   /**
@@ -833,14 +830,15 @@ public:
     MOZ_ASSERT(mSuccess.mRawPtr);
     MOZ_ASSERT(mError.mRawPtr);
 
+    MediaEngine* backend = mBackend;
     // Was a backend provided?
-    if (!mBackendChosen) {
-      mBackend = mManager->GetBackend(mWindowID);
+    if (!backend) {
+      backend = mManager->GetBackend(mWindowID);
     }
 
     // Was a device provided?
     if (!mDeviceChosen) {
-      nsresult rv = SelectDevice();
+      nsresult rv = SelectDevice(backend);
       if (rv != NS_OK) {
         return rv;
       }
@@ -916,12 +914,12 @@ public:
   }
 
   nsresult
-  SelectDevice()
+  SelectDevice(MediaEngine* backend)
   {
     MOZ_ASSERT(mSuccess.mRawPtr);
     MOZ_ASSERT(mError.mRawPtr);
     if (mConstraints.mPicture || mConstraints.mVideo) {
-      ScopedDeletePtr<SourceSet> sources (GetSources(mBackend,
+      ScopedDeletePtr<SourceSet> sources (GetSources(backend,
           mConstraints.mVideom, &MediaEngine::EnumerateVideoDevices));
 
       if (!sources->Length()) {
@@ -935,7 +933,7 @@ public:
     }
 
     if (mConstraints.mAudio) {
-      ScopedDeletePtr<SourceSet> sources (GetSources(mBackend,
+      ScopedDeletePtr<SourceSet> sources (GetSources(backend,
           mConstraints.mAudiom, &MediaEngine::EnumerateAudioDevices));
 
       if (!sources->Length()) {
@@ -1035,9 +1033,8 @@ private:
   MediaEnginePrefs mPrefs;
 
   bool mDeviceChosen;
-  bool mBackendChosen;
 
-  MediaEngine* mBackend;
+  RefPtr<MediaEngine> mBackend;
   nsRefPtr<MediaManager> mManager; // get ref to this when creating the runnable
 };
 
@@ -1327,10 +1324,10 @@ MediaManager::GetUserMedia(JSContext* aCx, bool aPrivileged,
     // Force MediaManager to startup before we try to access it from other threads
     // Hack: should init singleton earlier unless it's expensive (mem or CPU)
     (void) MediaManager::Get();
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_B2G
     // Initialize MediaPermissionManager before send out any permission request.
     (void) MediaPermissionManager::GetInstance();
-#endif //MOZ_WIDGET_GONK
+#endif //MOZ_B2G
   }
 
   // Store the WindowID in a hash table and mark as active. The entry is removed

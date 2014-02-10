@@ -472,6 +472,8 @@ pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
 #if MOZ_UPDATE_CHANNEL == aurora
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/auroranotes/");
+#elif MOZ_UPDATE_CHANNEL == beta
+pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%beta/releasenotes/");
 #else
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/releasenotes/");
 #endif
@@ -800,9 +802,6 @@ pref("browser.ui.linkify.phone", false);
 // Enables/disables Spatial Navigation
 pref("snav.enabled", true);
 
-// URL to fetch about:accounts web content from.
-pref("identity.fxaccounts.remote.uri", "https://accounts.dev.lcip.org/mobile");
-
 // This url, if changed, MUST continue to point to an https url. Pulling arbitrary content to inject into
 // this page over http opens us up to a man-in-the-middle attack that we'd rather not face. If you are a downstream
 // repackager of this code using an alternate snippet url, please keep your users safe
@@ -825,4 +824,20 @@ pref("browser.snippets.syncPromo.enabled", false);
 // The URL of the APK factory from which we obtain APKs for webapps.
 // This currently points to the development server.
 pref("browser.webapps.apkFactoryUrl", "http://dapk.net/application.apk");
+
+// How frequently to check for webapp updates, in seconds (86400 is daily).
+pref("browser.webapps.updateInterval", 86400);
+
+// The URL of the service that checks for updates.
+// This currently points to the development server.
+// To test updates, set this to http://apk-update-checker.paas.allizom.org,
+// which is a test server that always reports all apps as having updates.
+pref("browser.webapps.updateCheckUrl", "http://dapk.net/app_updates");
+
 #endif
+
+// Whether or not to only sync home provider data when the user is on wifi.
+pref("home.sync.wifiOnly", false);
+
+// How frequently to check if we should sync home provider data.
+pref("home.sync.checkIntervalSecs", 3600);

@@ -7,6 +7,12 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+// Log on level :5, instead of default :4.
+#undef LOG
+#define LOG(args) LOG5(args)
+#undef LOG_ENABLED
+#define LOG_ENABLED() LOG5_ENABLED()
+
 #include "Http2Compression.h"
 #include "Http2HuffmanIncoming.h"
 #include "Http2HuffmanOutgoing.h"
@@ -411,7 +417,7 @@ Http2Decompressor::OutputHeader(const nsACString &name, const nsACString &value)
 
   // Status comes first
   if (name.Equals(NS_LITERAL_CSTRING(":status"))) {
-    nsAutoCString status(NS_LITERAL_CSTRING("HTTP/1.1 "));
+    nsAutoCString status(NS_LITERAL_CSTRING("HTTP/2.0 "));
     status.Append(value);
     status.Append(NS_LITERAL_CSTRING("\r\n"));
     mOutput->Insert(status, 0);

@@ -16,9 +16,18 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesUIUtils",
   "resource:///modules/PlacesUIUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "RecentlyClosedTabsAndWindowsMenuUtils",
   "resource:///modules/sessionstore/RecentlyClosedTabsAndWindowsMenuUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "ShortcutUtils",
+  "resource://gre/modules/ShortcutUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
+  "resource://gre/modules/CharsetMenu.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "CharsetManager",
                                    "@mozilla.org/charset-converter-manager;1",
                                    "nsICharsetConverterManager");
+
+XPCOMUtils.defineLazyGetter(this, "CharsetBundle", function() {
+  const kCharsetBundle = "chrome://global/locale/charsetMenu.properties";
+  return Services.strings.createBundle(kCharsetBundle);
+});
 XPCOMUtils.defineLazyGetter(this, "BrandBundle", function() {
   const kBrandBundle = "chrome://branding/locale/brand.properties";
   return Services.strings.createBundle(kBrandBundle);
@@ -32,13 +41,26 @@ let gModuleName = "[CustomizableWidgets]";
 #include logging.js
 
 function setAttributes(aNode, aAttrs) {
+  let doc = aNode.ownerDocument;
   for (let [name, value] of Iterator(aAttrs)) {
     if (!value) {
       if (aNode.hasAttribute(name))
         aNode.removeAttribute(name);
     } else {
-      if (name == "label" || name == "tooltiptext")
-        value = CustomizableUI.getLocalizedProperty({id: aAttrs.id}, name);
+      if (name == "shortcutId") {
+        continue;
+      }
+      if (name == "label" || name == "tooltiptext") {
+        let stringId = (typeof value == "string") ? value : name;
+        let additionalArgs = [];
+        if (aAttrs.shortcutId) {
+          let shortcut = doc.getElementById(aAttrs.shortcutId);
+          if (doc) {
+            additionalArgs.push(ShortcutUtils.prettifyShortcut(shortcut));
+          }
+        }
+        value = CustomizableUI.getLocalizedProperty({id: aAttrs.id}, stringId, additionalArgs);
+      }
       aNode.setAttribute(name, value);
     }
   }
@@ -63,6 +85,7 @@ const CustomizableWidgets = [{
     type: "view",
     viewId: "PanelUI-history",
     shortcutId: "key_gotoHistory",
+    tooltiptext: "history-panelmenu.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     onViewShowing: function(aEvent) {
       // Populate our list of history
@@ -102,9 +125,6 @@ const CustomizableWidgets = [{
               item.setAttribute("label", title || uri);
               item.setAttribute("targetURI", uri);
               item.setAttribute("class", "subviewbutton");
-              item.addEventListener("command", function (aEvent) {
-                onHistoryVisit(uri, aEvent, item);
-              });
               item.addEventListener("click", function (aEvent) {
                 onHistoryVisit(uri, aEvent, item);
               });
@@ -150,25 +170,24 @@ const CustomizableWidgets = [{
       }
 #endif
 
-      let tabsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getTabsFragment(doc.defaultView, "toolbarbutton");
+      let utils = RecentlyClosedTabsAndWindowsMenuUtils;
+      let tabsFragment = utils.getTabsFragment(doc.defaultView, "toolbarbutton", true,
+                                               "menuRestoreAllTabsSubview.label");
       let separator = doc.getElementById("PanelUI-recentlyClosedTabs-separator");
       let elementCount = tabsFragment.childElementCount;
       separator.hidden = !elementCount;
       while (--elementCount >= 0) {
-        if (tabsFragment.children[elementCount].localName != "toolbarbutton")
-          continue;
-        tabsFragment.children[elementCount].setAttribute("class", "subviewbutton");
+        tabsFragment.children[elementCount].classList.add("subviewbutton");
       }
       recentlyClosedTabs.appendChild(tabsFragment);
 
-      let windowsFragment = RecentlyClosedTabsAndWindowsMenuUtils.getWindowsFragment(doc.defaultView, "toolbarbutton");
+      let windowsFragment = utils.getWindowsFragment(doc.defaultView, "toolbarbutton", true,
+                                                     "menuRestoreAllWindowsSubview.label");
       separator = doc.getElementById("PanelUI-recentlyClosedWindows-separator");
       elementCount = windowsFragment.childElementCount;
       separator.hidden = !elementCount;
       while (--elementCount >= 0) {
-        if (windowsFragment.children[elementCount].localName != "toolbarbutton")
-          continue;
-        windowsFragment.children[elementCount].setAttribute("class", "subviewbutton");
+        windowsFragment.children[elementCount].classList.add("subviewbutton");
       }
       recentlyClosedWindows.appendChild(windowsFragment);
     },
@@ -190,6 +209,7 @@ const CustomizableWidgets = [{
   }, {
     id: "save-page-button",
     shortcutId: "key_savePage",
+    tooltiptext: "save-page-button.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
       let win = aEvent.target &&
@@ -202,6 +222,7 @@ const CustomizableWidgets = [{
   }, {
     id: "find-button",
     shortcutId: "key_find",
+    tooltiptext: "find-button.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
       let win = aEvent.target &&
@@ -214,6 +235,7 @@ const CustomizableWidgets = [{
   }, {
     id: "open-file-button",
     shortcutId: "openFileKb",
+    tooltiptext: "open-file-button.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
       let win = aEvent.target
@@ -268,7 +290,6 @@ const CustomizableWidgets = [{
       }
       items.appendChild(fragment);
 
-      aEvent.target.addEventListener("command", win.PanelUI);
     },
     onViewHiding: function(aEvent) {
       let doc = aEvent.target.ownerDocument;
@@ -284,11 +305,11 @@ const CustomizableWidgets = [{
       }
 
       parent.appendChild(items);
-      aEvent.target.removeEventListener("command", win.PanelUI);
     }
   }, {
     id: "add-ons-button",
     shortcutId: "key_openAddons",
+    tooltiptext: "add-ons-button.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     onCommand: function(aEvent) {
       let win = aEvent.target &&
@@ -303,7 +324,14 @@ const CustomizableWidgets = [{
     defaultArea: CustomizableUI.AREA_PANEL,
 #ifdef XP_WIN
     label: "preferences-button.labelWin",
-    tooltiptext: "preferences-button.tooltipWin",
+    tooltiptext: "preferences-button.tooltipWin2",
+#else
+#ifdef XP_MACOSX
+    tooltiptext: "preferences-button.tooltiptext.withshortcut",
+    shortcutId: "key_preferencesCmdMac",
+#else
+    tooltiptext: "preferences-button.tooltiptext",
+#endif
 #endif
     onCommand: function(aEvent) {
       let win = aEvent.target &&
@@ -334,20 +362,23 @@ const CustomizableWidgets = [{
         command: "cmd_fullZoomReduce",
         class: cls,
         label: true,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_fullZoomReduce",
       }, {
         id: "zoom-reset-button",
         closemenu: closeMenu,
         command: "cmd_fullZoomReset",
         class: cls,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_fullZoomReset",
       }, {
         id: "zoom-in-button",
         closemenu: closeMenu,
         command: "cmd_fullZoomEnlarge",
         class: cls,
         label: true,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_fullZoomEnlarge",
       }];
 
       let node = aDocument.createElementNS(kNSXUL, "toolbaritem");
@@ -490,19 +521,22 @@ const CustomizableWidgets = [{
         command: "cmd_cut",
         class: cls,
         label: true,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_cut",
       }, {
         id: "copy-button",
         command: "cmd_copy",
         class: cls,
         label: true,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_copy",
       }, {
         id: "paste-button",
         command: "cmd_paste",
         class: cls,
         label: true,
-        tooltiptext: true
+        tooltiptext: "tooltiptext2",
+        shortcutId: "key_paste",
       }];
 
       let node = aDocument.createElementNS(kNSXUL, "toolbaritem");
@@ -610,6 +644,7 @@ const CustomizableWidgets = [{
     id: "characterencoding-button",
     type: "view",
     viewId: "PanelUI-characterEncodingView",
+    tooltiptext: "characterencoding-button.tooltiptext2",
     defaultArea: CustomizableUI.AREA_PANEL,
     maybeDisableMenu: function(aDocument) {
       let window = aDocument.defaultView;
@@ -617,126 +652,86 @@ const CustomizableWidgets = [{
                window.gBrowser.docShell &&
                window.gBrowser.docShell.mayEnableCharacterEncodingMenu);
     },
-    getCharsetList: function(aSection, aDocument) {
-      let currCharset = aDocument.defaultView.content.document.characterSet;
-
-      let list = "";
-      try {
-        let pref = "intl.charsetmenu.browser." + aSection;
-        list = Services.prefs.getComplexValue(pref,
-                                              Ci.nsIPrefLocalizedString).data;
-      } catch (e) {}
-
-      list = list.trim();
-      if (!list)
-        return [];
-
-      list = list.split(",");
-
-      let items = [];
-      for (let charset of list) {
-        charset = charset.trim();
-
-        let notForBrowser = false;
-        try {
-          notForBrowser = CharsetManager.getCharsetData(charset,
-                                                        "notForBrowser");
-        } catch (e) {}
-
-        if (notForBrowser)
-          continue;
-
-        let title = charset;
-        try {
-          title = CharsetManager.getCharsetTitle(charset);
-        } catch (e) {}
-
-        items.push({value: charset, name: title, current: charset == currCharset});
-      }
-
-      return items;
-    },
-    getAutoDetectors: function(aDocument) {
-      let detectorEnum = CharsetManager.GetCharsetDetectorList();
-      let currDetector;
-      try {
-        currDetector = Services.prefs.getComplexValue(
-          "intl.charset.detector", Ci.nsIPrefLocalizedString).data;
-      } catch (e) {}
-      if (!currDetector)
-        currDetector = "off";
-      currDetector = "chardet." + currDetector;
-
-      let items = [];
-
-      while (detectorEnum.hasMore()) {
-        let detector = detectorEnum.getNext();
-
-        let title = detector;
-        try {
-          title = CharsetManager.getCharsetTitle(detector);
-        } catch (e) {}
-
-        items.push({value: detector, name: title, current: detector == currDetector});
-      }
-
-      items.sort((aItem1, aItem2) => {
-        return aItem1.name.localeCompare(aItem2.name);
-      });
-
-      return items;
-    },
     populateList: function(aDocument, aContainerId, aSection) {
       let containerElem = aDocument.getElementById(aContainerId);
 
-      while (containerElem.firstChild) {
-        containerElem.removeChild(containerElem.firstChild);
-      }
-
       containerElem.addEventListener("command", this.onCommand, false);
 
-      let list = [];
-      if (aSection == "autodetect") {
-        list = this.getAutoDetectors(aDocument);
-      } else if (aSection == "browser") {
-        let staticList = this.getCharsetList("static", aDocument);
-        let cacheList = this.getCharsetList("cache", aDocument);
-        // Combine lists, and de-duplicate.
-        let checkedIn = new Set();
-        for (let item of staticList.concat(cacheList)) {
-          let itemName = item.name.toLowerCase();
-          if (!checkedIn.has(itemName)) {
-            list.push(item);
-            checkedIn.add(itemName);
-          }
-        }
-      }
+      let list = this.charsetInfo[aSection];
 
-      // Update the appearance of the buttons when it's not possible to
-      // customize encoding.
-      let disabled = this.maybeDisableMenu(aDocument);
       for (let item of list) {
         let elem = aDocument.createElementNS(kNSXUL, "toolbarbutton");
-        elem.setAttribute("label", item.name);
-        elem.section = aSection;
-        elem.value = item.value;
-        if (item.current)
-          elem.setAttribute("current", "true");
-        if (disabled)
-          elem.setAttribute("disabled", "true");
+        elem.setAttribute("label", item.label);
+        elem.section = aSection == "detectors" ? "detectors" : "charsets";
+        elem.value = item.id;
         elem.setAttribute("class", "subviewbutton");
         containerElem.appendChild(elem);
+      }
+    },
+    updateCurrentCharset: function(aDocument) {
+      let content = aDocument.defaultView.content;
+      let currentCharset = content && content.document && content.document.characterSet;
+      if (currentCharset) {
+        currentCharset = aDocument.defaultView.FoldCharset(currentCharset);
+      }
+      currentCharset = currentCharset ? ("charset." + currentCharset) : "";
+
+      let pinnedContainer = aDocument.getElementById("PanelUI-characterEncodingView-pinned");
+      let charsetContainer = aDocument.getElementById("PanelUI-characterEncodingView-charsets");
+      let elements = [...(pinnedContainer.childNodes), ...(charsetContainer.childNodes)];
+
+      this._updateElements(elements, currentCharset);
+    },
+    updateCurrentDetector: function(aDocument) {
+      let detectorContainer = aDocument.getElementById("PanelUI-characterEncodingView-autodetect");
+      let detectorEnum = CharsetManager.GetCharsetDetectorList();
+      let currentDetector;
+      try {
+        currentDetector = Services.prefs.getComplexValue(
+          "intl.charset.detector", Ci.nsIPrefLocalizedString).data;
+      } catch (e) {}
+      currentDetector = "chardet." + (currentDetector || "off");
+
+      this._updateElements(detectorContainer.childNodes, currentDetector);
+    },
+    _updateElements: function(aElements, aCurrentItem) {
+      if (!aElements.length) {
+        return;
+      }
+      let disabled = this.maybeDisableMenu(aElements[0].ownerDocument);
+      for (let elem of aElements) {
+        if (disabled) {
+          elem.setAttribute("disabled", "true");
+        } else {
+          elem.removeAttribute("disabled");
+        }
+        if (elem.value.toLowerCase() == aCurrentItem.toLowerCase()) {
+          elem.setAttribute("current", "true");
+        } else {
+          elem.removeAttribute("current");
+        }
       }
     },
     onViewShowing: function(aEvent) {
       let document = aEvent.target.ownerDocument;
 
-      this.populateList(document,
-                        "PanelUI-characterEncodingView-customlist",
-                        "browser");
-      this.populateList(document,
-                        "PanelUI-characterEncodingView-autodetect",
-                        "autodetect");
+      let autoDetectLabelId = "PanelUI-characterEncodingView-autodetect-label";
+      let autoDetectLabel = document.getElementById(autoDetectLabelId);
+      if (!autoDetectLabel.hasAttribute("value")) {
+        let label = CharsetBundle.GetStringFromName("charsetMenuAutodet");
+        autoDetectLabel.setAttribute("value", label);
+        this.populateList(document,
+                          "PanelUI-characterEncodingView-pinned",
+                          "pinnedCharsets");
+        this.populateList(document,
+                          "PanelUI-characterEncodingView-charsets",
+                          "otherCharsets");
+        this.populateList(document,
+                          "PanelUI-characterEncodingView-autodetect",
+                          "detectors");
+      }
+      this.updateCurrentDetector(document);
+      this.updateCurrentCharset(document);
     },
     onCommand: function(aEvent) {
       let node = aEvent.target;
@@ -744,16 +739,16 @@ const CustomizableWidgets = [{
         return;
       }
 
-      CustomizableUI.hidePanelForNode(node);
       let window = node.ownerDocument.defaultView;
       let section = node.section;
       let value = node.value;
 
       // The behavior as implemented here is directly based off of the
       // `MultiplexHandler()` method in browser.js.
-      if (section == "browser") {
-        window.BrowserSetForcedCharacterSet(value);
-      } else if (section == "autodetect") {
+      if (section != "detectors") {
+        let charset = value.substring(value.indexOf('charset.') + 'charset.'.length);
+        window.BrowserSetForcedCharacterSet(charset);
+      } else {
         value = value.replace(/^chardet\./, "");
         if (value == "off") {
           value = "";
@@ -799,6 +794,7 @@ const CustomizableWidgets = [{
         onWidgetRemoved: (aWidgetId, aPrevArea) => {
           if (aWidgetId != this.id)
             return;
+          aNode.removeAttribute("disabled");
           if (aPrevArea == CustomizableUI.AREA_PANEL) {
             let panel = document.getElementById(kPanelId);
             panel.removeEventListener("popupshowing", updateButton);
@@ -814,9 +810,13 @@ const CustomizableWidgets = [{
         }
       };
       CustomizableUI.addListener(listener);
+      if (!this.charsetInfo) {
+        this.charsetInfo = CharsetMenu.getData();
+      }
     }
   }, {
     id: "email-link-button",
+    tooltiptext: "email-link-button.tooltiptext2",
     onCommand: function(aEvent) {
       let win = aEvent.view;
       win.MailIntegration.sendLinkForWindow(win.content);

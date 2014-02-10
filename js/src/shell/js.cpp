@@ -60,6 +60,7 @@
 
 #include "builtin/TestingFunctions.h"
 #include "frontend/Parser.h"
+#include "jit/arm/Simulator-arm.h"
 #include "jit/Ion.h"
 #include "js/OldDebugAPI.h"
 #include "js/StructuredClone.h"
@@ -126,6 +127,7 @@ static bool enableAsmJS = true;
 static bool printTiming = false;
 static const char *jsCacheDir = nullptr;
 static const char *jsCacheAsmJSPath = nullptr;
+static bool jsCachingEnabled = true;
 mozilla::Atomic<int32_t> jsCacheOpened(false);
 
 static bool
@@ -3764,34 +3766,6 @@ ThisFilename(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-/*
- * Internal class for testing hasPrototype easily.
- * Uses passed in prototype instead of target's.
- */
-class WrapperWithProto : public Wrapper
-{
-  public:
-    explicit WrapperWithProto(unsigned flags)
-      : Wrapper(flags, true)
-    { }
-
-    static JSObject *New(JSContext *cx, JSObject *obj, JSObject *proto, JSObject *parent,
-                         Wrapper *handler);
-};
-
-/* static */ JSObject *
-WrapperWithProto::New(JSContext *cx, JSObject *obj, JSObject *proto, JSObject *parent,
-                      Wrapper *handler)
-{
-    JS_ASSERT(parent);
-    AutoMarkInDeadZone amd(cx->zone());
-
-    RootedValue priv(cx, ObjectValue(*obj));
-    ProxyOptions options;
-    options.setCallable(obj->isCallable());
-    return NewProxyObject(cx, handler, priv, proto, parent, options);
-}
-
 static bool
 Wrap(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -3825,9 +3799,11 @@ WrapWithProto(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    JSObject *wrapped = WrapperWithProto::New(cx, &obj.toObject(), proto.toObjectOrNull(),
-                                              &obj.toObject().global(),
-                                              &Wrapper::singletonWithPrototype);
+    WrapperOptions options(cx);
+    options.setProto(proto.toObjectOrNull());
+    options.selectDefaultClass(obj.toObject().isCallable());
+    JSObject *wrapped = Wrapper::New(cx, &obj.toObject(), &obj.toObject().global(),
+                                     &Wrapper::singletonWithPrototype, &options);
     if (!wrapped)
         return false;
 
@@ -4024,7 +4000,16 @@ static bool
 IsCachingEnabled(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(jsCacheAsmJSPath != nullptr);
+    args.rval().setBoolean(jsCachingEnabled && jsCacheAsmJSPath != nullptr);
+    return true;
+}
+
+static bool
+SetCachingEnabled(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    jsCachingEnabled = ToBoolean(args.get(0));
+    args.rval().setUndefined();
     return true;
 }
 
@@ -4339,7 +4324,11 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 
     JS_FN_HELP("isCachingEnabled", IsCachingEnabled, 0, 0,
 "isCachingEnabled()",
-"  Return whether --js-cache was set."),
+"  Return whether JS caching is enabled."),
+
+    JS_FN_HELP("setCachingEnabled", SetCachingEnabled, 1, 0,
+"setCachingEnabled(b)",
+"  Enable or disable JS caching."),
 
     JS_FS_HELP_END
 };
@@ -4913,8 +4902,8 @@ static const JSJitInfo doFoo_methodinfo = {
 static const JSPropertySpec dom_props[] = {
     {"x", 0,
      JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS,
-     { (JSPropertyOp)dom_genericGetter, &dom_x_getterinfo },
-     { (JSStrictPropertyOp)dom_genericSetter, &dom_x_setterinfo }
+     { { (JSPropertyOp)dom_genericGetter, &dom_x_getterinfo } },
+     { { (JSStrictPropertyOp)dom_genericSetter, &dom_x_setterinfo } }
     },
     JS_PS_END
 };
@@ -5098,7 +5087,7 @@ ShellOpenAsmJSCacheEntryForRead(HandleObject global, const jschar *begin, const 
                                 size_t *serializedSizeOut, const uint8_t **memoryOut,
                                 intptr_t *handleOut)
 {
-    if (!jsCacheAsmJSPath)
+    if (!jsCachingEnabled || !jsCacheAsmJSPath)
         return false;
 
     ScopedFileDesc fd(open(jsCacheAsmJSPath, O_RDWR), ScopedFileDesc::READ_LOCK);
@@ -5170,7 +5159,7 @@ static bool
 ShellOpenAsmJSCacheEntryForWrite(HandleObject global, const jschar *begin, const jschar *end,
                                  size_t serializedSize, uint8_t **memoryOut, intptr_t *handleOut)
 {
-    if (!jsCacheAsmJSPath)
+    if (!jsCachingEnabled || !jsCacheAsmJSPath)
         return false;
 
     // Create the cache directory if it doesn't already exist.
@@ -5481,7 +5470,7 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
 #ifdef JS_THREADSAFE
     int32_t threadCount = op->getIntOption("thread-count");
     if (threadCount >= 0)
-        cx->runtime()->setFakeCPUCount(threadCount);
+        SetFakeCPUCount(threadCount);
 #endif /* JS_THREADSAFE */
 
 #if defined(JS_ION)
@@ -5870,6 +5859,12 @@ main(int argc, char **argv, char **envp)
 #endif
         || !op.addIntOption('\0', "available-memory", "SIZE",
                             "Select GC settings based on available memory (MB)", 0)
+#ifdef JS_ARM_SIMULATOR
+        || !op.addBoolOption('\0', "arm-sim-icache-checks", "Enable icache flush checks in the ARM "
+                             "simulator.")
+        || !op.addIntOption('\0', "arm-sim-stop-at", "NUMBER", "Stop the ARM simulator after the given "
+                            "NUMBER of instructions.", -1)
+#endif
     )
     {
         return EXIT_FAILURE;
@@ -5916,6 +5911,15 @@ main(int argc, char **argv, char **envp)
         PropagateFlagToNestedShells("--no-sse4");
     }
 #endif
+#endif
+
+#ifdef JS_ARM_SIMULATOR
+    if (op.getBoolOption("arm-sim-icache-checks"))
+        jit::Simulator::ICacheCheckingEnabled = true;
+
+    int32_t stopAt = op.getIntOption("arm-sim-stop-at");
+    if (stopAt >= 0)
+        jit::Simulator::StopSimAt = stopAt;
 #endif
 
     // Start the engine.

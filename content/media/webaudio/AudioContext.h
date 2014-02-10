@@ -8,7 +8,6 @@
 #define AudioContext_h_
 
 #include "mozilla/dom/AudioChannelBinding.h"
-#include "EnableWebAudioCheck.h"
 #include "MediaBufferDecoder.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/TypedArray.h"
@@ -64,8 +63,7 @@ class WaveShaperNode;
 class PeriodicWave;
 
 class AudioContext MOZ_FINAL : public nsDOMEventTargetHelper,
-                               public nsIMemoryReporter,
-                               public EnableWebAudioCheck
+                               public nsIMemoryReporter
 {
   AudioContext(nsPIDOMWindow* aParentWindow,
                bool aIsOffline,
@@ -246,7 +244,23 @@ public:
   AudioChannel MozAudioChannelType() const;
   void SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv);
 
+  void UpdateNodeCount(int32_t aDelta);
+
+  double DOMTimeToStreamTime(double aTime) const
+  {
+    return aTime - ExtraCurrentTime();
+  }
+
 private:
+  /**
+   * Returns the amount of extra time added to the current time of the
+   * AudioDestinationNode's MediaStream to get this AudioContext's currentTime.
+   * Must be subtracted from all DOM API parameter times that are on the same
+   * timeline as AudioContext's currentTime to get times we can pass to the
+   * MediaStreamGraph.
+   */
+  double ExtraCurrentTime() const;
+
   void RemoveFromDecodeQueue(WebAudioDecodeJob* aDecodeJob);
   void ShutdownDecoder();
 
@@ -272,6 +286,8 @@ private:
   nsTHashtable<nsPtrHashKey<PannerNode> > mPannerNodes;
   // Number of channels passed in the OfflineAudioContext ctor.
   uint32_t mNumberOfChannels;
+  // Number of nodes that currently exist for this AudioContext
+  int32_t mNodeCount;
   bool mIsOffline;
   bool mIsStarted;
   bool mIsShutDown;

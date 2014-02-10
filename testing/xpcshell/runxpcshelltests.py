@@ -77,9 +77,9 @@ import mozinfo
 # TODO: perhaps this should be in a more generally shared location?
 # This regex matches all of the C0 and C1 control characters
 # (U+0000 through U+001F; U+007F; U+0080 through U+009F),
-# except TAB (U+0009) and LF (U+000A); also, backslash (U+005C).
+# except TAB (U+0009), CR (U+000D), LF (U+000A) and backslash (U+005C).
 # A raw string is deliberately not used.
-_cleanup_encoding_re = re.compile(u'[\x00-\x08\x0b-\x1f\x7f-\x9f\\\\]')
+_cleanup_encoding_re = re.compile(u'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\\\\]')
 def _cleanup_encoding_repl(m):
     c = m.group(0)
     return '\\\\' if c == '\\' else '\\x{:02X}'.format(ord(c))
@@ -796,7 +796,11 @@ class XPCShellTests(object):
 
         self.buildTestPath()
 
-        self.alltests = mp.active_tests(**mozinfo.info)
+        try:
+            self.alltests = mp.active_tests(**mozinfo.info)
+        except TypeError:
+            sys.stderr.write("*** offending mozinfo.info: %s\n" % repr(mozinfo.info))
+            raise
 
         if self.singleFile is None and self.totalChunks > 1:
             self.chunkTests()
@@ -965,9 +969,7 @@ class XPCShellTests(object):
 
         # We try to find the node executable in the path given to us by the user in
         # the MOZ_NODE_PATH environment variable
-        # localPath = os.getenv('MOZ_NODE_PATH', None)
-        # Temporarily, we use the node binary in this directory
-        localPath = os.path.join(os.path.split(os.path.abspath(__file__))[0], 'node')
+        localPath = os.getenv('MOZ_NODE_PATH', None)
         if localPath and os.path.exists(localPath) and os.path.isfile(localPath):
             nodeBin = localPath
 
@@ -989,7 +991,7 @@ class XPCShellTests(object):
                         # tell us it's started
                         msg = process.stdout.readline()
                         if 'server listening' in msg:
-                            nodeMozInfo['hasNode'] = True  # Todo: refactor this
+                            nodeMozInfo['hasNode'] = True
                     except OSError, e:
                         # This occurs if the subprocess couldn't be started
                         self.log.error('Could not run %s server: %s' % (name, str(e)))

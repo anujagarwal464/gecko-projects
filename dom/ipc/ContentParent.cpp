@@ -1599,25 +1599,25 @@ ContentParent::RecvSetClipboardText(const nsString& text,
     nsCOMPtr<nsISupportsString> dataWrapper =
         do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, true);
-    
+
     rv = dataWrapper->SetData(text);
     NS_ENSURE_SUCCESS(rv, true);
-    
+
     nsCOMPtr<nsITransferable> trans = do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
     NS_ENSURE_SUCCESS(rv, true);
     trans->Init(nullptr);
-    
+
     // If our data flavor has already been added, this will fail. But we don't care
     trans->AddDataFlavor(kUnicodeMime);
     trans->SetIsPrivateData(isPrivateData);
-    
+
     nsCOMPtr<nsISupports> nsisupportsDataWrapper =
         do_QueryInterface(dataWrapper);
-    
+
     rv = trans->SetTransferData(kUnicodeMime, nsisupportsDataWrapper,
                                 text.Length() * sizeof(char16_t));
     NS_ENSURE_SUCCESS(rv, true);
-    
+
     clipboard->SetData(trans, nullptr, whichClipboard);
     return true;
 }
@@ -1632,43 +1632,44 @@ ContentParent::RecvGetClipboardText(const int32_t& whichClipboard, nsString* tex
     nsCOMPtr<nsITransferable> trans = do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
     NS_ENSURE_SUCCESS(rv, true);
     trans->Init(nullptr);
-    
+    trans->AddDataFlavor(kUnicodeMime);
+
     clipboard->GetData(trans, whichClipboard);
     nsCOMPtr<nsISupports> tmp;
     uint32_t len;
     rv = trans->GetTransferData(kUnicodeMime, getter_AddRefs(tmp), &len);
     if (NS_FAILED(rv))
-        return false;
+        return true;
 
     nsCOMPtr<nsISupportsString> supportsString = do_QueryInterface(tmp);
     // No support for non-text data
     if (!supportsString)
-        return false;
+        return true;
     supportsString->GetData(*text);
     return true;
 }
 
 bool
-ContentParent::RecvEmptyClipboard()
+ContentParent::RecvEmptyClipboard(const int32_t& whichClipboard)
 {
     nsresult rv;
     nsCOMPtr<nsIClipboard> clipboard(do_GetService(kCClipboardCID, &rv));
     NS_ENSURE_SUCCESS(rv, true);
 
-    clipboard->EmptyClipboard(nsIClipboard::kGlobalClipboard);
+    clipboard->EmptyClipboard(whichClipboard);
 
     return true;
 }
 
 bool
-ContentParent::RecvClipboardHasText(bool* hasText)
+ContentParent::RecvClipboardHasText(const int32_t& whichClipboard, bool* hasText)
 {
     nsresult rv;
     nsCOMPtr<nsIClipboard> clipboard(do_GetService(kCClipboardCID, &rv));
     NS_ENSURE_SUCCESS(rv, true);
 
-    clipboard->HasDataMatchingFlavors(sClipboardTextFlavors, 1, 
-                                      nsIClipboard::kGlobalClipboard, hasText);
+    clipboard->HasDataMatchingFlavors(sClipboardTextFlavors, 1,
+                                      whichClipboard, hasText);
     return true;
 }
 
@@ -1835,7 +1836,7 @@ ContentParent::RecvAddNewProcess(const uint32_t& aPid,
                                 MAGIC_PREALLOCATED_APP_MANIFEST_URL,
                                 aPid,
                                 aFds,
-                                base::PRIVILEGES_DEFAULT);
+                                base::PRIVILEGES_INHERIT);
     content->Init();
     PreallocatedProcessManager::PublishSpareProcess(content);
     return true;
@@ -2012,7 +2013,7 @@ ContentParent::AllocPJavaScriptParent()
 bool
 ContentParent::DeallocPJavaScriptParent(PJavaScriptParent *parent)
 {
-    static_cast<mozilla::jsipc::JavaScriptParent *>(parent)->destroyFromContent();
+    static_cast<mozilla::jsipc::JavaScriptParent *>(parent)->decref();
     return true;
 }
 
@@ -2256,6 +2257,11 @@ void
 ContentParent::FriendlyName(nsAString& aName)
 {
     aName.Truncate();
+#ifdef MOZ_NUWA_PROCESS
+    if (IsNuwaProcess()) {
+        aName.AssignLiteral("(Nuwa)");
+    } else
+#endif
     if (IsPreallocated()) {
         aName.AssignLiteral("(Preallocated)");
     } else if (mIsForBrowser) {
@@ -3251,6 +3257,22 @@ ContentParent::RecvRemoveIdleObserver(const uint64_t& aObserver, const uint32_t&
   }
 
   return true;
+}
+
+bool
+ContentParent::RecvBackUpXResources(const FileDescriptor& aXSocketFd)
+{
+#ifndef MOZ_X11
+    NS_RUNTIMEABORT("This message only makes sense on X11 platforms");
+#else
+    NS_ABORT_IF_FALSE(0 > mChildXSocketFdDup.get(),
+                      "Already backed up X resources??");
+    mChildXSocketFdDup.forget();
+    if (aXSocketFd.IsValid()) {
+      mChildXSocketFdDup.reset(aXSocketFd.PlatformHandle());
+    }
+#endif
+    return true;
 }
 
 } // namespace dom

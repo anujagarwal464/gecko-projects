@@ -72,9 +72,11 @@ CreateTextureHostD3D9(const SurfaceDescriptor& aDesc,
     }
     case SurfaceDescriptor::TSurfaceDescriptorD3D9: {
       result = new TextureHostD3D9(aFlags, aDesc);
+      break;
     }
     case SurfaceDescriptor::TSurfaceDescriptorDIB: {
       result = new DIBTextureHostD3D9(aFlags, aDesc);
+      break;
     }
     default: {
       NS_WARNING("Unsupported SurfaceDescriptor type");
@@ -1037,7 +1039,7 @@ DataTextureSourceD3D9::DataTextureSourceD3D9(gfx::SurfaceFormat aFormat,
 {
   mSize = aSize;
   mTexture = aTexture;
-  mStereoMode = STEREO_MODE_MONO;
+  mStereoMode = StereoMode::MONO;
   MOZ_COUNT_CTOR(DataTextureSourceD3D9);
 }
 
@@ -1255,6 +1257,8 @@ CairoTextureClientD3D9::CairoTextureClientD3D9(gfx::SurfaceFormat aFormat, Textu
   : TextureClient(aFlags)
   , mFormat(aFormat)
   , mIsLocked(false)
+  , mNeedsClear(false)
+  , mLockRect(false)
 {
   MOZ_COUNT_CTOR(CairoTextureClientD3D9);
 }
@@ -1271,6 +1275,10 @@ CairoTextureClientD3D9::Lock(OpenMode)
   if (!IsValid() || !IsAllocated()) {
     return false;
   }
+  if (mNeedsClear) {
+    mDrawTarget = GetAsDrawTarget();
+    mDrawTarget->ClearRect(Rect(0, 0, GetSize().width, GetSize().height));
+  }
   mIsLocked = true;
   return true;
 }
@@ -1282,6 +1290,11 @@ CairoTextureClientD3D9::Unlock()
   if (mDrawTarget) {
     mDrawTarget->Flush();
     mDrawTarget = nullptr;
+  }
+
+  if (mLockRect) {
+    mD3D9Surface->UnlockRect();
+    mLockRect = false;
   }
 
   if (mSurface) {
@@ -1326,11 +1339,19 @@ CairoTextureClientD3D9::GetAsDrawTarget()
     }
   }
 
-  mSurface = new gfxWindowsSurface(mD3D9Surface);
-  if (!mSurface || mSurface->CairoStatus()) {
-    NS_WARNING("Could not create surface for d3d9 surface");
-    mSurface = nullptr;
-    return nullptr;
+  if (ContentForFormat(mFormat) == gfxContentType::COLOR_ALPHA) {
+    D3DLOCKED_RECT rect;
+    mD3D9Surface->LockRect(&rect, nullptr, 0);
+    mSurface = new gfxImageSurface((uint8_t*)rect.pBits, ThebesIntSize(mSize),
+                                   rect.Pitch, gfxImageFormat::ARGB32);
+    mLockRect = true;
+  } else {
+    mSurface = new gfxWindowsSurface(mD3D9Surface);
+    if (!mSurface || mSurface->CairoStatus()) {
+      NS_WARNING("Could not create surface for d3d9 surface");
+      mSurface = nullptr;
+      return nullptr;
+    }
   }
 
   mDrawTarget =
@@ -1353,13 +1374,7 @@ CairoTextureClientD3D9::AllocateForSurface(gfx::IntSize aSize, TextureAllocation
     return false;
   }
 
-  if (aFlags & ALLOC_CLEAR_BUFFER) {
-    DebugOnly<bool> locked = Lock(OPEN_WRITE_ONLY);
-    MOZ_ASSERT(locked);
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    dt->ClearRect(Rect(0, 0, GetSize().width, GetSize().height));
-    Unlock();
-  }
+  mNeedsClear = aFlags & ALLOC_CLEAR_BUFFER;
 
   MOZ_ASSERT(mTexture);
   return true;

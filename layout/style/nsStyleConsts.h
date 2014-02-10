@@ -212,6 +212,11 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_COLOR_CONTEXT_STROKE                 -8
 
 // See nsStyleDisplay
+#define NS_STYLE_WILL_CHANGE_TRANSFORM          (1<<0)
+#define NS_STYLE_WILL_CHANGE_SCROLL             (1<<1)
+#define NS_STYLE_WILL_CHANGE_OPACITY            (1<<2)
+
+// See nsStyleDisplay
 #define NS_STYLE_ANIMATION_DIRECTION_NORMAL       0
 #define NS_STYLE_ANIMATION_DIRECTION_REVERSE      1
 #define NS_STYLE_ANIMATION_DIRECTION_ALTERNATE    2
@@ -1019,6 +1024,10 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_BLEND_SATURATION                   13
 #define NS_STYLE_BLEND_COLOR                        14
 #define NS_STYLE_BLEND_LUMINOSITY                   15
+
+// See nsStyleText::mControlCharacterVisibility
+#define NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN  0
+#define NS_STYLE_CONTROL_CHARACTER_VISIBILITY_VISIBLE 1
 
 /*****************************************************************************
  * Constants for media features.                                             *

@@ -170,7 +170,7 @@ let CustomizableUIInternal = {
       anchor: "PanelUI-menu-button",
       type: CustomizableUI.TYPE_MENU_PANEL,
       defaultPlacements: panelPlacements
-    });
+    }, true);
     PanelWideWidgetTracker.init();
 
     this.registerArea(CustomizableUI.AREA_NAVBAR, {
@@ -185,16 +185,30 @@ let CustomizableUIInternal = {
         "downloads-button",
         "home-button",
         "social-share-button",
-      ]
-    });
+      ],
+      defaultCollapsed: false,
+    }, true);
 #ifndef XP_MACOSX
     this.registerArea(CustomizableUI.AREA_MENUBAR, {
       legacy: true,
       type: CustomizableUI.TYPE_TOOLBAR,
       defaultPlacements: [
         "menubar-items",
-      ]
-    });
+      ],
+      get defaultCollapsed() {
+#ifdef MENUBAR_CAN_AUTOHIDE
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_QT)
+        return true;
+#else
+        // This is duplicated logic from /browser/base/jar.mn
+        // for win6BrowserOverlay.xul.
+        return Services.appinfo.OS == "WINNT" &&
+               Services.sysinfo.getProperty("version") != "5.1";
+#endif
+#endif
+        return false;
+      }
+    }, true);
 #endif
     this.registerArea(CustomizableUI.AREA_TABSTRIP, {
       legacy: true,
@@ -204,21 +218,24 @@ let CustomizableUIInternal = {
         "new-tab-button",
         "alltabs-button",
         "tabs-closebutton",
-      ]
-    });
+      ],
+      defaultCollapsed: false,
+    }, true);
     this.registerArea(CustomizableUI.AREA_BOOKMARKS, {
       legacy: true,
       type: CustomizableUI.TYPE_TOOLBAR,
       defaultPlacements: [
         "personal-bookmarks",
-      ]
-    });
+      ],
+      defaultCollapsed: true,
+    }, true);
 
     this.registerArea(CustomizableUI.AREA_ADDONBAR, {
       type: CustomizableUI.TYPE_TOOLBAR,
       legacy: true,
-      defaultPlacements: ["addonbar-closebutton", "status-bar"]
-    });
+      defaultPlacements: ["addonbar-closebutton", "status-bar"],
+      defaultCollapsed: false,
+    }, true);
   },
 
   _defineBuiltInWidgets: function() {
@@ -254,7 +271,7 @@ let CustomizableUIInternal = {
     return wrapper;
   },
 
-  registerArea: function(aName, aProperties) {
+  registerArea: function(aName, aProperties, aInternalCaller) {
     if (typeof aName != "string" || !/^[a-z0-9-_]{1,}$/i.test(aName)) {
       throw new Error("Invalid area name");
     }
@@ -273,6 +290,16 @@ let CustomizableUIInternal = {
     // Default to a toolbar:
     if (!props.has("type")) {
       props.set("type", CustomizableUI.TYPE_TOOLBAR);
+    }
+    if (props.get("type") == CustomizableUI.TYPE_TOOLBAR) {
+      if (!aInternalCaller && props.has("defaultCollapsed")) {
+        throw new Error("defaultCollapsed is only allowed for default toolbars.")
+      }
+      if (!props.has("defaultCollapsed")) {
+        props.set("defaultCollapsed", true);
+      }
+    } else if (props.has("defaultCollapsed")) {
+      throw new Error("defaultCollapsed only applies for TYPE_TOOLBAR areas.");
     }
     // Sanity check type:
     let allTypes = [CustomizableUI.TYPE_TOOLBAR, CustomizableUI.TYPE_MENU_PANEL];
@@ -635,33 +662,33 @@ let CustomizableUIInternal = {
     return [null, null];
   },
 
-  registerMenuPanel: function(aPanel) {
+  registerMenuPanel: function(aPanelContents) {
     if (gBuildAreas.has(CustomizableUI.AREA_PANEL) &&
-        gBuildAreas.get(CustomizableUI.AREA_PANEL).has(aPanel)) {
+        gBuildAreas.get(CustomizableUI.AREA_PANEL).has(aPanelContents)) {
       return;
     }
 
-    let document = aPanel.ownerDocument;
+    let document = aPanelContents.ownerDocument;
 
-    aPanel.toolbox = document.getElementById("navigator-toolbox");
-    aPanel.customizationTarget = aPanel;
+    aPanelContents.toolbox = document.getElementById("navigator-toolbox");
+    aPanelContents.customizationTarget = aPanelContents;
 
-    this.addPanelCloseListeners(aPanel);
+    this.addPanelCloseListeners(this._getPanelForNode(aPanelContents));
 
     let placements = gPlacements.get(CustomizableUI.AREA_PANEL);
-    this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanel);
-    for (let child of aPanel.children) {
+    this.buildArea(CustomizableUI.AREA_PANEL, placements, aPanelContents);
+    for (let child of aPanelContents.children) {
       if (child.localName != "toolbarbutton") {
         if (child.localName == "toolbaritem") {
-          this.ensureButtonContextMenu(child, aPanel);
+          this.ensureButtonContextMenu(child, aPanelContents);
         }
         continue;
       }
-      this.ensureButtonContextMenu(child, aPanel);
+      this.ensureButtonContextMenu(child, aPanelContents);
       child.setAttribute("wrap", "true");
     }
 
-    this.registerBuildArea(CustomizableUI.AREA_PANEL, aPanel);
+    this.registerBuildArea(CustomizableUI.AREA_PANEL, aPanelContents);
   },
 
   onWidgetAdded: function(aWidgetId, aArea, aPosition) {
@@ -703,6 +730,8 @@ let CustomizableUIInternal = {
       // We remove location attributes here to make sure they're gone too when a
       // widget is removed from a toolbar to the palette. See bug 930950.
       this.removeLocationAttributes(widgetNode);
+      // We also need to remove the panel context menu if it's there:
+      this.ensureButtonContextMenu(widgetNode);
       widgetNode.removeAttribute("wrap");
       if (gPalette.has(aWidgetId) || this.isSpecialWidget(aWidgetId)) {
         container.removeChild(widgetNode);
@@ -1139,8 +1168,6 @@ let CustomizableUIInternal = {
     LOG("handleWidgetCommand");
 
     if (aWidget.type == "button") {
-      this.maybeAutoHidePanel(aEvent);
-
       if (aWidget.onCommand) {
         try {
           aWidget.onCommand.call(null, aEvent);
@@ -1162,10 +1189,6 @@ let CustomizableUIInternal = {
 
   handleWidgetClick: function(aWidget, aNode, aEvent) {
     LOG("handleWidgetClick");
-    if (aWidget.type == "button") {
-      this.maybeAutoHidePanel(aEvent);
-    }
-
     if (aWidget.onClick) {
       try {
         aWidget.onClick.call(null, aEvent);
@@ -1314,9 +1337,34 @@ let CustomizableUIInternal = {
       }
     }
 
-    if (aEvent.target.getAttribute("closemenu") == "none" ||
-        aEvent.target.getAttribute("widget-type") == "view") {
+    // We can't use event.target because we might have passed a panelview
+    // anonymous content boundary as well, and so target points to the
+    // panelmultiview in that case. Unfortunately, this means we get
+    // anonymous child nodes instead of the real ones, so looking for the 
+    // 'stoooop, don't close me' attributes is more involved.
+    let target = aEvent.originalTarget;
+    let closemenu = "auto";
+    let widgetType = "button";
+    while (target.parentNode && target.localName != "panel") {
+      closemenu = target.getAttribute("closemenu");
+      widgetType = target.getAttribute("widget-type");
+      if (closemenu == "none" || closemenu == "single" ||
+          widgetType == "view") {
+        break;
+      }
+      target = target.parentNode;
+    }
+    if (closemenu == "none" || widgetType == "view") {
       return;
+    }
+
+    if (closemenu == "single") {
+      let panel = this._getPanelForNode(target);
+      let multiview = panel.querySelector("panelmultiview");
+      if (multiview.showingSubView) {
+        multiview.showMainView();
+        return;
+      }
     }
 
     // If we get here, we can actually hide the popup:
@@ -2020,6 +2068,13 @@ let CustomizableUIInternal = {
       let placements = gPlacements.get(areaId);
       for (let areaNode of areaNodes) {
         this.buildArea(areaId, placements, areaNode);
+
+        let area = gAreas.get(areaId);
+        if (area.get("type") == CustomizableUI.TYPE_TOOLBAR) {
+          let defaultCollapsed = area.get("defaultCollapsed");
+          let win = areaNode.ownerDocument.defaultView;
+          win.setToolbarVisibility(areaNode, !defaultCollapsed);
+        }
       }
     }
     gResetting = false;
@@ -2141,6 +2196,16 @@ let CustomizableUIInternal = {
             let itemNode = container.getElementsByAttribute("id", item)[0];
             return itemNode && removableOrDefault(itemNode || item);
           });
+        }
+
+        if (props.get("type") == CustomizableUI.TYPE_TOOLBAR) {
+          let attribute = container.getAttribute("type") == "menubar" ? "autohide" : "collapsed";
+          let collapsed = container.getAttribute(attribute) == "true";
+          let defaultCollapsed = props.get("defaultCollapsed");
+          if (collapsed != defaultCollapsed) {
+            LOG("Found " + areaId + " had non-default toolbar visibility (expected " + defaultCollapsed + ", was " + collapsed + ")");
+            return false;
+          }
         }
       }
       LOG("Checking default state for " + areaId + ":\n" + currentPlacements.join(",") +
@@ -2339,6 +2404,8 @@ this.CustomizableUI = {
    *                                effect for toolbars.
    *                - defaultPlacements: an array of widget IDs making up the
    *                                     default contents of the area
+   *                - defaultCollapsed: (INTERNAL ONLY) applies if the type is TYPE_TOOLBAR, specifies
+   *                                    if toolbar is collapsed by default (default to true)
    */
   registerArea: function(aName, aProperties) {
     CustomizableUIInternal.registerArea(aName, aProperties);
@@ -2716,6 +2783,16 @@ this.CustomizableUI = {
   getAreaType: function(aArea) {
     let area = gAreas.get(aArea);
     return area ? area.get("type") : null;
+  },
+  /**
+   * Check if a toolbar is collapsed by default.
+   *
+   * @param aArea the ID of the area whose default-collapsed state you want to know.
+   * @return `true` or `false` depending on the area, null if the area is unknown.
+   */
+  isToolbarDefaultCollapsed: function(aArea) {
+    let area = gAreas.get(aArea);
+    return area ? area.get("defaultCollapsed") : null;
   },
   /**
    * Obtain the DOM node that is the customize target for an area in a

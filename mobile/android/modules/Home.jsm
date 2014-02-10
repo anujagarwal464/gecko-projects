@@ -48,7 +48,7 @@ function BannerMessage(options) {
     this.onclick = options.onclick;
 }
 
-let HomeBanner = {
+let HomeBanner = Object.freeze({
   // Holds the messages that will rotate through the banner.
   _messages: {},
 
@@ -135,7 +135,7 @@ let HomeBanner = {
       Services.obs.removeObserver(this, "HomeBanner:Click");
     }
   }
-};
+});
 
 function Panel(options) {
   if ("id" in options)
@@ -151,30 +151,42 @@ function Panel(options) {
     this.views = options.views;
 }
 
-let HomePanels = {
+let HomePanels = Object.freeze({
   // Valid layouts for a panel.
-  Layout: {
+  Layout: Object.freeze({
     FRAME: "frame"
-  },
+  }),
 
   // Valid types of views for a dataset.
-  View: {
-    LIST: "list"
-  },
+  View: Object.freeze({
+    LIST: "list",
+    GRID: "grid"
+  }),
 
   // Holds the currrent set of registered panels.
   _panels: {},
 
-  _handleGet: function(requestId) {
+  _panelToJSON : function(panel) {
+    return {
+      id: panel.id,
+      title: panel.title,
+      layout: panel.layout,
+      views: panel.views
+    };
+  },
+
+  _handleGet: function(data) {
+    let requestId = data.requestId;
+    let ids = data.ids || null;
+
     let panels = [];
     for (let id in this._panels) {
       let panel = this._panels[id];
-      panels.push({
-        id: panel.id,
-        title: panel.title,
-        layout: panel.layout,
-        views: panel.views
-      });
+
+      // Null ids means we want to fetch all available panels
+      if (ids == null || ids.indexOf(panel.id) >= 0) {
+        panels.push(this._panelToJSON(panel));
+      }
     }
 
     sendMessageToJava({
@@ -210,14 +222,26 @@ let HomePanels = {
     }
 
     this._panels[panel.id] = panel;
+
+    if (options.autoInstall) {
+      sendMessageToJava({
+        type: "HomePanels:Install",
+        panel: this._panelToJSON(panel)
+      });
+    }
   },
 
   remove: function(id) {
+    if (!(id in this._panels)) {
+      throw "Home.panels: Panel doesn't exist: id = " + id;
+    }
+
+    let panel = this._panels[id];
     delete this._panels[id];
 
     sendMessageToJava({
       type: "HomePanels:Remove",
-      id: id
+      panel: this._panelToJSON(panel)
     });
   },
 
@@ -230,10 +254,10 @@ let HomePanels = {
     }
     return false;
   }
-};
+});
 
 // Public API
-this.Home = {
+this.Home = Object.freeze({
   banner: HomeBanner,
   panels: HomePanels,
 
@@ -241,8 +265,8 @@ this.Home = {
   observe: function(subject, topic, data) {
     switch(topic) {
       case "HomePanels:Get":
-        HomePanels._handleGet(data);
+        HomePanels._handleGet(JSON.parse(data));
         break;
     }
   }
-}
+});

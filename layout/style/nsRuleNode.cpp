@@ -1083,6 +1083,10 @@ static void SetStyleImage(nsStyleContext* aStyleContext,
                           nsStyleImage& aResult,
                           bool& aCanStoreInRuleTree)
 {
+  if (aValue.GetUnit() == eCSSUnit_Null) {
+    return;
+  }
+
   aResult.SetNull();
 
   switch (aValue.GetUnit()) {
@@ -1111,6 +1115,8 @@ static void SetStyleImage(nsStyleContext* aStyleContext,
     case eCSSUnit_Element:
       aResult.SetElementId(aValue.GetStringBufferValue());
       break;
+    case eCSSUnit_Initial:
+    case eCSSUnit_Unset:
     case eCSSUnit_None:
       break;
     default:
@@ -4213,6 +4219,14 @@ nsRuleNode::ComputeTextData(void* aStartStruct,
               NS_STYLE_TEXT_SIZE_ADJUST_NONE, // none value
               0, 0);
 
+  // -moz-text-discard: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForControlCharacterVisibility(),
+              text->mControlCharacterVisibility,
+              canStoreInRuleTree,
+              SETDSC_ENUMERATED | SETDSC_UNSET_INHERIT,
+              parentText->mControlCharacterVisibility,
+              NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN, 0, 0, 0, 0);
+
   // text-orientation: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForTextOrientation(), text->mTextOrientation,
               canStoreInRuleTree,
@@ -4740,18 +4754,7 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
                          display, parentDisplay, aRuleData,
                          canStoreInRuleTree);
 
-  if (!display->mTransitions.SetLength(numTransitions)) {
-    NS_WARNING("failed to allocate transitions array");
-    display->mTransitions.SetLength(1);
-    NS_ABORT_IF_FALSE(display->mTransitions.Length() == 1,
-                      "could not allocate using auto array buffer");
-    numTransitions = 1;
-    FOR_ALL_TRANSITION_PROPS(p) {
-      TransitionPropData& d = transitionPropData[p];
-
-      d.num = 1;
-    }
-  }
+  display->mTransitions.SetLength(numTransitions);
 
   FOR_ALL_TRANSITION_PROPS(p) {
     const TransitionPropInfo& i = transitionPropInfo[p];
@@ -4907,18 +4910,7 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
                          display, parentDisplay, aRuleData,
                          canStoreInRuleTree);
 
-  if (!display->mAnimations.SetLength(numAnimations)) {
-    NS_WARNING("failed to allocate animations array");
-    display->mAnimations.SetLength(1);
-    NS_ABORT_IF_FALSE(display->mAnimations.Length() == 1,
-                      "could not allocate using auto array buffer");
-    numAnimations = 1;
-    FOR_ALL_ANIMATION_PROPS(p) {
-      TransitionPropData& d = animationPropData[p];
-
-      d.num = 1;
-    }
-  }
+  display->mAnimations.SetLength(numAnimations);
 
   FOR_ALL_ANIMATION_PROPS(p) {
     const TransitionPropInfo& i = animationPropInfo[p];
@@ -5455,6 +5447,54 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
 
   default:
     NS_ABORT_IF_FALSE(false, "unrecognized transform unit");
+  }
+
+  /* Convert the nsCSSValueList into a will-change bitfield for fast lookup */
+  const nsCSSValue* willChangeValue = aRuleData->ValueForWillChange();
+  switch (willChangeValue->GetUnit()) {
+  case eCSSUnit_Null:
+    break;
+
+  case eCSSUnit_List:
+  case eCSSUnit_ListDep: {
+    display->mWillChange.Clear();
+    display->mWillChangeBitField = 0;
+    for (const nsCSSValueList* item = willChangeValue->GetListValue();
+         item; item = item->mNext)
+    {
+      if (item->mValue.UnitHasStringValue()) {
+        nsAutoString buffer;
+        item->mValue.GetStringValue(buffer);
+        if (buffer.EqualsLiteral("transform")) {
+          display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_TRANSFORM;
+        }
+        if (buffer.EqualsLiteral("opacity")) {
+          display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_OPACITY;
+        }
+        if (buffer.EqualsLiteral("scroll-position")) {
+          display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_SCROLL;
+        }
+        display->mWillChange.AppendElement(buffer);
+      }
+    }
+    break;
+  }
+
+  case eCSSUnit_Inherit:
+    display->mWillChange = parentDisplay->mWillChange;
+    display->mWillChangeBitField = parentDisplay->mWillChangeBitField;
+    canStoreInRuleTree = false;
+    break;
+
+  case eCSSUnit_Initial:
+  case eCSSUnit_Unset:
+  case eCSSUnit_Auto:
+    display->mWillChange.Clear();
+    display->mWillChangeBitField = 0;
+    break;
+
+  default:
+    MOZ_ASSERT(false, "unrecognized will-change unit");
   }
 
   /* Convert -moz-transform-origin. */
@@ -6643,18 +6683,14 @@ nsRuleNode::ComputeBorderData(void* aStartStruct,
 
   // border-image-source
   const nsCSSValue* borderImageSource = aRuleData->ValueForBorderImageSource();
-  if (borderImageSource->GetUnit() == eCSSUnit_Image) {
-    NS_SET_IMAGE_REQUEST_WITH_DOC(border->SetBorderImage,
-                                  aContext,
-                                  borderImageSource->GetImageValue);
-  } else if (borderImageSource->GetUnit() == eCSSUnit_Inherit) {
+  if (borderImageSource->GetUnit() == eCSSUnit_Inherit) {
     canStoreInRuleTree = false;
-    NS_SET_IMAGE_REQUEST(border->SetBorderImage, aContext,
-                         parentBorder->GetBorderImage());
-  } else if (borderImageSource->GetUnit() == eCSSUnit_Initial ||
-             borderImageSource->GetUnit() == eCSSUnit_Unset ||
-             borderImageSource->GetUnit() == eCSSUnit_None) {
-    border->SetBorderImage(nullptr);
+    border->mBorderImageSource = parentBorder->mBorderImageSource;
+  } else {
+    SetStyleImage(aContext,
+                  *borderImageSource,
+                  border->mBorderImageSource,
+                  canStoreInRuleTree);
   }
 
   nsCSSValue borderImageSliceValue;
@@ -6732,8 +6768,7 @@ nsRuleNode::ComputeBorderData(void* aStartStruct,
               parentBorder->mBorderImageRepeatV,
               NS_STYLE_BORDER_IMAGE_REPEAT_STRETCH, 0, 0, 0, 0);
 
-  if (border->HasBorderImage())
-    border->TrackImage(aContext->PresContext());
+  border->TrackImage(aContext->PresContext());
 
   COMPUTE_END_RESET(Border, border)
 }
@@ -8614,15 +8649,15 @@ nsRuleNode::HasAuthorSpecifiedRules(nsStyleContext* aStyleContext,
   // Number of properties we care about
   size_t nValues = 0;
 
-  nsCSSValue* values[NS_ARRAY_LENGTH(backgroundValues) +
-                     NS_ARRAY_LENGTH(borderValues) +
-                     NS_ARRAY_LENGTH(paddingValues) +
-                     NS_ARRAY_LENGTH(textShadowValues)];
+  nsCSSValue* values[MOZ_ARRAY_LENGTH(backgroundValues) +
+                     MOZ_ARRAY_LENGTH(borderValues) +
+                     MOZ_ARRAY_LENGTH(paddingValues) +
+                     MOZ_ARRAY_LENGTH(textShadowValues)];
 
-  nsCSSProperty properties[NS_ARRAY_LENGTH(backgroundValues) +
-                           NS_ARRAY_LENGTH(borderValues) +
-                           NS_ARRAY_LENGTH(paddingValues) +
-                           NS_ARRAY_LENGTH(textShadowValues)];
+  nsCSSProperty properties[MOZ_ARRAY_LENGTH(backgroundValues) +
+                           MOZ_ARRAY_LENGTH(borderValues) +
+                           MOZ_ARRAY_LENGTH(paddingValues) +
+                           MOZ_ARRAY_LENGTH(textShadowValues)];
 
   if (ruleTypeMask & NS_AUTHOR_SPECIFIED_BACKGROUND) {
     for (uint32_t i = 0, i_end = ArrayLength(backgroundValues);

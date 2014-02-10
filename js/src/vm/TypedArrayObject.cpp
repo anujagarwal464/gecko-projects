@@ -3466,6 +3466,7 @@ const Class ArrayBufferObject::class_ = {
     nullptr,        /* hasInstance */
     nullptr,        /* construct   */
     ArrayBufferObject::obj_trace,
+    JS_NULL_CLASS_SPEC,
     JS_NULL_CLASS_EXT,
     {
         ArrayBufferObject::obj_lookupGeneric,
@@ -3625,12 +3626,8 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     nullptr,                 /* hasInstance */                                 \
     nullptr,                 /* construct   */                                 \
     ArrayBufferViewObject::trace, /* trace  */                                 \
-    {                                                                          \
-        nullptr,    /* outerObject */                                          \
-        nullptr,    /* innerObject */                                          \
-        nullptr,    /* iteratorObject  */                                      \
-        false,      /* isWrappedNative */                                      \
-    },                                                                         \
+    JS_NULL_CLASS_SPEC,                                                        \
+    JS_NULL_CLASS_EXT,                                                         \
     {                                                                          \
         _typedArray##Object::obj_lookupGeneric,                                \
         _typedArray##Object::obj_lookupProperty,                               \
@@ -3838,8 +3835,6 @@ const Class DataViewObject::class_ = {
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
     ArrayBufferViewObject::trace, /* trace  */
-    JS_NULL_CLASS_EXT,
-    JS_NULL_OBJECT_OPS
 };
 
 const JSFunctionSpec DataViewObject::jsfuncs[] = {
@@ -3955,11 +3950,12 @@ JSObject *
 js_InitTypedArrayClasses(JSContext *cx, HandleObject obj)
 {
     JS_ASSERT(obj->isNative());
+    assertSameCompartment(cx, obj);
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
 
     /* Idempotency required: we initialize several things, possibly lazily. */
     RootedObject stop(cx);
-    if (!js_GetClassObject(cx, global, JSProto_ArrayBuffer, &stop))
+    if (!js_GetClassObject(cx, JSProto_ArrayBuffer, &stop))
         return nullptr;
     if (stop)
         return stop;

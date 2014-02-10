@@ -68,6 +68,8 @@ class gfx3DMatrix;
 class nsComputedDOMStyle MOZ_FINAL : public nsDOMCSSDeclaration
 {
 public:
+  typedef nsCSSProps::KTableValue KTableValue;
+
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsComputedDOMStyle,
                                                                    nsICSSDeclaration)
@@ -143,7 +145,7 @@ private:
   // Helper method for DoGetTextAlign[Last].
   mozilla::dom::CSSValue* CreateTextAlignValue(uint8_t aAlign,
                                                bool aAlignTrue,
-                                               const int32_t aTable[]);
+                                               const KTableValue aTable[]);
   // This indicates error by leaving mStyleContextHolder null.
   void UpdateCurrentStyleSources(bool aNeedsLayoutFlush);
   void ClearCurrentStyleSources();
@@ -195,7 +197,7 @@ private:
 
   mozilla::dom::CSSValue* GetBackgroundList(uint8_t nsStyleBackground::Layer::* aMember,
                                             uint32_t nsStyleBackground::* aCount,
-                                            const int32_t aTable[]);
+                                            const KTableValue aTable[]);
 
   void GetCSSGradientString(const nsStyleGradient* aGradient,
                             nsAString& aString);
@@ -392,6 +394,7 @@ private:
   mozilla::dom::CSSValue* DoGetPosition();
   mozilla::dom::CSSValue* DoGetClip();
   mozilla::dom::CSSValue* DoGetImageOrientation();
+  mozilla::dom::CSSValue* DoGetWillChange();
   mozilla::dom::CSSValue* DoGetOverflow();
   mozilla::dom::CSSValue* DoGetOverflowX();
   mozilla::dom::CSSValue* DoGetOverflowY();
@@ -527,7 +530,7 @@ private:
                        const nsStyleCoord& aCoord,
                        bool aClampNegativeCalc,
                        PercentageBaseGetter aPercentageBaseGetter = nullptr,
-                       const int32_t aTable[] = nullptr,
+                       const KTableValue aTable[] = nullptr,
                        nscoord aMinAppUnits = nscoord_MIN,
                        nscoord aMaxAppUnits = nscoord_MAX);
 

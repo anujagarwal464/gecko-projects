@@ -607,6 +607,8 @@ protected:
    * has a displayport. Updates *aVisibleRegion to be the intersection of
    * aDrawRegion and the displayport, and updates *aIsSolidColorInVisibleRegion
    * (if non-null) to false if the visible region grows.
+   * This can return the actual viewport frame for layers whose display items
+   * are directly on the viewport (e.g. background-attachment:fixed backgrounds).
    */
   const nsIFrame* FindFixedPosFrameForLayerData(const nsIFrame* aAnimatedGeometryRoot,
                                                 const nsIntRegion& aDrawRegion,
@@ -1559,7 +1561,10 @@ SetVisibleRegionForLayer(Layer* aLayer, const nsIntRegion& aLayerVisibleRegion,
   // for the layer, so it doesn't really matter what we do here
   gfxRect itemVisible(aRestrictToRect.x, aRestrictToRect.y,
                       aRestrictToRect.width, aRestrictToRect.height);
-  gfxRect layerVisible = transform.Inverse().ProjectRectBounds(itemVisible);
+  nsIntRect childBounds = aLayerVisibleRegion.GetBounds();
+  gfxRect childGfxBounds(childBounds.x, childBounds.y,
+                         childBounds.width, childBounds.height);
+  gfxRect layerVisible = transform.UntransformBounds(itemVisible, childGfxBounds);
   layerVisible.RoundOut();
 
   nsIntRect visibleRect;
@@ -1661,31 +1666,44 @@ ContainerState::FindFixedPosFrameForLayerData(const nsIFrame* aAnimatedGeometryR
                                               nsIntRegion* aVisibleRegion,
                                               bool* aIsSolidColorInVisibleRegion)
 {
-  nsIFrame *viewport = mContainerFrame->PresContext()->PresShell()->GetRootFrame();
-
-  // Viewports with no fixed-pos frames are not relevant.
-  if (!viewport->GetFirstChild(nsIFrame::kFixedList)) {
-    return nullptr;
-  }
+  nsPresContext* presContext = mContainerFrame->PresContext();
+  nsIFrame* viewport = presContext->PresShell()->GetRootFrame();
+  const nsIFrame* result = nullptr;
   nsRect displayPort;
-  for (const nsIFrame* f = aAnimatedGeometryRoot; f; f = f->GetParent()) {
-    if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(f, &displayPort)) {
-      // Display ports are relative to the viewport, convert it to be relative
-      // to our reference frame.
-      displayPort += viewport->GetOffsetToCrossDoc(mContainerReferenceFrame);
-      nsIntRegion newVisibleRegion;
-      newVisibleRegion.And(ScaleToOutsidePixels(displayPort, false),
-                           aDrawRegion);
-      if (!aVisibleRegion->Contains(newVisibleRegion)) {
-        if (aIsSolidColorInVisibleRegion) {
-          *aIsSolidColorInVisibleRegion = false;
-        }
-        *aVisibleRegion = newVisibleRegion;
+
+  if (viewport == aAnimatedGeometryRoot &&
+      nsLayoutUtils::ViewportHasDisplayPort(presContext, &displayPort)) {
+    // Probably a background-attachment:fixed item
+    result = viewport;
+  } else {
+    // Viewports with no fixed-pos frames are not relevant.
+    if (!viewport->GetFirstChild(nsIFrame::kFixedList)) {
+      return nullptr;
+    }
+    for (const nsIFrame* f = aAnimatedGeometryRoot; f; f = f->GetParent()) {
+      if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(f, &displayPort)) {
+        result = f;
+        break;
       }
-      return f;
+    }
+    if (!result) {
+      return nullptr;
     }
   }
-  return nullptr;
+
+  // Display ports are relative to the viewport, convert it to be relative
+  // to our reference frame.
+  displayPort += viewport->GetOffsetToCrossDoc(mContainerReferenceFrame);
+  nsIntRegion newVisibleRegion;
+  newVisibleRegion.And(ScaleToOutsidePixels(displayPort, false),
+                       aDrawRegion);
+  if (!aVisibleRegion->Contains(newVisibleRegion)) {
+    if (aIsSolidColorInVisibleRegion) {
+      *aIsSolidColorInVisibleRegion = false;
+    }
+    *aVisibleRegion = newVisibleRegion;
+  }
+  return result;
 }
 
 void
@@ -1697,19 +1715,31 @@ ContainerState::SetFixedPositionLayerData(Layer* aLayer,
     return;
   }
 
-  nsIFrame* viewportFrame = aFixedPosFrame->GetParent();
   nsPresContext* presContext = aFixedPosFrame->PresContext();
 
-  // Fixed position frames are reflowed into the scroll-port size if one has
-  // been set.
-  nsSize viewportSize = viewportFrame->GetSize();
-  if (presContext->PresShell()->IsScrollPositionClampingScrollPortSizeSet()) {
-    viewportSize = presContext->PresShell()->
-      GetScrollPositionClampingScrollPortSize();
+  const nsIFrame* viewportFrame = aFixedPosFrame->GetParent();
+  // anchorRect will be in the container's coordinate system (aLayer's parent layer).
+  // This is the same as the display items' reference frame.
+  nsRect anchorRect;
+  if (viewportFrame) {
+    // Fixed position frames are reflowed into the scroll-port size if one has
+    // been set.
+    if (presContext->PresShell()->IsScrollPositionClampingScrollPortSizeSet()) {
+      anchorRect.SizeTo(presContext->PresShell()->GetScrollPositionClampingScrollPortSize());
+    } else {
+      anchorRect.SizeTo(viewportFrame->GetSize());
+    }
+  } else {
+    // A display item directly attached to the viewport.
+    // For background-attachment:fixed items, the anchor point is always the
+    // top-left of the viewport currently.
+    viewportFrame = aFixedPosFrame;
   }
+  // The anchorRect top-left is always the viewport top-left.
+  anchorRect.MoveTo(viewportFrame->GetOffsetToCrossDoc(mContainerReferenceFrame));
 
   nsLayoutUtils::SetFixedPositionLayerData(aLayer,
-      viewportFrame, viewportSize, aFixedPosFrame, presContext, mParameters);
+      viewportFrame, anchorRect, aFixedPosFrame, presContext, mParameters);
 }
 
 static gfx3DMatrix
@@ -1759,7 +1789,7 @@ ContainerState::PopThebesLayerData()
   nsRefPtr<ImageContainer> imageContainer = data->CanOptimizeImageLayer(mBuilder);
 
   if ((data->mIsSolidColorInVisibleRegion || imageContainer) &&
-      data->mLayer->GetValidRegion().IsEmpty()) {
+      (data->mLayer->GetValidRegion().IsEmpty() || mLayerBuilder->CheckInLayerTreeCompressionMode())) {
     NS_ASSERTION(!(data->mIsSolidColorInVisibleRegion && imageContainer),
                  "Can't be a solid color as well as an image!");
     if (imageContainer) {
@@ -2172,7 +2202,7 @@ PaintInactiveLayer(nsDisplayListBuilder* aBuilder,
 
   nsRefPtr<gfxASurface> surf;
   if (gfxUtils::sDumpPainting) {
-    surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(itemVisibleRect.Size(),
+    surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(itemVisibleRect.Size().ToIntSize(),
                                                               gfxContentType::COLOR_ALPHA);
     surf->SetDeviceOffset(-itemVisibleRect.TopLeft());
     context = new gfxContext(surf);
@@ -2817,6 +2847,20 @@ FrameLayerBuilder::SaveLastPaintOffset(ThebesLayer* aLayer)
   }
 }
 
+bool
+FrameLayerBuilder::CheckInLayerTreeCompressionMode()
+{
+  if (mInLayerTreeCompressionMode) {
+    return true; 
+  }
+
+  // If we wanted to be in layer tree compression mode, but weren't, then scheduled
+  // a delayed repaint where we will be.
+  mRootPresContext->PresShell()->GetRootFrame()->SchedulePaint(nsIFrame::PAINT_DELAYED_COMPRESS);
+
+  return false;
+}
+
 void
 ContainerState::CollectOldLayers()
 {
@@ -2941,7 +2985,7 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
   gfxSize scale;
   // XXX Should we do something for 3D transforms?
   if (canDraw2D) {
-    // If the container's transform is animated off main thread, then use the
+//     // If the container's transform is animated off main thread, then use the
     // maximum scale.
     if (aContainerFrame->GetContent() &&
         nsLayoutUtils::HasAnimationsForCompositor(
@@ -3348,7 +3392,7 @@ static void DebugPaintItem(nsRenderingContext* aDest, nsDisplayItem *aItem, nsDi
   bounds.ScaleInverse(aDest->AppUnitsPerDevPixel());
 
   nsRefPtr<gfxASurface> surf =
-    gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(bounds.width, bounds.height),
+    gfxPlatform::GetPlatform()->CreateOffscreenSurface(IntSize(bounds.width, bounds.height),
                                                        gfxContentType::COLOR_ALPHA);
   surf->SetDeviceOffset(-bounds.TopLeft());
   nsRefPtr<gfxContext> context = new gfxContext(surf);
@@ -3819,8 +3863,7 @@ ContainerState::SetupMaskLayer(Layer *aLayer, const DisplayItemClip& aClip,
     // build the image and container
     container = aLayer->Manager()->CreateImageContainer();
     NS_ASSERTION(container, "Could not create image container for mask layer.");
-    static const ImageFormat format = CAIRO_SURFACE;
-    nsRefPtr<Image> image = container->CreateImage(&format, 1);
+    nsRefPtr<Image> image = container->CreateImage(ImageFormat::CAIRO_SURFACE);
     NS_ASSERTION(image, "Could not create image container for mask layer.");
     CairoImage::Data data;
     data.mDeprecatedSurface = surface;
