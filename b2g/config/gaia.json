@@ -2,7 +2,8 @@
     "revision": "621040ee199cdde3bdd2aeaf2a016ff7806875bb", 
     "repo_path": "/integration/gaia-central",
     "git": {
-        "remote": "https://github.com/jonallengriffin/gaia.git",
-        "branch": "gaia_unit_crash"
+        "remote": "",
+        "branch": "",
+        "revision": ""
     }
 }
