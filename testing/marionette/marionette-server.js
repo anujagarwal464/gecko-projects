@@ -32,8 +32,6 @@ specialpowers.specialPowersObserver.init();
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 
-dump("module");
-
 Services.prefs.setBoolPref("marionette.contentListener", false);
 let appName = Services.appinfo.name;
 

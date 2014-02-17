@@ -252,7 +252,6 @@ class ThunderbirdRunner(LocalRunner):
     """Specialized LocalRunner subclass for running Thunderbird"""
     profile_class = ThunderbirdProfile
 
-
 local_runners = {'firefox': FirefoxRunner,
                  'metrofirefox' : MetroFirefoxRunner,
                  'thunderbird': ThunderbirdRunner}
