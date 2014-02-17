@@ -1,5 +1,0 @@
-{"host": "localhost",
- "ports":{"http":[8000, 8001],
-          "https":[8443],
-          "ws":[8080]},
- "check_subdomains":false}
