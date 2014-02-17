@@ -92,14 +92,17 @@ class ServerProc(object):
         self.proc.terminate()
         self.proc.join()
 
-def check_subdomains(config, subdomains):
+def probe_subdomains(config):
+    host = config["host"]
     port = get_port()
     wrapper = ServerProc()
     wrapper.start(start_http_server, config, port)
 
     rv = {}
 
-    for subdomain, (punycode, host) in subdomains.iteritems():
+    for subdomain in subdomains:
+        #This assumes that the tld is ascii-only or already in punycode
+        punycode = subdomain.encode("idna")
         domain = "%s.%s" % (punycode, host)
         try:
             urllib2.urlopen("http://%s:%d/" % (domain, port))
@@ -117,12 +120,6 @@ def check_subdomains(config, subdomains):
     wrapper.wait()
 
     return rv
-
-def get_subdomains(config):
-    #This assumes that the tld is ascii-only or already in punycode
-    host = config["host"]
-    return {subdomain: (subdomain.encode("idna"), host)
-            for subdomain in subdomains}
 
 def start_servers(config, ports):
     servers = defaultdict(list)
@@ -238,9 +235,7 @@ def normalise_config(config, domains, ports):
 
 def start(config):
     ports = get_ports(config)
-    domains = get_subdomains(config)
-    if config["check_subdomains"]:
-        domains = check_subdomains(config, domains)
+    domains = probe_subdomains(config)
 
     config_ = normalise_config(config, domains, ports)
 
@@ -254,37 +249,10 @@ def iter_procs(servers):
         for port, server in servers:
             yield server.proc
 
-def merge_json(base_obj, override_obj):
-    rv = {}
-    for key, value in base_obj.iteritems():
-        if key not in override_obj:
-            rv[key] = value
-        else:
-            if isinstance(value, dict):
-                rv[key] = merge_json(value, override_obj[key])
-            else:
-                rv[key] = override_obj[key]
-    return rv
-
-def load_config(default_path, override_path=None):
-    if os.path.exists(default_path):
-        with open(default_path) as f:
-            base_obj = json.load(f)
-    else:
-        raise ValueError("Config path %s does not exist" % default_path)
-
-    if os.path.exists(override_path):
-        with open(override_path) as f:
-            override_obj = json.load(f)
-    else:
-        override_obj = {}
-    return merge_json(base_obj, override_obj)
-
 def main():
     global logger
-
-    config = load_config("config.default.json",
-                         "config.json")
+    with open("config.json") as f:
+        config = json.load(f)
 
     logger = default_logger(config["log_level"])
 
