@@ -52,7 +52,6 @@ class MarionetteClient(object):
             response += self._recv_n_bytes(int(length) + 1 + len(length) - 10)
             return json.loads(response)
         else:
-            print "response", response, self.sock._sock.__class__
             raise InvalidResponseException("Could not successfully complete "
                                            "transport of message to Gecko, "
                                            "socket closed?",
@@ -99,6 +98,5 @@ class MarionetteClient(object):
     def close(self):
         """ Close the socket.
         """
-        print "close called"
         self.sock.close()
         self.sock = None
