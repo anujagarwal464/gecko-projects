@@ -109,8 +109,7 @@ class TestsMetadata(object):
 
     def update_manifest(self):
         manifest.setup_git(self.test_root)
-        manifest.update(self.manifest)
-        manifest.write(self.manifest, self.manifest_path)
+        self.manifest = manifest.update(self.manifest)
 
     def get_expected(self, test):
         expected_path = os.path.join(self.metadata_root, test.path + ".ini")
