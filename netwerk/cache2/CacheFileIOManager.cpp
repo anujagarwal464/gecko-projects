@@ -2359,7 +2359,7 @@ CacheFileIOManager::UpdateIndexEntry(CacheFileHandle *aHandle,
                                      const uint32_t  *aExpirationTime)
 {
   LOG(("CacheFileIOManager::UpdateIndexEntry() [handle=%p, frecency=%s, "
-       "expirationTime=%s, size=%s]", aHandle,
+       "expirationTime=%s]", aHandle,
        aFrecency ? nsPrintfCString("%u", *aFrecency).get() : "",
        aExpirationTime ? nsPrintfCString("%u", *aExpirationTime).get() : ""));
 
