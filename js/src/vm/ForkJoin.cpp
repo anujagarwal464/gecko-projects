@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#if defined(XP_OS2) || defined(XP_WIN)
+#if defined(XP_WIN)
 # include <io.h>     // for isatty()
 #else
 # include <unistd.h> // for isatty()
@@ -1175,8 +1175,6 @@ ForkJoinOperation::parallelExecution(ExecutionStatus *status)
     // functions such as ForkJoin().
     JS_ASSERT(ForkJoinContext::current() == nullptr);
 
-    ForkJoinActivation activation(cx_);
-
     uint16_t from, to;
     if (!computeBounds(&from, &to)) {
         *status = ExecutionFatal;
@@ -1189,6 +1187,7 @@ ForkJoinOperation::parallelExecution(ExecutionStatus *status)
         return RedLight;
     }
 
+    ForkJoinActivation activation(cx_);
     ThreadPool *threadPool = &cx_->runtime()->threadPool;
     ForkJoinShared shared(cx_, threadPool, fun_, from, to, &bailoutRecords_[0]);
     if (!shared.init()) {
