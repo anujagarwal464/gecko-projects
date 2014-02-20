@@ -86,6 +86,7 @@ def build_dict(config, env=os.environ):
     d['ogg'] = bool(substs.get('MOZ_OGG'))
     d['webm'] = bool(substs.get('MOZ_WEBM'))
     d['wave'] = bool(substs.get('MOZ_WAVE'))
+    d['android_version'] = None
 
     return d
 
