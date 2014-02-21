@@ -550,7 +550,7 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
       "TypeObject",
     };
     static_assert(MOZ_ARRAY_LENGTH(trace_types) == JSTRACE_LAST + 1,
-                  "Length of trace_types should match the number of cases of JSGCTraceKind.");
+                  "JSTRACE_LAST enum must match trace_types count.");
     JS_snprintf(name, sizeof(name), "JS %s", trace_types[aTraceKind]);
   }
 
