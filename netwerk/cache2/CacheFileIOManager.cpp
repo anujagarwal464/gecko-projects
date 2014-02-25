@@ -2698,7 +2698,7 @@ CacheFileIOManager::FindTrashDirToRemove()
       continue;
     }
 
-    if (StringBeginsWith(leafName, NS_LITERAL_CSTRING(kTrashDir))) {
+    if (!StringBeginsWith(leafName, NS_LITERAL_CSTRING(kTrashDir))) {
       continue;
     }
 
@@ -3076,6 +3076,9 @@ CacheFileIOManager::CreateCacheTree()
   NS_ENSURE_SUCCESS(rv, rv);
 
   mTreeCreated = true;
+
+  StartRemovingTrash();
+
   return NS_OK;
 }
 
