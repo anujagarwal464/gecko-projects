@@ -8,6 +8,8 @@ var gIoService = Components.classes["@mozilla.org/network/io-service;1"]
 // Run by: cd objdir;  make -C netwerk/test/ xpcshell-tests    
 // or: cd objdir; make SOLO_FILE="test_URIs.js" -C netwerk/test/ check-one
 
+// See also test_URIs2.js.
+
 // Relevant RFCs: 1738, 1808, 2396, 3986 (newer than the code)
 // http://greenbytes.de/tech/webdav/rfc3986.html#rfc.section.5.4
 // http://greenbytes.de/tech/tc/uris/
@@ -276,6 +278,9 @@ var gTests = [
     path:    "/a/b/c/d",
     ref:     "",
     nsIURL:  true, nsINestedURI: false },
+
+    // Adding more? Consider adding to test_URIs2.js instead, so that neither
+    // test runs for *too* long, risking timeouts on slow platforms.
 ];
 
 var gHashSuffixes = [

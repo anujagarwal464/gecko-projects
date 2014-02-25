@@ -877,7 +877,7 @@ CodeGenerator::visitRegExp(LRegExp *lir)
 }
 
 typedef bool (*RegExpExecRawFn)(JSContext *cx, HandleObject regexp,
-                                HandleString input, Value *vp);
+                                HandleString input, MutableHandleValue output);
 static const VMFunction RegExpExecRawInfo = FunctionInfo<RegExpExecRawFn>(regexp_exec_raw);
 
 bool
@@ -4084,6 +4084,18 @@ CodeGenerator::visitTypedArrayElements(LTypedArrayElements *lir)
 }
 
 bool
+CodeGenerator::visitNeuterCheck(LNeuterCheck *lir)
+{
+    Register obj = ToRegister(lir->object());
+    Register temp = ToRegister(lir->temp());
+    masm.loadPtr(Address(obj, TypedObject::dataOffset()), temp);
+    masm.testPtr(temp, temp);
+    if (!bailoutIf(Assembler::Zero, lir->snapshot()))
+        return false;
+    return true;
+}
+
+bool
 CodeGenerator::visitTypedObjectElements(LTypedObjectElements *lir)
 {
     Register obj = ToRegister(lir->object());
@@ -4354,8 +4366,8 @@ CodeGenerator::visitModD(LModD *ins)
     return true;
 }
 
-typedef bool (*BinaryFn)(JSContext *, MutableHandleValue, MutableHandleValue, Value *);
-typedef bool (*BinaryParFn)(ForkJoinContext *, HandleValue, HandleValue, Value *);
+typedef bool (*BinaryFn)(JSContext *, MutableHandleValue, MutableHandleValue, MutableHandleValue);
+typedef bool (*BinaryParFn)(ForkJoinContext *, HandleValue, HandleValue, MutableHandleValue);
 
 static const VMFunction AddInfo = FunctionInfo<BinaryFn>(js::AddValues);
 static const VMFunction SubInfo = FunctionInfo<BinaryFn>(js::SubValues);

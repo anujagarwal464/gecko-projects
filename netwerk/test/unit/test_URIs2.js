@@ -6,7 +6,12 @@ var gIoService = Components.classes["@mozilla.org/network/io-service;1"]
 
 
 // Run by: cd objdir;  make -C netwerk/test/ xpcshell-tests    
-// or: cd objdir; make SOLO_FILE="test_URIs.js" -C netwerk/test/ check-one
+// or: cd objdir; make SOLO_FILE="test_URIs2.js" -C netwerk/test/ check-one
+
+// This is a clone of test_URIs.js, with a different set of test data in gTests.
+// The original test data in test_URIs.js was split between test_URIs and test_URIs2.js
+// because test_URIs.js was running for too long on slow platforms, causing 
+// intermittent timeouts.
 
 // Relevant RFCs: 1738, 1808, 2396, 3986 (newer than the code)
 // http://greenbytes.de/tech/webdav/rfc3986.html#rfc.section.5.4

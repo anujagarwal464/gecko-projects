@@ -121,6 +121,7 @@ private:
   class CacheEntry : public mozilla::RefCounted<CacheEntry> 
   {
   public:
+    MOZ_DECLARE_REFCOUNTED_TYPENAME(DeviceStorageUsedSpaceCache::CacheEntry)
     bool mDirty;
     nsString mStorageName;
     int64_t  mFreeBytes;
@@ -203,7 +204,8 @@ public:
   bool mOkToCallContinue;
   PRTime mSince;
 
-  virtual bool Recv__delete__(const bool& allow) MOZ_OVERRIDE;
+  virtual bool Recv__delete__(const bool& allow,
+                              const InfallibleTArray<PermissionChoice>& choices) MOZ_OVERRIDE;
   virtual void IPDLRelease() MOZ_OVERRIDE;
 
   void GetStorageType(nsAString & aType);
