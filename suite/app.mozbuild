@@ -6,7 +6,7 @@
 app_libxul_dirs = []
 app_libxul_static_dirs = []
 
-include('../bridge/bridge.mozbuild')
+include('/mailnews/mailnews.mozbuild')
 
 if not CONFIG['MOZ_INCOMPLETE_EXTERNAL_LINKAGE']:
     app_libxul_dirs = mailnews_dirs
@@ -23,11 +23,11 @@ if CONFIG['MOZ_EXTENSIONS']:
     add_tier_dir('app', 'extensions')
 
 if CONFIG['MOZ_COMPOSER']:
-    add_tier_dir('app', '../editor/ui')
+    add_tier_dir('app', 'editor/ui')
 
 add_tier_dir('app', CONFIG['MOZ_BRANDING_DIRECTORY'])
 
 if CONFIG['MOZ_CALENDAR']:
-    add_tier_dir('app', '../calendar/lightning')
+    add_tier_dir('app', 'calendar/lightning')
 
-add_tier_dir('app', '../suite')
+add_tier_dir('app', 'suite')

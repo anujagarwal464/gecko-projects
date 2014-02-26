@@ -6,14 +6,14 @@
 mailnews_dirs = []
 mailnews_static_dirs = []
 
-mailnews_dirs += ['../mozilla/xpfe/components/autocomplete']
+mailnews_dirs += ['xpfe/components/autocomplete']
 
 if CONFIG['MOZ_LDAP_XPCOM']:
-    mailnews_dirs += ['../ldap']
-    mailnews_dirs += ['../ldap/xpcom']
+    mailnews_dirs += ['ldap']
+    mailnews_dirs += ['ldap/xpcom']
 
 if CONFIG['MOZ_MORK']:
-    mailnews_dirs += ['../db']
+    mailnews_dirs += ['db']
 
-mailnews_dirs += ['../mailnews']
+mailnews_dirs += ['mailnews']
 
