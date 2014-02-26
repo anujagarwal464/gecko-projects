@@ -251,5 +251,26 @@ NS_IMETHODIMP CacheIOThread::AfterProcessNextEvent(nsIThreadInternal *thread, ui
   return NS_OK;
 }
 
+// Memory reporting
+
+size_t CacheIOThread::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  MonitorAutoLock lock(const_cast<CacheIOThread*>(this)->mMonitor);
+
+  size_t n = 0;
+  n += mallocSizeOf(mThread);
+  for (uint32_t level = 0; level < LAST_LEVEL; ++level) {
+    n += mEventQueue[level].SizeOfExcludingThis(mallocSizeOf);
+    // Objects held are arbitrary events we don't know are reported elsewhere.
+  }
+
+  return n;
+}
+
+size_t CacheIOThread::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  return mallocSizeOf(this) + SizeOfExcludingThis(mallocSizeOf);
+}
+
 } // net
 } // mozilla

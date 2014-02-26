@@ -3268,5 +3268,65 @@ CacheIndex::OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult)
   return NS_OK;
 }
 
+// Memory reporting
+
+namespace { // anon
+
+size_t
+CollectIndexEntryMemory(CacheIndexEntry* aEntry,
+                        mozilla::MallocSizeOf mallocSizeOf,
+                        void *arg)
+{
+  return aEntry->SizeOfExcludingThis(mallocSizeOf);
+}
+
+} // anon
+
+size_t
+CacheIndex::SizeOfExcludingThisInternal(mozilla::MallocSizeOf mallocSizeOf) const
+{
+  CacheIndexAutoLock lock(const_cast<CacheIndex*>(this));
+
+  size_t n = 0;
+  n += mallocSizeOf(mRWBuf);
+  n += mallocSizeOf(mRWHash);
+
+  if (mIndexHandle) {
+    n += mIndexHandle->SizeOfIncludingThis(mallocSizeOf);
+  }
+
+  if (mJournalHandle) {
+    n += mJournalHandle->SizeOfIncludingThis(mallocSizeOf);
+  }
+
+  n += mIndex.SizeOfExcludingThis(&CollectIndexEntryMemory, mallocSizeOf);
+  n += mPendingUpdates.SizeOfExcludingThis(&CollectIndexEntryMemory, mallocSizeOf);
+  n += mTmpJournal.SizeOfExcludingThis(&CollectIndexEntryMemory, mallocSizeOf);
+
+  // mFrecencyArray and mExpirationArray items are reported by
+  // mIndex/mPendingUpdates
+  n += mFrecencyArray.SizeOfExcludingThis(mallocSizeOf);
+  n += mExpirationArray.SizeOfExcludingThis(mallocSizeOf);
+
+  return n;
+}
+
+// static
+size_t
+CacheIndex::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
+{
+  if (!gInstance)
+    return 0;
+
+  return gInstance->SizeOfExcludingThisInternal(mallocSizeOf);
+}
+
+// static
+size_t
+CacheIndex::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf)
+{
+  return mallocSizeOf(gInstance) + SizeOfExcludingThis(mallocSizeOf);
+}
+
 } // net
 } // mozilla
