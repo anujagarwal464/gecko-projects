@@ -34,7 +34,6 @@ public:
     WRITE,
     MANAGEMENT,
     CLOSE,
-    BUILD_OR_UPDATE_INDEX,
     EVICT,
     LAST_LEVEL
   };

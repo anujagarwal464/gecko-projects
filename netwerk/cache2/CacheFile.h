@@ -56,6 +56,7 @@ public:
                 bool aCreateNew,
                 bool aMemoryOnly,
                 bool aPriority,
+                bool aKeyIsHash,
                 CacheFileListener *aCallback);
 
   NS_IMETHOD OnChunkRead(nsresult aResult, CacheFileChunk *aChunk);
@@ -70,7 +71,6 @@ public:
   NS_IMETHOD OnDataRead(CacheFileHandle *aHandle, char *aBuf, nsresult aResult);
   NS_IMETHOD OnFileDoomed(CacheFileHandle *aHandle, nsresult aResult);
   NS_IMETHOD OnEOFSet(CacheFileHandle *aHandle, nsresult aResult);
-  NS_IMETHOD OnFileRenamed(CacheFileHandle *aHandle, nsresult aResult);
 
   NS_IMETHOD OnMetadataRead(nsresult aResult);
   NS_IMETHOD OnMetadataWritten(nsresult aResult);
@@ -97,7 +97,6 @@ public:
 
   bool DataSize(int64_t* aSize);
   void Key(nsACString& aKey) { aKey = mKey; }
-  bool IsDoomed();
 
 private:
   friend class CacheFileIOManager;
@@ -156,8 +155,6 @@ private:
 
   nsresult PadChunkWithZeroes(uint32_t aChunkIdx);
 
-  nsresult InitIndexEntry();
-
   mozilla::Mutex mLock;
   bool           mOpeningFile;
   bool           mReady;
@@ -165,6 +162,7 @@ private:
   bool           mDataAccessed;
   bool           mDataIsDirty;
   bool           mWritingMetadata;
+  bool           mKeyIsHash;
   nsresult       mStatus;
   int64_t        mDataSize;
   nsCString      mKey;
