@@ -24,6 +24,8 @@ namespace net {
 #define kMinMetadataRead 1024  // TODO find optimal value from telemetry
 #define kAlignSize       4096
 
+#define kCacheEntryVersion 2
+
 NS_IMPL_ISUPPORTS1(CacheFileMetadata, CacheFileIOListener)
 
 CacheFileMetadata::CacheFileMetadata(CacheFileHandle *aHandle, const nsACString &aKey)
@@ -46,6 +48,7 @@ CacheFileMetadata::CacheFileMetadata(CacheFileHandle *aHandle, const nsACString 
 
   MOZ_COUNT_CTOR(CacheFileMetadata);
   memset(&mMetaHdr, 0, sizeof(CacheFileMetadataHeader));
+  mMetaHdr.mVersion = kCacheEntryVersion;
   mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
   mKey = aKey;
 
@@ -96,8 +99,9 @@ CacheFileMetadata::CacheFileMetadata(const nsACString &aKey)
 
   MOZ_COUNT_CTOR(CacheFileMetadata);
   memset(&mMetaHdr, 0, sizeof(CacheFileMetadataHeader));
+  mMetaHdr.mVersion = kCacheEntryVersion;
   mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
-  mMetaHdr.mFetchCount++;
+  mMetaHdr.mFetchCount = 1;
   mKey = aKey;
   mMetaHdr.mKeySize = mKey.Length();
 
@@ -690,6 +694,7 @@ CacheFileMetadata::InitEmptyMetadata()
     mBufSize = 0;
   }
   mOffset = 0;
+  mMetaHdr.mVersion = kCacheEntryVersion;
   mMetaHdr.mFetchCount = 1;
   mMetaHdr.mExpirationTime = nsICacheEntry::NO_EXPIRATION_TIME;
   mMetaHdr.mKeySize = mKey.Length();
@@ -792,6 +797,13 @@ CacheFileMetadata::ParseMetadata(uint32_t aMetaOffset, uint32_t aBufOffset,
   }
 
   memcpy(&mMetaHdr, mBuf + hdrOffset, sizeof(CacheFileMetadataHeader));
+
+  if (mMetaHdr.mVersion != kCacheEntryVersion) {
+    LOG(("CacheFileMetadata::ParseMetadata() - Not a version we understand to. "
+         "[version=0x%x, this=%p]", mMetaHdr.mVersion, this));
+    return NS_ERROR_UNEXPECTED;
+  }
+
   mMetaHdr.mFetchCount++;
   MarkDirty();
 

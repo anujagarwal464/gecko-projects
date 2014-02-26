@@ -26,6 +26,7 @@ namespace net {
   ((double)(aInt) / (double)CacheObserver::HalfLifeSeconds())
 
 typedef struct {
+  uint32_t        mVersion;
   uint32_t        mFetchCount;
   uint32_t        mLastFetched;
   uint32_t        mLastModified;
