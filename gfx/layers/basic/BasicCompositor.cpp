@@ -180,7 +180,8 @@ public:
 
   bool ConvertImageToRGB(const SurfaceDescriptor& aImage)
   {
-    YCbCrImageDataDeserializer deserializer(aImage.get_YCbCrImage().data().get<uint8_t>());
+    YCbCrImageDataDeserializer deserializer(aImage.get_YCbCrImage().data().get<uint8_t>(),
+                                            aImage.get_YCbCrImage().data().Size<uint8_t>());
     PlanarYCbCrData data;
     DeserializerToPlanarYCbCrImageData(deserializer, data);
 
@@ -482,10 +483,7 @@ BasicCompositor::DrawQuad(const gfx::Rect& aRect,
                      DrawOptions(aOpacity));
       break;
     }
-    case EFFECT_BGRA:
-    case EFFECT_BGRX:
-    case EFFECT_RGBA:
-    case EFFECT_RGBX: {
+    case EFFECT_RGB: {
       TexturedEffect* texturedEffect =
           static_cast<TexturedEffect*>(aEffectChain.mPrimaryEffect.get());
       TextureSourceBasic* source = texturedEffect->mTexture->AsSourceBasic();
@@ -598,7 +596,7 @@ BasicCompositor::BeginFrame(const nsIntRegion& aInvalidRegion,
   transform.Translate(-invalidRect.x, -invalidRect.y);
   mRenderTarget->mDrawTarget->SetTransform(transform);
 
-  gfxUtils::ClipToRegion(mRenderTarget->mDrawTarget, aInvalidRegion);
+  gfxUtils::ClipToRegion(mRenderTarget->mDrawTarget, invalidRegionSafe);
 
   if (aRenderBoundsOut) {
     *aRenderBoundsOut = rect;

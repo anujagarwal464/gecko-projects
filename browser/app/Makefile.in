@@ -54,12 +54,6 @@ NSDISTMODE = copy
 
 include $(topsrcdir)/config/config.mk
 
-ifdef _MSC_VER
-# Always enter a Windows program through wmain, whether or not we're
-# a console application.
-WIN32_EXE_LDFLAGS += -ENTRY:wmainCRTStartup
-endif
-
 ifeq ($(OS_ARCH),WINNT)
 RCINCLUDE = splash.rc
 # Rebuild firefox.exe if the manifest changes - it's included by splash.rc.
@@ -67,11 +61,6 @@ RCINCLUDE = splash.rc
 # Note the manifest file exists in the tree, so we use the explicit filename
 # here.
 EXTRA_DEPS += firefox.exe.manifest
-ifndef GNU_CC
-RCFLAGS += -DMOZ_PHOENIX -I$(srcdir)
-else
-RCFLAGS += -DMOZ_PHOENIX --include-dir $(srcdir)
-endif
 endif
 
 PROGRAMS_DEST = $(DIST)/bin

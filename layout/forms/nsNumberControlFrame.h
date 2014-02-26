@@ -6,6 +6,7 @@
 #ifndef nsNumberControlFrame_h__
 #define nsNumberControlFrame_h__
 
+#include "mozilla/Attributes.h"
 #include "nsContainerFrame.h"
 #include "nsIFormControlFrame.h"
 #include "nsIAnonymousContentCreator.h"
@@ -43,12 +44,16 @@ public:
   NS_DECL_FRAMEARENA_HELPERS
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
-  virtual void ContentStatesChanged(nsEventStates aStates);
+  virtual void ContentStatesChanged(nsEventStates aStates) MOZ_OVERRIDE;
   virtual bool IsLeaf() const MOZ_OVERRIDE { return true; }
 
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
+
+  virtual nscoord GetMinWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
+
+  virtual nscoord GetPrefWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
 
   virtual nsresult Reflow(nsPresContext*           aPresContext,
                           nsHTMLReflowMetrics&     aDesiredSize,
@@ -158,11 +163,6 @@ private:
                                 nsIAtom* aTagName,
                                 nsCSSPseudoElements::Type aPseudoType,
                                 nsStyleContext* aParentContext);
-
-  nsresult ReflowAnonymousContent(nsPresContext* aPresContext,
-                                  nsHTMLReflowMetrics& aWrappersDesiredSize,
-                                  const nsHTMLReflowState& aReflowState,
-                                  nsIFrame* aOuterWrapperFrame);
 
   class SyncDisabledStateEvent;
   friend class SyncDisabledStateEvent;

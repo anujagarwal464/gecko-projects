@@ -447,7 +447,7 @@ public:
   nsDocumentShownDispatcher(nsCOMPtr<nsIDocument> aDocument)
   : mDocument(aDocument) {}
 
-  NS_IMETHOD Run();
+  NS_IMETHOD Run() MOZ_OVERRIDE;
 
 private:
   nsCOMPtr<nsIDocument> mDocument;
@@ -2223,6 +2223,11 @@ nsDocumentViewer::CreateStyleSet(nsIDocument* aDocument,
     if (sheet) {
       styleSet->PrependStyleSheet(nsStyleSet::eAgentSheet, sheet);
     }
+  }
+
+  sheet = nsLayoutStylesheetCache::NumberControlSheet();
+  if (sheet) {
+    styleSet->PrependStyleSheet(nsStyleSet::eAgentSheet, sheet);
   }
 
   sheet = nsLayoutStylesheetCache::FormsSheet();

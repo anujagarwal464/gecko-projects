@@ -1730,7 +1730,6 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 .urlbar-input-box {
   -moz-margin-start: 0;
   padding: 3px 0 2px;
-  min-width: 4em;
 }
 
 .urlbar-history-dropmarker {
@@ -2578,7 +2577,7 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 
 @media (min-resolution: 2dppx) {
   /* image preloading hack from shared/tabs.inc.css */
-  #TabsToolbar::before {
+  #tabbrowser-tabs::before {
     background-image:
       url(chrome://browser/skin/tabbrowser/tab-background-end@2x.png),
       url(chrome://browser/skin/tabbrowser/tab-background-middle@2x.png),
@@ -3304,10 +3303,6 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   }
 }
 
-#geolocation-learnmore-link {
-  -moz-margin-start: 0; /* override default label margin to match description margin */
-}
-
 .indexedDB-notification-icon,
 #indexedDB-notification-icon {
   list-style-image: url(chrome://global/skin/icons/question-16.png);
@@ -3599,10 +3594,6 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   margin: 0px;
 }
 
-
-#mixed-content-blocked-helplink {
-  margin: 0px;
-}
 
 .popup-notification-icon[popupid="webRTC-sharingDevices"],
 .popup-notification-icon[popupid="webRTC-shareDevices"] {
@@ -3970,8 +3961,7 @@ toolbar[mode="icons"] > *|* > .toolbarbutton-badge[badge]:not([badge=""]):-moz-l
   }
 }
 
-#social-undoactivation-button,
-#servicesInstall-learnmore-link {
+#social-undoactivation-button {
   -moz-margin-start: 0; /* override default label margin to match description margin */
 }
 
@@ -4184,11 +4174,6 @@ window > chatbox {
   #customization-titlebar-visibility-button > .button-box > .button-icon {
     width: 24px;
   }
-}
-
-#main-window[customizing] #navigator-toolbox::after {
-  margin-left: 2em;
-  margin-right: 2em;
 }
 
 /* End customization mode */

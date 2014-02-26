@@ -1140,38 +1140,6 @@
     "kind": "boolean",
     "description": "Whether a HTTP base page load was over SSL or not."
   },
-  "HTTPDATA_DAILY_ETHERNET_IN": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 200,
-    "extended_statistics_ok": true,
-    "description": "MB of http ethernet data recvd in one day"
-  },
-  "HTTPDATA_DAILY_ETHERNET_OUT": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 200,
-    "extended_statistics_ok": true,
-    "description": "MB of http ethernet data sent in one day"
-  },
-  "HTTPDATA_DAILY_CELL_IN": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 200,
-    "extended_statistics_ok": true,
-    "description": "MB of http cell data recvd in one day"
-  },
-  "HTTPDATA_DAILY_CELL_OUT": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": "10000",
-    "n_buckets": 200,
-    "extended_statistics_ok": true,
-    "description": "MB of http cell data sent in one day"
-  },
   "SSL_HANDSHAKE_VERSION": {
     "expires_in_version": "never",
     "kind": "enumerated",
@@ -3292,6 +3260,30 @@
     "n_buckets": 20,
     "extended_statistics_ok": true,
     "description": "Widget: Time it takes for the message before a UI message (ms)"
+  },
+  "FX_SESSION_RESTORE_COLLECT_ALL_WINDOWS_DATA_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Time to collect all window data (ms)"
+  },
+  "FX_SESSION_RESTORE_COLLECT_SINGLE_WINDOW_DATA_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Time to collect the data of a single window (ms)"
+  },
+  "FX_SESSION_RESTORE_COLLECT_COOKIES_MS": {
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": "30000",
+    "n_buckets": 10,
+    "extended_statistics_ok": true,
+    "description": "Session restore: Time to collect cookies (ms)"
   },
   "FX_SESSION_RESTORE_COLLECT_DATA_MS": {
     "expires_in_version": "never",
