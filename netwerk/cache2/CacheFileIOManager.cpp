@@ -1958,10 +1958,10 @@ CacheFileIOManager::DoomFileInternal(CacheFileHandle *aHandle)
     nsRefPtr<CacheStorageService> storageService = CacheStorageService::Self();
     if (storageService) {
       nsAutoCString url;
-      nsCOMPtr<nsILoadContextInfo> info;
-      rv = CacheFileUtils::ParseKey(aHandle->Key(), getter_AddRefs(info), &url);
-      MOZ_ASSERT(NS_SUCCEEDED(rv));
-      if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsILoadContextInfo> info =
+        CacheFileUtils::ParseKey(aHandle->Key(), &url);
+      MOZ_ASSERT(info);
+      if (info) {
         storageService->CacheFileDoomed(info, url);
       }
     }
