@@ -34,8 +34,8 @@ include $(topsrcdir)/config/rules.mk
 
 ifdef ENABLE_TESTS
 libs::
-	$(INSTALL) $(wildcard $(srcdir)/test/resources/*.js) $(MOZDEPTH)/_tests/xpcshell/mailnews/resources
-	$(INSTALL) $(wildcard $(srcdir)/test/data/*) $(MOZDEPTH)/_tests/xpcshell/mailnews/data
+	$(INSTALL) $(wildcard $(srcdir)/test/resources/*.js) $(DEPTH)/_tests/xpcshell/mailnews/resources
+	$(INSTALL) $(wildcard $(srcdir)/test/data/*) $(DEPTH)/_tests/xpcshell/mailnews/data
 
 # We provide an xpcshell-tests target here because the top-level target acts
 # differently to the specific directory one. We want our developers to be able
@@ -47,13 +47,13 @@ XPCSHELL_TEST_DIRS = addrbook base compose db/gloda db/msgdb extensions/bayesian
 
 xpcshell-tests::
 	$(PYTHON) -u $(MOZILLA_DIR)/config/pythonpath.py \
-	  -I$(MOZDEPTH)/build \
-	  -I$(MOZILLA_DIR)/build -I$(MOZDEPTH)/_tests/mozbase/mozinfo \
-	  $(MOZILLA_SRCDIR)/testing/xpcshell/runxpcshelltests.py \
+	  -I$(DEPTH)/build \
+	  -I$(MOZILLA_DIR)/build -I$(DEPTH)/_tests/mozbase/mozinfo \
+	  $(topsrcdir)/testing/xpcshell/runxpcshelltests.py \
 	  --symbols-path=$(DIST)/crashreporter-symbols \
-	  --build-info-json=$(MOZDEPTH)/mozinfo.json \
+	  --build-info-json=$(DEPTH)/mozinfo.json \
 	  --tests-root-dir=$(testxpcobjdir) \
-          --testing-modules-dir=$(MOZDEPTH)/_tests/modules \
+          --testing-modules-dir=$(DEPTH)/_tests/modules \
 	  --xunit-file=$(testxpcobjdir)/mailnews/results.xml \
 	  --xunit-suite-name=xpcshell \
 	  $(EXTRA_TEST_ARGS) \

@@ -138,7 +138,7 @@ ifndef LIBXUL_SDK
 INSTALL_SDK = 1
 endif
  
-include $(MOZILLA_SRCDIR)/toolkit/mozapps/installer/packager.mk
+include $(topsrcdir)/toolkit/mozapps/installer/packager.mk
 
 ifeq (Darwin, $(OS_ARCH))
 BINPATH = $(_BINPATH)

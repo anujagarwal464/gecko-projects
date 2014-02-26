@@ -11,8 +11,8 @@ include $(DEPTH)/config/autoconf.mk
 
 AB_CD = $(MOZ_UI_LOCALE) 
 
-GRE_MILESTONE = $(shell $(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build Milestone)
-GRE_BUILDID = $(shell $(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build BuildID)
+GRE_MILESTONE = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build Milestone)
+GRE_BUILDID = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build BuildID)
 
 MOZ_SOURCE_STAMP = $(firstword $(shell hg -R $(topsrcdir) parent --template="{node|short}\n" 2>/dev/null))
 ifdef MOZ_SOURCE_STAMP
@@ -49,9 +49,9 @@ else
 DIST_FILES = application.ini
 
 LOCAL_INCLUDES += \
-  -I$(MOZILLA_SRCDIR)/toolkit/xre \
-  -I$(MOZILLA_SRCDIR)/xpcom/base \
-  -I$(MOZILLA_SRCDIR)/xpcom/build \
+  -I$(topsrcdir)/toolkit/xre \
+  -I$(topsrcdir)/xpcom/base \
+  -I$(topsrcdir)/xpcom/build \
   $(NULL)
 
 DEFINES += -DXPCOM_GLUE
@@ -198,7 +198,7 @@ ifdef ENABLE_TESTS
 # Lightning is not included in the package, so Lightning tests cannot run
 # properly even though we build Lightning.
 libs::
-	sed -e '/calendar/d' $(MOZDEPTH)/_tests/xpcshell/xpcshell.ini >$(MOZDEPTH)/_tests/xpcshell/all-test-dirs.list
+	sed -e '/calendar/d' $(DEPTH)/_tests/xpcshell/xpcshell.ini >$(DEPTH)/_tests/xpcshell/all-test-dirs.list
 endif
 
 ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))

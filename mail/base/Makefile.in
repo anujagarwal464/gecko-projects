@@ -10,7 +10,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-PRE_RELEASE_SUFFIX := $(shell $(PYTHON) $(topsrcdir)/mozilla/config/printprereleasesuffix.py \
+PRE_RELEASE_SUFFIX := $(shell $(PYTHON) $(topsrcdir)/config/printprereleasesuffix.py \
                       $(MOZ_APP_VERSION))
 
 DEFINES += -DMOZ_APP_VERSION=$(MOZ_APP_VERSION) \

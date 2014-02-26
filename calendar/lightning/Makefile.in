@@ -52,7 +52,7 @@ DEFINES += -DLIGHTNING_UPDATE_LOCATION=https://calendar.mozilla.org/update.php
 endif
 
 # Gecko milestone
-GRE_MILESTONE = $(shell $(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build Milestone)
+GRE_MILESTONE = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build Milestone)
 ifdef GRE_MILESTONE
 DEFINES += -DGRE_MILESTONE=$(GRE_MILESTONE)
 endif
@@ -69,12 +69,12 @@ DEFINES += -DSOURCE_REPO="$(SOURCE_REPO)"
 endif
 
 # Mozilla source repo and stamps
-MOZ_SOURCE_STAMP = $(firstword $(shell hg -R $(MOZILLA_SRCDIR) parent --template="{node|short}\n" 2>/dev/null))
+MOZ_SOURCE_STAMP = $(firstword $(shell hg -R $(topsrcdir) parent --template="{node|short}\n" 2>/dev/null))
 ifdef MOZ_SOURCE_STAMP
 DEFINES += -DMOZ_SOURCE_STAMP="$(MOZ_SOURCE_STAMP)"
 endif
 
-MOZ_SOURCE_REPO := $(shell hg -R $(MOZILLA_SRCDIR) showconfig paths.default 2>/dev/null | sed -e "s/^ssh:/http:/")
+MOZ_SOURCE_REPO := $(shell hg -R $(topsrcdir) showconfig paths.default 2>/dev/null | sed -e "s/^ssh:/http:/")
 ifdef MOZ_SOURCE_REPO
 DEFINES += -DMOZ_SOURCE_REPO="$(MOZ_SOURCE_REPO)"
 endif
@@ -111,7 +111,7 @@ DEFINES += -DTHUNDERBIRD_VERSION=$(THUNDERBIRD_VERSION) \
            -DTHEME=$(THEME) \
            $(NULL)
 
-GRE_BUILDID = $(shell $(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build BuildID)
+GRE_BUILDID = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build BuildID)
 DEFINES += -DGRE_BUILDID=$(GRE_BUILDID)
 
 # xxx todo: unless our packaging story is revised (bug 406579) we package up timezones.sqlite
@@ -136,13 +136,13 @@ endif
 
 ident:
 	@printf "comm_revision "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(FINAL_TARGET)/application.ini App SourceStamp
 	@printf "moz_revision "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(FINAL_TARGET)/application.ini Build SourceStamp
 	@printf "buildid "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(FINAL_TARGET)/application.ini App BuildID
 
 include $(srcdir)/lightning-symbols.mk

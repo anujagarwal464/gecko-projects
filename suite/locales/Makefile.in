@@ -64,7 +64,7 @@ NON_OMNIJAR_FILES = \
 
 include $(topsrcdir)/config/rules.mk
 
-include $(topsrcdir)/mozilla/toolkit/locales/l10n.mk
+include $(topsrcdir)/toolkit/locales/l10n.mk
 
 $(STAGEDIST): $(DIST)/branding
 
@@ -141,17 +141,17 @@ clobber-%:
 
 libs-%:
 	$(NSINSTALL) -D $(DIST)/install
-	@$(MAKE) -C ../../mozilla/toolkit/locales libs-$*
-	@$(MAKE) -C ../../mozilla/services/sync/locales AB_CD=$* XPI_NAME=locale-$*
+	@$(MAKE) -C ../../toolkit/locales libs-$*
+	@$(MAKE) -C ../../services/sync/locales AB_CD=$* XPI_NAME=locale-$*
 	@$(MAKE) -C ../../editor/ui/locales AB_CD=$* XPI_NAME=locale-$*
-	@if test -d ../../mozilla/extensions/irc; then \
-	  $(MAKE) -C ../../mozilla/extensions/irc/locales libs-$*; \
+	@if test -d ../../extensions/irc; then \
+	  $(MAKE) -C ../../extensions/irc/locales libs-$*; \
 	fi
-	@if test -d ../../mozilla/extensions/venkman; then \
-	  $(MAKE) -C ../../mozilla/extensions/venkman/locales libs-$*; \
+	@if test -d ../../extensions/venkman; then \
+	  $(MAKE) -C ../../extensions/venkman/locales libs-$*; \
 	fi
-	@$(MAKE) -C ../../mozilla/extensions/spellcheck/locales AB_CD=$* XPI_NAME=locale-$*
-	@$(MAKE) -C ../../mozilla/intl/locales AB_CD=$* XPI_NAME=locale-$*
+	@$(MAKE) -C ../../extensions/spellcheck/locales AB_CD=$* XPI_NAME=locale-$*
+	@$(MAKE) -C ../../intl/locales AB_CD=$* XPI_NAME=locale-$*
 	@$(MAKE) libs AB_CD=$* XPI_NAME=locale-$* PREF_DIR=defaults/pref
 
 repackage-win32-installer: WIN32_INSTALLER_OUT=$(_ABS_DIST)/$(PKG_INST_PATH)$(PKG_INST_BASENAME).exe
@@ -197,11 +197,11 @@ clobber-zip:
 repackage-zip: repackage-extensions
 
 repackage-extensions: $(STAGEDIST)
-	if test -d ../../mozilla/extensions/irc; then \
-	  $(MAKE) -C ../../mozilla/extensions/irc/locales repackage-zip-$(AB_CD) STAGEDIST=$(STAGEDIST); \
+	if test -d ../../extensions/irc; then \
+	  $(MAKE) -C ../../extensions/irc/locales repackage-zip-$(AB_CD) STAGEDIST=$(STAGEDIST); \
 	fi
-	if test -d ../../mozilla/extensions/venkman; then \
-	  $(MAKE) -C ../../mozilla/extensions/venkman/locales repackage-zip-$(AB_CD) STAGEDIST=$(STAGEDIST); \
+	if test -d ../../extensions/venkman; then \
+	  $(MAKE) -C ../../extensions/venkman/locales repackage-zip-$(AB_CD) STAGEDIST=$(STAGEDIST); \
 	fi
 ifdef MOZ_OMNIJAR
 	$(MAKE) -C ../app pack-ext AB_CD=$(AB_CD) STAGEDIST=$(STAGEDIST);
@@ -241,13 +241,13 @@ endif
 
 ident:
 	@printf "comm_revision "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(STAGEDIST)/application.ini App SourceStamp
 	@printf "moz_revision "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(STAGEDIST)/platform.ini Build SourceStamp
 	@printf "buildid "
-	@$(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py \
+	@$(PYTHON) $(topsrcdir)/config/printconfigsetting.py \
 	    $(STAGEDIST)/application.ini App BuildID
 
 merge-%:

@@ -16,7 +16,7 @@
 # The following variables are optional:
 #   XPI_NO_UNIVERSAL = 1  # If set, no universal path is used on mac
 
-include $(MOZILLA_SRCDIR)/toolkit/mozapps/installer/package-name.mk
+include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
 # Set the univeral path only if we are building a univeral binary and it was
 # not restricted by the calling makefile
@@ -56,7 +56,7 @@ oslocales = $(shell $(AWK) '{ if ($$2 == "" || $$2 == "$(SHORTOS)") { print $$1 
 apposlocales = $(call oslocales,$(topsrcdir)/$1/locales/$(if $(filter $(MOZ_UPDATE_CHANNEL),beta release),shipped-locales,all-locales))
 
 # function print_ltnconfig(section,configname)
-print_ltnconfig = $(shell $(PYTHON) $(MOZILLA_SRCDIR)/config/printconfigsetting.py $(XPI_STAGE_PATH)/$(XPI_NAME)/application.ini $1 $2)
+print_ltnconfig = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(XPI_STAGE_PATH)/$(XPI_NAME)/application.ini $1 $2)
 
 # Lightning uses Thunderbird's build machinery, so we need to hack the binary
 # url to use Lightning's directories.

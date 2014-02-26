@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MOZMILLDIR=$(DEPTH)/mozilla/_tests/mozmill
+MOZMILLDIR=$(DEPTH)/_tests/mozmill
 ifeq ($(OS_ARCH),WINNT)
 VIRTUALENV_BIN = $(MOZMILLDIR)/../mozmill-virtualenv/Scripts
 else
@@ -73,10 +73,10 @@ make-stage-dir:
 # some of the required xpcshell bits are packaged by mochitest, so we have to
 # package those as well.
 stage-mozilla-tests: make-stage-dir
-	$(MAKE) -C $(DEPTH)/mozilla/layout/tools/reftest stage-package
-	$(MAKE) -C $(DEPTH)/mozilla/testing/mochitest stage-package
-	$(MAKE) -C $(DEPTH)/mozilla/testing/xpcshell stage-package
-	$(MAKE) -C $(DEPTH)/mozilla/testing/mozbase stage-package
+	$(MAKE) -C $(DEPTH)/layout/tools/reftest stage-package
+	$(MAKE) -C $(DEPTH)/testing/mochitest stage-package
+	$(MAKE) -C $(DEPTH)/testing/xpcshell stage-package
+	$(MAKE) -C $(DEPTH)/testing/mozbase stage-package
 
 # Although we should probably depend on make-stage-dir here, we don't as the
 # make-stage-dir actually removes the package directory for us. Given that we
@@ -87,7 +87,7 @@ stage-mozmill: make-stage-dir
 
 stage-modules: make-stage-dir
 	$(NSINSTALL) -D $(PKG_STAGE)/modules
-	cp -RL $(DEPTH)/mozilla/_tests/modules $(PKG_STAGE)
+	cp -RL $(DEPTH)/_tests/modules $(PKG_STAGE)
 
 .PHONY: \
   package-tests make-stage-dir stage-mozmill stage-modules

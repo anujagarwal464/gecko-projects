@@ -59,7 +59,7 @@ Application.prototype = {
   platformIsWindows: "@mozilla.org/windows-registry-key;1" in Components.classes
 };
 
-#include ../../mozilla/toolkit/components/exthelper/extApplication.js
+#include ../../toolkit/components/exthelper/extApplication.js
 
 Application.prototype.__proto__ = extApplication.prototype;
 

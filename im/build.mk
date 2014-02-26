@@ -5,9 +5,9 @@
 ifdef COMM_BUILD
 
 ifndef MOZILLA_DIR
-MOZILLA_DIR = $(MOZILLA_SRCDIR)
+MOZILLA_DIR = $(topsrcdir)
 endif
-include $(MOZILLA_SRCDIR)/toolkit/mozapps/installer/package-name.mk
+include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
 BUILD_YEAR := $(shell echo $(BUILDID) | cut -c 1-4)
 BUILD_MONTH := $(shell echo $(BUILDID) | cut -c 5-6)
@@ -82,7 +82,7 @@ ifdef ENABLE_TESTS
 	$(MAKE) xpcshell-tests
 endif
 ifdef MOZ_UPDATE_PACKAGING
-	$(MAKE) -C $(MOZDEPTH)/tools/update-packaging full-update PKG_INST_PATH=
+	$(MAKE) -C $(DEPTH)/tools/update-packaging full-update PKG_INST_PATH=
 endif
 ifdef L10NBASEDIR
 	$(foreach locale,$(SHIPPED_LOCALES),$(MAKE) -C im/locales/ repack-$(locale) LOCALE_MERGEDIR=mergedir MOZ_MAKE_COMPLETE_MAR=$(MOZ_UPDATE_PACKAGING) ;)
@@ -99,7 +99,7 @@ ifdef LIST_PREVIOUS_MAR_CMD
 		mkdir -p $(PREVIOUS_MAR_DIR)/$(buildid) ; \
 	        $(DOWNLOAD_MAR_CMD) ; \
 		echo "$(MAR_FILE_DEST),$(DIST)/$(COMPLETE_MAR),$(DIST)/$(PKG_UPDATE_PATH)$(PKG_UPDATE_BASENAME).partial.from-$(buildid).mar,$(FORCE_UPDATE)" >> $(PATCH_FILE) ;))))
-	PATH="$(realpath $(LIBXUL_DIST)/host/bin):$(PATH)" $(PYTHON) $(MOZILLA_SRCDIR)/tools/update-packaging/make_incremental_updates.py -f $(PATCH_FILE)
+	PATH="$(realpath $(LIBXUL_DIST)/host/bin):$(PATH)" $(PYTHON) $(topsrcdir)/tools/update-packaging/make_incremental_updates.py -f $(PATCH_FILE)
 endif
 endif
 ifdef SYMBOL_SERVER_HOST

@@ -794,7 +794,7 @@ Application.prototype = {
   platformIsMac: "nsILocalFileMac" in Components.interfaces
 };
 
-#include ../../../mozilla/toolkit/components/exthelper/extApplication.js
+#include ../../../toolkit/components/exthelper/extApplication.js
 
 // set the proto, defined in extApplication.js
 Application.prototype.__proto__ = extApplication.prototype;

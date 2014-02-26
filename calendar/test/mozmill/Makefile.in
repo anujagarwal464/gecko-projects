@@ -9,7 +9,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MOZMILLDIR=$(DEPTH)/mozilla/_tests/mozmill
+MOZMILLDIR=$(DEPTH)/_tests/mozmill
 ifeq ($(OS_ARCH),WINNT)
 VIRTUALENV_BIN = $(MOZMILLDIR)/../mozmill-virtualenv/Scripts
 else

@@ -16,6 +16,6 @@ include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/config/rules.mk
 
 LOCAL_INCLUDES = \
-    -I$(MOZILLA_SRCDIR)/xpcom/tests \
-    -I$(MOZILLA_SRCDIR)/netwerk/test \
+    -I$(topsrcdir)/xpcom/tests \
+    -I$(topsrcdir)/netwerk/test \
     $(NULL)

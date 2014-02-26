@@ -16,7 +16,7 @@ MAKE_SYM_STORE_ARGS := -c --vcs-info
 ifdef PDBSTR_PATH
 MAKE_SYM_STORE_ARGS += -i
 endif
-DUMP_SYMS_BIN ?= $(MOZILLA_SRCDIR)/toolkit/crashreporter/tools/win32/dump_syms_vc$(_MSC_VER).exe
+DUMP_SYMS_BIN ?= $(topsrcdir)/toolkit/crashreporter/tools/win32/dump_syms_vc$(_MSC_VER).exe
 # PDB files don't get moved to dist, so we need to scan the whole objdir
 MAKE_SYM_STORE_PATH := $(DEPTH)
 endif
@@ -48,7 +48,7 @@ endif
 	$(RM) -r $(DIST)/crashreporter-symbols
 	$(RM) "$(DIST)/$(SYMBOL_ARCHIVE_BASENAME).zip"
 	$(NSINSTALL) -D $(DIST)/crashreporter-symbols
-	$(PYTHON) $(MOZILLA_SRCDIR)/toolkit/crashreporter/tools/symbolstore.py \
+	$(PYTHON) $(topsrcdir)/toolkit/crashreporter/tools/symbolstore.py \
 	  $(MAKE_SYM_STORE_ARGS)                                          \
 	  $(foreach dir,$(SYM_STORE_SOURCE_DIRS),-s $(dir))               \
 	  $(DUMP_SYMS_BIN)                                                \
@@ -68,7 +68,7 @@ endif # MOZ_CRASHREPORTER
 
 uploadsymbols:
 ifdef MOZ_CRASHREPORTER
-	$(SHELL) $(MOZILLA_SRCDIR)/toolkit/crashreporter/tools/upload_symbols.sh $(SYMBOL_INDEX_NAME) "$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip"
+	$(SHELL) $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.sh $(SYMBOL_INDEX_NAME) "$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip"
 endif
 
 ###################################
