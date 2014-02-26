@@ -37,6 +37,7 @@ namespace {
 
 void AppendMemoryStorageID(nsAutoCString &key)
 {
+  key.Append(':');
   key.Append('M');
 }
 
@@ -338,7 +339,8 @@ PLDHashOperator CollectPrivateContexts(const nsACString& aKey,
                                        CacheEntryTable* aTable,
                                        void* aClosure)
 {
-  if (aKey[0] == 'P') {
+  nsCOMPtr<nsILoadContextInfo> info = CacheFileUtils::ParseKey(aKey);
+  if (info && info->IsPrivate()) {
     nsTArray<nsCString>* keys = static_cast<nsTArray<nsCString>*>(aClosure);
     keys->AppendElement(aKey);
   }

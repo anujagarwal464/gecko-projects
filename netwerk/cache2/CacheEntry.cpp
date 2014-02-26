@@ -229,10 +229,8 @@ nsresult CacheEntry::HashingKey(nsCSubstring const& aStorageID,
    * Changing it will cause we will not be able to find files on disk.
    */
 
-  if (aStorageID.Length()) {
-    aResult.Append(aStorageID);
-    aResult.Append(':');
-  }
+  aResult.Append(aStorageID);
+  aResult.Append(':');
 
   if (aEnhanceID.Length()) {
     aResult.Append(aEnhanceID);
