@@ -48,6 +48,10 @@ ifdef ENABLE_TESTS
              $(DIST_ARCH_2)/test-package-stage/reftest/;                \
            cp -RL $(DIST_ARCH_1)/test-package-stage/reftest/specialpowers \
              $(DIST_ARCH_2)/test-package-stage/reftest/;              \
+           if test -e $(DIST_ARCH_1)/test-package-stage/mozmill/automation.py; then \
+             cp $(DIST_ARCH_1)/test-package-stage/mozmill/automation.py \
+               $(DIST_ARCH_2)/test-package-stage/mozmill/;              \
+           fi; \
            $(TOPSRCDIR)/build/macosx/universal/unify                 \
              --unify-with-sort "\.manifest$$" \
              --unify-with-sort "all-test-dirs\.list$$"               \
