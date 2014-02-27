@@ -4580,17 +4580,60 @@ JS_ClearPendingException(JSContext *cx);
 extern JS_PUBLIC_API(bool)
 JS_ReportPendingException(JSContext *cx);
 
+namespace JS {
+
 /*
- * Save the current exception state.  This takes a snapshot of cx's current
- * exception state without making any change to that state.
+ * Save and later restore the current exception state of a given JSContext.
+ * This is useful for implementing behavior in C++ that's like try/catch
+ * or try/finally in JS.
  *
- * The returned state pointer MUST be passed later to JS_RestoreExceptionState
- * (to restore that saved state, overriding any more recent state) or else to
- * JS_DropExceptionState (to free the state struct in case it is not correct
- * or desirable to restore it).  Both Restore and Drop free the state struct,
- * so callers must stop using the pointer returned from Save after calling the
- * Release or Drop API.
+ * Typical usage:
+ *
+ *     bool ok = JS_EvaluateScript(cx, ...);
+ *     AutoSaveExceptionState savedExc(cx);
+ *     ... cleanup that might re-enter JS ...
+ *     return ok;
  */
+class JS_PUBLIC_API(AutoSaveExceptionState)
+{
+  private:
+    JSContext *context;
+    bool wasThrowing;
+    RootedValue exceptionValue;
+
+  public:
+    /*
+     * Take a snapshot of cx's current exception state. Then clear any current
+     * pending exception in cx.
+     */
+    explicit AutoSaveExceptionState(JSContext *cx);
+
+    /*
+     * If neither drop() nor restore() was called, restore the exception
+     * state only if no exception is currently pending on cx.
+     */
+    ~AutoSaveExceptionState();
+
+    /*
+     * Discard any stored exception state.
+     * If this is called, the destructor is a no-op.
+     */
+    void drop() {
+        wasThrowing = false;
+        exceptionValue.setUndefined();
+    }
+
+    /*
+     * Replace cx's exception state with the stored exception state. Then
+     * discard the stored exception state. If this is called, the
+     * destructor is a no-op.
+     */
+    void restore();
+};
+
+} /* namespace JS */
+
+/* Deprecated API. Use AutoSaveExceptionState instead. */
 extern JS_PUBLIC_API(JSExceptionState *)
 JS_SaveExceptionState(JSContext *cx);
 
@@ -4704,17 +4747,41 @@ JS_CharsToId(JSContext* cx, JS::TwoByteChars chars, JS::MutableHandleId);
 extern JS_PUBLIC_API(bool)
 JS_IsIdentifier(JSContext *cx, JS::HandleString str, bool *isIdentifier);
 
+namespace JS {
+
 /*
- * Return the current script and line number of the most currently running
+ * AutoFilename encapsulates a pointer to a C-string and keeps the C-string
+ * alive for as long as the associated AutoFilename object is alive.
+ */
+class MOZ_STACK_CLASS JS_PUBLIC_API(AutoFilename)
+{
+    void *scriptSource_;
+
+    AutoFilename(const AutoFilename &) MOZ_DELETE;
+    void operator=(const AutoFilename &) MOZ_DELETE;
+
+  public:
+    AutoFilename() : scriptSource_(nullptr) {}
+    ~AutoFilename() { reset(nullptr); }
+
+    const char *get() const;
+
+    void reset(void *newScriptSource);
+};
+
+/*
+ * Return the current filename and line number of the most currently running
  * frame. Returns true if a scripted frame was found, false otherwise.
  *
  * If a the embedding has hidden the scripted caller for the topmost activation
  * record, this will also return false.
  */
 extern JS_PUBLIC_API(bool)
-JS_DescribeScriptedCaller(JSContext *cx, JS::MutableHandleScript script, unsigned *lineno);
+DescribeScriptedCaller(JSContext *cx, AutoFilename *filename = nullptr,
+                       unsigned *lineno = nullptr);
 
-namespace JS {
+extern JS_PUBLIC_API(JSObject *)
+GetScriptedCallerGlobal(JSContext *cx);
 
 /*
  * Informs the JS engine that the scripted caller should be hidden. This can be
