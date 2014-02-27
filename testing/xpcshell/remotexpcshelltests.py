@@ -218,6 +218,8 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
         # can be conditional on android_version.
         androidVersion = devmgr.shellCheckOutput(['getprop', 'ro.build.version.sdk'])
         mozinfo.info['android_version'] = androidVersion
+        print "GB remote found version "+androidVersion
+        print mozinfo.info
 
         self.localLib = options.localLib
         self.localBin = options.localBin
