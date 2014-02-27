@@ -77,9 +77,12 @@ private:
         return false;
 
       nsresult rv;
-      appId = appIdString.ToInteger(&rv);
+      int64_t appId64 = appIdString.ToInteger64(&rv);
       if (NS_FAILED(rv))
         return false; // appid value is mandatory
+      if (appId64 < 0 || appId64 > PR_UINT32_MAX)
+        return false; // not in the range
+      appId = static_cast<uint32_t>(appId64);
 
       break;
     }
