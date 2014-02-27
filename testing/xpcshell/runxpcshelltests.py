@@ -796,8 +796,6 @@ class XPCShellTests(object):
 
         self.buildTestPath()
 
-        print "GB getting active tests: "
-        print mozinfo.info
         try:
             self.alltests = mp.active_tests(**mozinfo.info)
         except TypeError:
@@ -845,7 +843,6 @@ class XPCShellTests(object):
 
         if self.mozInfo is None:
             self.mozInfo = os.path.join(self.testharnessdir, "mozinfo.json")
-        print "GB using "+self.mozInfo
 
     def buildCoreEnvironment(self):
         """
@@ -1287,7 +1284,6 @@ class XPCShellTests(object):
             if not os.path.isfile(mozInfoFile):
                 self.log.error("Error: couldn't find mozinfo.json at '%s'. Perhaps you need to use --build-info-json?" % mozInfoFile)
                 return False
-            print "GB loading from "+mozInfoFile
             self.mozInfo = json.load(open(mozInfoFile))
 
         # mozinfo.info is used as kwargs.  Some builds are done with
@@ -1301,8 +1297,6 @@ class XPCShellTests(object):
         self.mozInfo = fixedInfo
 
         mozinfo.update(self.mozInfo)
-        print "GB mozinfo updated"
-        print mozinfo.info
 
         # buildEnvironment() needs mozInfo, so we call it after mozInfo is initialized.
         self.buildEnvironment()
