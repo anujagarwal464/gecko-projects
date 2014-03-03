@@ -816,7 +816,7 @@ class XPCShellTests(object):
         end = int(start + testsPerChunk)
         if end > totalTests:
             end = totalTests
-        print "===>> %d total; %d per chunk; %d start; %d end" % (totalTests,testsPerChunk,start,end)
+        self.log.info("Running tests %d-%d/%d", start+1, end, totalTests)
         self.alltests = self.alltests[start:end]
 
     def setAbsPath(self):
