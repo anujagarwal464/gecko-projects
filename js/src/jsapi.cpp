@@ -78,6 +78,7 @@
 #include "vm/RegExpStatics.h"
 #include "vm/Runtime.h"
 #include "vm/Shape.h"
+#include "vm/SharedArrayObject.h"
 #include "vm/StopIterationObject.h"
 #include "vm/StringBuffer.h"
 #include "vm/TypedArrayObject.h"
@@ -114,8 +115,6 @@ using js::frontend::Parser;
 /* Make sure that jschar is two bytes unsigned integer */
 JS_STATIC_ASSERT((jschar)-1 > 0);
 JS_STATIC_ASSERT(sizeof(jschar) == 2);
-
-const JS::HandleValueArray JS::EmptyValueArray;
 
 JS_PUBLIC_API(int64_t)
 JS_Now()
@@ -420,7 +419,7 @@ JS_ValueToSource(JSContext *cx, HandleValue value)
 JS_PUBLIC_API(bool)
 JS_DoubleIsInt32(double d, int32_t *ip)
 {
-    return mozilla::DoubleIsInt32(d, ip);
+    return mozilla::NumberIsInt32(d, ip);
 }
 
 JS_PUBLIC_API(int32_t)
@@ -2142,7 +2141,7 @@ js::RecomputeStackLimit(JSRuntime *rt, StackKind kind)
 #endif
 
     // If there's no pending interrupt request set on the runtime's main thread's
-    // ionStackLimit, then update it so that it reflects the new nativeStacklimit.
+    // jitStackLimit, then update it so that it reflects the new nativeStacklimit.
     //
     // Note that, for now, we use the untrusted limit for ion. This is fine,
     // because it's the most conservative limit, and if we hit it, we'll bail
@@ -2150,10 +2149,10 @@ js::RecomputeStackLimit(JSRuntime *rt, StackKind kind)
 #ifdef JS_ION
     if (kind == StackForUntrustedScript) {
         JSRuntime::AutoLockForOperationCallback lock(rt);
-        if (rt->mainThread.ionStackLimit != uintptr_t(-1)) {
-            rt->mainThread.ionStackLimit = rt->mainThread.nativeStackLimit[kind];
+        if (rt->mainThread.jitStackLimit != uintptr_t(-1)) {
+            rt->mainThread.jitStackLimit = rt->mainThread.nativeStackLimit[kind];
 #ifdef JS_ARM_SIMULATOR
-            rt->mainThread.ionStackLimit = jit::Simulator::StackLimit();
+            rt->mainThread.jitStackLimit = jit::Simulator::StackLimit();
 #endif
         }
     }
@@ -4325,7 +4324,8 @@ JS::OwningCompileOptions::OwningCompileOptions(JSContext *cx)
     : ReadOnlyCompileOptions(),
       runtime(GetRuntime(cx)),
       elementRoot(cx),
-      elementAttributeNameRoot(cx)
+      elementAttributeNameRoot(cx),
+      introductionScriptRoot(cx)
 {
 }
 
@@ -4351,6 +4351,7 @@ JS::OwningCompileOptions::copy(JSContext *cx, const ReadOnlyCompileOptions &rhs)
     setOriginPrincipals(rhs.originPrincipals());
     setElement(rhs.element());
     setElementAttributeName(rhs.elementAttributeName());
+    setIntroductionScript(rhs.introductionScript());
 
     return (setFileAndLine(cx, rhs.filename(), rhs.lineno) &&
             setSourceMapURL(cx, rhs.sourceMapURL()) &&
@@ -4427,11 +4428,23 @@ JS::OwningCompileOptions::wrap(JSContext *cx, JSCompartment *compartment)
         if (!compartment->wrap(cx, elementAttributeNameRoot.address()))
             return false;
     }
+
+    // There is no equivalent of cross-compartment wrappers for scripts. If
+    // the introduction script would be in a different compartment from the
+    // compiled code, we would be creating a cross-compartment script
+    // reference, which would be bogus. In that case, just don't bother to
+    // retain the introduction script.
+    if (introductionScriptRoot) {
+        if (introductionScriptRoot->compartment() != compartment)
+            introductionScriptRoot = nullptr;
+    }
+
     return true;
 }
 
 JS::CompileOptions::CompileOptions(JSContext *cx, JSVersion version)
-    : ReadOnlyCompileOptions(), elementRoot(cx), elementAttributeNameRoot(cx)
+    : ReadOnlyCompileOptions(), elementRoot(cx), elementAttributeNameRoot(cx),
+      introductionScriptRoot(cx)
 {
     this->version = (version != JSVERSION_UNKNOWN) ? version : cx->findVersion();
 
@@ -4452,6 +4465,17 @@ JS::CompileOptions::wrap(JSContext *cx, JSCompartment *compartment)
         if (!compartment->wrap(cx, elementAttributeNameRoot.address()))
             return false;
     }
+
+    // There is no equivalent of cross-compartment wrappers for scripts. If
+    // the introduction script would be in a different compartment from the
+    // compiled code, we would be creating a cross-compartment script
+    // reference, which would be bogus. In that case, just don't bother to
+    // retain the introduction script.
+    if (introductionScriptRoot) {
+        if (introductionScriptRoot->compartment() != compartment)
+            introductionScriptRoot = nullptr;
+    }
+
     return true;
 }
 
@@ -6204,8 +6228,7 @@ HideScriptedCaller(JSContext *cx)
     MOZ_ASSERT(cx);
 
     // If there's no accessible activation on the stack, we'll return null from
-    // JS_DescribeScriptedCaller anyway, so there's no need to annotate
-    // anything.
+    // DescribeScriptedCaller anyway, so there's no need to annotate anything.
     Activation *act = cx->runtime()->mainThread.activation();
     if (!act)
         return;

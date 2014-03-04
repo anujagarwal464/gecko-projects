@@ -151,6 +151,7 @@ nsRuleNode::EnsureBlockDisplay(uint8_t& display,
   case NS_STYLE_DISPLAY_TABLE :
   case NS_STYLE_DISPLAY_BLOCK :
   case NS_STYLE_DISPLAY_FLEX :
+  case NS_STYLE_DISPLAY_GRID :
     // do not muck with these at all - already blocks
     // This is equivalent to nsStyleDisplay::IsBlockOutside.  (XXX Maybe we
     // should just call that?)
@@ -166,6 +167,11 @@ nsRuleNode::EnsureBlockDisplay(uint8_t& display,
   case NS_STYLE_DISPLAY_INLINE_FLEX:
     // make inline flex containers into flex containers
     display = NS_STYLE_DISPLAY_FLEX;
+    break;
+
+  case NS_STYLE_DISPLAY_INLINE_GRID:
+    // make inline grid containers into grid containers
+    display = NS_STYLE_DISPLAY_GRID;
     break;
 
   default :
@@ -5497,8 +5503,10 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
 
         nsCSSProperty prop =
           nsCSSProps::LookupProperty(buffer, nsCSSProps::eEnabled);
-        if (nsCSSProps::PropHasFlags(prop,
-                                     CSS_PROPERTY_CREATES_STACKING_CONTEXT)) {
+        if (prop != eCSSProperty_UNKNOWN &&
+            nsCSSProps::PropHasFlags(prop,
+                                     CSS_PROPERTY_CREATES_STACKING_CONTEXT))
+        {
           display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_STACKING_CONTEXT;
         }
       }

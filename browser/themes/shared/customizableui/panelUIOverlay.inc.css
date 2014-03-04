@@ -12,8 +12,10 @@
 % we don't support nested calc(): https://bugzilla.mozilla.org/show_bug.cgi?id=968761
 %define menuPanelButtonWidth (@menuPanelWidth@ / 3 - 0.1px)
 %define exitSubviewGutterWidth 38px
-%define buttonStateHover :not(:-moz-any([disabled],[open],[checked="true"],:active)):-moz-any(:hover,[_moz-menuactive])
-%define buttonStateActive :not([disabled]):-moz-any([open],[checked="true"],:hover:active,[_moz-menuactive]:active)
+%define buttonStateHover :not(:-moz-any([disabled],[open],[checked="true"],:active)):hover
+%define menuStateHover :not(:-moz-any([disabled],[checked="true"],:active))[_moz-menuactive]
+%define buttonStateActive :not([disabled]):-moz-any([open],[checked="true"],:hover:active)
+%define menuStateActive :not([disabled]):-moz-any([checked="true"],[_moz-menuactive]:active)
 
 %include ../browser.inc
 
@@ -24,6 +26,10 @@
   background-size: 1px calc(100% - 1px), 1px calc(100% - 1px), 1px  calc(100% - 1px) !important;
   background-position: 0px 0px, 1px 0px, 2px 0px;
   background-repeat: no-repeat;
+}
+
+#PanelUI-button:-moz-locale-dir(rtl) {
+  background-position: 100% 0, calc(100% - 1px) 0, calc(100% - 2px) 0;
 }
 
 .panel-subviews {
@@ -82,6 +88,7 @@
 
 .cui-widget-panelview .subviewbutton.panel-subview-footer {
   margin: 4px 0 0;
+  -moz-box-pack: center;
 }
 
 #PanelUI-mainView {
@@ -117,7 +124,6 @@
 
 .panelUI-grid .toolbarbutton-menubutton-button > .toolbarbutton-multiline-text,
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-multiline-text {
-  text-align: center;
   -moz-hyphens: auto;
   min-height: 3.5em;
 }
@@ -127,11 +133,14 @@
   mask: url(chrome://browser/content/browser.xul#menuPanelButtonTextFadeOutMask);
 }
 
+.panelUI-grid .toolbarbutton-1 > .toolbarbutton-text,
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-multiline-text {
+  text-align: center;
   margin: 2px 0 0;
 }
 
 .panelUI-grid .toolbarbutton-menubutton-button > .toolbarbutton-multiline-text {
+  text-align: center;
   margin: -1px 0 0;
 }
 
@@ -141,6 +150,7 @@
 }
 
 #PanelUI-contents,
+#BMB_bookmarksPopup,
 .panel-mainview:not([panelid="PanelUI-popup"]) {
   max-width: @menuPanelWidth@;
 }
@@ -226,6 +236,20 @@ toolbaritem[cui-areatype="menu-panel"][sdkstylewidget="true"]:not(.panel-wide-it
   margin: 6px 0 0;
   padding: 2px 6px;
   border: 1px solid transparent;
+}
+
+.panelUI-grid .toolbarbutton-1[type="menu"] {
+  background-image: url("chrome://browser/skin/toolbarbutton-dropdown-arrow.png");
+  background-position: right 3px top 16px;
+  background-repeat: no-repeat;
+}
+
+.panelUI-grid .toolbarbutton-1[type="menu"]:-moz-locale-dir(rtl) {
+  background-position: left 3px top 16px;
+}
+
+.panelUI-grid .toolbarbutton-1 > .toolbarbutton-menu-dropmarker {
+  display: none;
 }
 
 .panelUI-grid .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker {
@@ -532,7 +556,8 @@ panelview .toolbarbutton-1,
 .subviewbutton.panel-subview-footer > .toolbarbutton-text,
 .subviewbutton.panel-subview-footer > .menu-text {
   -moz-padding-start: 0;
-  text-align: center;
+  -moz-padding-end: 12px;
+  -moz-box-flex: 0;
 }
 
 .subviewbutton:not(.panel-subview-footer) {
@@ -557,7 +582,9 @@ panelview .toolbarbutton-1,
 }
 
 panelview .toolbarbutton-1@buttonStateHover@,
-.subviewbutton@buttonStateHover@,
+toolbarbutton.subviewbutton@buttonStateHover@,
+menu.subviewbutton@menuStateHover@,
+menuitem.subviewbutton@menuStateHover@,
 .widget-overflow-list .toolbarbutton-1@buttonStateHover@,
 #edit-controls@inAnyPanel@ > toolbarbutton@buttonStateHover@,
 #zoom-controls@inAnyPanel@ > toolbarbutton@buttonStateHover@ {
@@ -571,7 +598,9 @@ panelview .toolbarbutton-1@buttonStateHover@,
 }
 
 panelview .toolbarbutton-1@buttonStateActive@,
-.subviewbutton@buttonStateActive@,
+toolbarbutton.subviewbutton@buttonStateActive@,
+menu.subviewbutton@menuStateActive@
+menuitem.subviewbutton@menuStateActive@
 .widget-overflow-list .toolbarbutton-1@buttonStateActive@,
 #edit-controls@inAnyPanel@ > toolbarbutton@buttonStateActive@,
 #zoom-controls@inAnyPanel@ > toolbarbutton@buttonStateActive@ {

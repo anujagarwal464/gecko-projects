@@ -998,7 +998,7 @@ ArrayJoinKernel(JSContext *cx, SeparatorOp sepOp, HandleObject obj, uint32_t len
                 if (!NumberValueToStringBuffer(cx, elem, sb))
                     return false;
             } else if (elem.isBoolean()) {
-                if (!BooleanToStringBuffer(cx, elem.toBoolean(), sb))
+                if (!BooleanToStringBuffer(elem.toBoolean(), sb))
                     return false;
             } else if (elem.isObject()) {
                 /*
@@ -1094,7 +1094,20 @@ ArrayJoin(JSContext *cx, CallArgs &args)
 
     JS::Anchor<JSString*> anchor(sepstr);
 
-    // Step 6 is implicit in the loops below
+    // Step 6 is implicit in the loops below.
+
+    // An optimized version of a special case of steps 7-11: when length==1 and
+    // the 0th element is a string, ToString() of that element is a no-op and
+    // so it can be immediately returned as the result.
+    if (length == 1 && !Locale && obj->is<ArrayObject>() &&
+        obj->getDenseInitializedLength() == 1)
+    {
+        const Value &elem0 = obj->getDenseElement(0);
+        if (elem0.isString()) {
+            args.rval().setString(elem0.toString());
+            return true;
+        }
+    }
 
     StringBuffer sb(cx);
 
@@ -1103,7 +1116,7 @@ ArrayJoin(JSContext *cx, CallArgs &args)
     if (length > 0 && !sb.reserve(seplen * (length - 1)))
         return false;
 
-    // Various optimized versions of steps 7-10
+    // Various optimized versions of steps 7-10.
     if (seplen == 0) {
         EmptySeparatorOp op;
         if (!ArrayJoinKernel<Locale>(cx, op, obj, length, sb))
@@ -1431,7 +1444,7 @@ NumDigitsBase10(uint32_t n)
 }
 
 static inline bool
-CompareLexicographicInt32(JSContext *cx, const Value &a, const Value &b, bool *lessOrEqualp)
+CompareLexicographicInt32(const Value &a, const Value &b, bool *lessOrEqualp)
 {
     int32_t aint = a.toInt32();
     int32_t bint = b.toInt32();
@@ -1504,13 +1517,8 @@ struct SortComparatorStrings
 
 struct SortComparatorLexicographicInt32
 {
-    JSContext   *const cx;
-
-    SortComparatorLexicographicInt32(JSContext *cx)
-      : cx(cx) {}
-
     bool operator()(const Value &a, const Value &b, bool *lessOrEqualp) {
-        return CompareLexicographicInt32(cx, a, b, lessOrEqualp);
+        return CompareLexicographicInt32(a, b, lessOrEqualp);
     }
 };
 
@@ -1940,7 +1948,7 @@ js::array_sort(JSContext *cx, unsigned argc, Value *vp)
             } else if (allInts) {
                 JS_ALWAYS_TRUE(vec.resize(n * 2));
                 if (!MergeSort(vec.begin(), n, vec.begin() + n,
-                               SortComparatorLexicographicInt32(cx))) {
+                               SortComparatorLexicographicInt32())) {
                     return false;
                 }
             } else {

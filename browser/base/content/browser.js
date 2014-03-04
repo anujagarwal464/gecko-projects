@@ -139,6 +139,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
 XPCOMUtils.defineLazyModuleGetter(this, "gBrowserNewTabPreloader",
   "resource:///modules/BrowserNewTabPreloader.jsm", "BrowserNewTabPreloader");
 
+XPCOMUtils.defineLazyModuleGetter(this, "gCustomizationTabPreloader",
+  "resource:///modules/CustomizationTabPreloader.jsm", "CustomizationTabPreloader");
+
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
@@ -4801,9 +4804,8 @@ const nodeToShortcutMap = {
   "tabview-button": "key_tabview",
 };
 const gDynamicTooltipCache = new Map();
-function UpdateDynamicShortcutTooltipText(popupTriggerNode) {
-  let label = document.getElementById("dynamic-shortcut-tooltip-label");
-  let nodeId = popupTriggerNode.id;
+function UpdateDynamicShortcutTooltipText(aTooltip) {
+  let nodeId = aTooltip.triggerNode.id;
   if (!gDynamicTooltipCache.has(nodeId) && nodeId in nodeToTooltipMap) {
     let strId = nodeToTooltipMap[nodeId];
     let args = [];
@@ -4816,8 +4818,7 @@ function UpdateDynamicShortcutTooltipText(popupTriggerNode) {
     }
     gDynamicTooltipCache.set(nodeId, gNavigatorBundle.getFormattedString(strId, args));
   }
-  let desiredLabel = gDynamicTooltipCache.get(nodeId);
-  label.setAttribute("value", desiredLabel);
+  aTooltip.setAttribute("label", gDynamicTooltipCache.get(nodeId));
 }
 
 /**
@@ -6855,9 +6856,14 @@ let gRemoteTabsUI = {
  * @param aOpenNew
  *        True to open a new tab and switch to it, if no existing tab is found.
  *        If no suitable window is found, a new one will be opened.
+ * @param aOpenParams
+ *        If switching to this URI results in us opening a tab, aOpenParams
+ *        will be the parameter object that gets passed to openUILinkIn. Please
+ *        see the documentation for openUILinkIn to see what parameters can be
+ *        passed via this object.
  * @return True if an existing tab was found, false otherwise
  */
-function switchToTabHavingURI(aURI, aOpenNew) {
+function switchToTabHavingURI(aURI, aOpenNew, aOpenParams) {
   // This will switch to the tab in aWindow having aURI, if present.
   function switchIfURIInWindow(aWindow) {
     // Only switch to the tab if neither the source and desination window are
@@ -6905,9 +6911,9 @@ function switchToTabHavingURI(aURI, aOpenNew) {
   // No opened tab has that url.
   if (aOpenNew) {
     if (isBrowserWindow && isTabEmpty(gBrowser.selectedTab))
-      gBrowser.selectedBrowser.loadURI(aURI.spec);
+      openUILinkIn(aURI.spec, "current", aOpenParams);
     else
-      openUILinkIn(aURI.spec, "tab");
+      openUILinkIn(aURI.spec, "tab", aOpenParams);
   }
 
   return false;

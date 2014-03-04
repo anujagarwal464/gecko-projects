@@ -127,7 +127,9 @@ CustomizeMode.prototype = {
     // We don't need to switch to kAboutURI, or open a new tab at
     // kAboutURI if we're already on it.
     if (this.browser.selectedBrowser.currentURI.spec != kAboutURI) {
-      this.window.switchToTabHavingURI(kAboutURI, true);
+      this.window.switchToTabHavingURI(kAboutURI, true, {
+        skipTabAnimation: true,
+      });
       return;
     }
 
@@ -299,6 +301,8 @@ CustomizeMode.prototype = {
     }
 
     this._handler.isExitingCustomizeMode = true;
+
+    this._removeExtraToolbarsIfEmpty();
 
     CustomizableUI.removeListener(this);
 
@@ -491,7 +495,7 @@ CustomizeMode.prototype = {
     deck.addEventListener("transitionend", customizeTransitionEnd);
 
     if (gDisableAnimation) {
-      deck.setAttribute("fastcustomizeanimation", true);
+      this.document.getElementById("tab-view-deck").setAttribute("fastcustomizeanimation", true);
     }
     if (aEntering) {
       this.document.documentElement.setAttribute("customizing", true);
@@ -853,6 +857,18 @@ CustomizeMode.prototype = {
         target.removeEventListener("dragend", this, true);
       }
     }.bind(this)).then(null, ERROR);
+  },
+
+  _removeExtraToolbarsIfEmpty: function() {
+    let toolbox = this.window.gNavToolbox;
+    for (let child of toolbox.children) {
+      if (child.hasAttribute("customindex")) {
+        let placements = CustomizableUI.getWidgetIdsInArea(child.id);
+        if (!placements.length) {
+          CustomizableUI.removeExtraToolbar(child.id);
+        }
+      }
+    }
   },
 
   persistCurrentSets: function(aSetBeforePersisting)  {
@@ -1354,6 +1370,10 @@ CustomizeMode.prototype = {
         // The items in the palette are wrapped, so we need the target node's parent here:
         this.visiblePalette.insertBefore(draggedItem, aTargetNode.parentNode);
       }
+      if (aOriginArea.id !== kPaletteId) {
+        // The dragend event already fires when the item moves within the palette.
+        this._onDragEnd(aEvent);
+      }
       return;
     }
 
@@ -1391,6 +1411,7 @@ CustomizeMode.prototype = {
       // an area.
       let custEventType = aOriginArea.id == kPaletteId ? "add" : "move";
       BrowserUITelemetry.countCustomizationEvent(custEventType);
+      this._onDragEnd(aEvent);
       return;
     }
 
@@ -1427,6 +1448,8 @@ CustomizeMode.prototype = {
       CustomizableUI.addWidgetToArea(aDraggedItemId, aTargetArea.id, position);
     }
 
+    this._onDragEnd(aEvent);
+
     // For BrowserUITelemetry, an "add" is only when we move an item from the palette
     // into an area. Otherwise, it's a move.
     let custEventType = aOriginArea.id == kPaletteId ? "add" : "move";
@@ -1458,14 +1481,17 @@ CustomizeMode.prototype = {
     }
   },
 
+  /**
+   * To workaround bug 460801 we manually forward the drop event here when dragend wouldn't be fired.
+   */
   _onDragEnd: function(aEvent) {
     if (this._isUnwantedDragDrop(aEvent)) {
       return;
     }
     this._initializeDragAfterMove = null;
     this.window.clearTimeout(this._dragInitializeTimeout);
+    __dumpDragData(aEvent, "_onDragEnd");
 
-    __dumpDragData(aEvent);
     let document = aEvent.target.ownerDocument;
     document.documentElement.removeAttribute("customizing-movingItem");
 
@@ -1688,7 +1714,15 @@ CustomizeMode.prototype = {
     let dragY = aEvent.clientY - this._dragOffset.y;
 
     // Ensure this is within the container
-    let bounds = expectedParent.getBoundingClientRect();
+    let boundsContainer = expectedParent;
+    // NB: because the panel UI itself is inside a scrolling container, we need
+    // to use the parent bounds (otherwise, if the panel UI is scrolled down,
+    // the numbers we get are in window coordinates which leads to various kinds
+    // of weirdness)
+    if (boundsContainer == this.panelUIContents) {
+      boundsContainer = boundsContainer.parentNode;
+    }
+    let bounds = boundsContainer.getBoundingClientRect();
     dragX = Math.min(bounds.right, Math.max(dragX, bounds.left));
     dragY = Math.min(bounds.bottom, Math.max(dragY, bounds.top));
 
@@ -1700,6 +1734,16 @@ CustomizeMode.prototype = {
       }
     } else {
       let positionManager = DragPositionManager.getManagerForArea(aAreaElement);
+      // Make it relative to the container:
+      dragX -= bounds.left;
+      // NB: but if we're in the panel UI, we need to use the actual panel
+      // contents instead of the scrolling container to determine our origin
+      // offset against:
+      if (expectedParent == this.panelUIContents) {
+        dragY -= this.panelUIContents.getBoundingClientRect().top;
+      } else {
+        dragY -= bounds.top;
+      }
       // Find the closest node:
       targetNode = positionManager.find(aAreaElement, dragX, dragY, aDraggedItemId);
     }
@@ -1819,7 +1863,7 @@ function __dumpDragData(aEvent, caller) {
   if (!gDebug) {
     return;
   }
-  let str = "Dumping drag data (CustomizeMode.jsm) {\n";
+  let str = "Dumping drag data (" + (caller ? caller + " in " : "") + "CustomizeMode.jsm) {\n";
   str += "  type: " + aEvent["type"] + "\n";
   for (let el of ["target", "currentTarget", "relatedTarget"]) {
     if (aEvent[el]) {

@@ -30,6 +30,7 @@ import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
 import org.mozilla.gecko.background.announcements.AnnouncementsBroadcastService;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.favicons.Favicons;
@@ -208,7 +209,7 @@ public abstract class GeckoApp
 
     abstract public int getLayout();
     abstract public boolean hasTabsSideBar();
-    abstract protected String getDefaultProfileName();
+    abstract protected String getDefaultProfileName() throws NoMozillaDirectoryException;
 
     private static final String RESTARTER_ACTION = "org.mozilla.gecko.restart";
     private static final String RESTARTER_CLASS = "org.mozilla.gecko.Restarter";
@@ -452,7 +453,7 @@ public abstract class GeckoApp
             if (GeckoThread.checkAndSetLaunchState(GeckoThread.LaunchState.GeckoRunning, GeckoThread.LaunchState.GeckoExiting)) {
                 GeckoAppShell.notifyGeckoOfEvent(GeckoEvent.createBroadcastEvent("Browser:Quit", null));
             } else {
-                System.exit(0);
+                GeckoAppShell.systemExit();
             }
             return true;
         }
@@ -567,6 +568,8 @@ public abstract class GeckoApp
             } else if (event.equals("Reader:FaviconRequest")) {
                 final String url = message.getString("url");
                 handleFaviconRequest(url);
+            } else if (event.equals("Gecko:DelayedStartup")) {
+                ThreadUtils.postToBackgroundThread(new UninstallListener.DelayedStartupTask(this));
             } else if (event.equals("Gecko:Ready")) {
                 mGeckoReadyStartupTimer.stop();
                 geckoConnected();
@@ -1199,7 +1202,15 @@ public abstract class GeckoApp
                         profilePath =  m.group(1);
                     }
                     if (profileName == null) {
-                        profileName = getDefaultProfileName();
+                        try {
+                            profileName = getDefaultProfileName();
+                        } catch (NoMozillaDirectoryException e) {
+                            Log.wtf(LOGTAG, "Unable to fetch default profile name!", e);
+                            // There's nothing at all we can do now. If the Mozilla directory
+                            // didn't exist, then we're screwed.
+                            // Crash here so we can fix the bug.
+                            throw new RuntimeException(e);
+                        }
                         if (profileName == null)
                             profileName = GeckoProfile.DEFAULT_PROFILE;
                     }
@@ -1213,7 +1224,13 @@ public abstract class GeckoApp
         }
 
         BrowserDB.initialize(getProfile().getName());
-        ((GeckoApplication) getApplication()).initialize();
+
+        // Workaround for <http://code.google.com/p/android/issues/detail?id=20915>.
+        try {
+            Class.forName("android.os.AsyncTask");
+        } catch (ClassNotFoundException e) {}
+
+        MemoryMonitor.getInstance().init(getApplicationContext());
 
         sAppContext = this;
         GeckoAppShell.setContextGetter(this);
@@ -1235,7 +1252,7 @@ public abstract class GeckoApp
         if (LocaleManager.systemLocaleDidChange()) {
             Log.i(LOGTAG, "System locale changed. Restarting.");
             doRestart();
-            System.exit(0);
+            GeckoAppShell.systemExit();
             return;
         }
 
@@ -1277,7 +1294,6 @@ public abstract class GeckoApp
             // Bug 896992 - This intent has already been handled; reset the intent.
             setIntent(new Intent(Intent.ACTION_MAIN));
         }
-
 
         super.onCreate(savedInstanceState);
 
@@ -1358,11 +1374,6 @@ public abstract class GeckoApp
                         GeckoApp.this.onLocaleReady(uiLocale);
                     }
                 });
-
-                // Perform webapp uninstalls as appropiate.
-                if (AppConstants.MOZ_ANDROID_SYNTHAPKS) {
-                    UninstallListener.initUninstallPackageScan(getApplicationContext());
-                }
             }
         });
 
@@ -1558,6 +1569,7 @@ public abstract class GeckoApp
         registerEventListener("Reader:FaviconRequest");
         registerEventListener("onCameraCapture");
         registerEventListener("Gecko:Ready");
+        registerEventListener("Gecko:DelayedStartup");
         registerEventListener("Toast:Show");
         registerEventListener("DOMFullScreen:Start");
         registerEventListener("DOMFullScreen:Stop");
@@ -1886,9 +1898,9 @@ public abstract class GeckoApp
     @Override
     protected void onNewIntent(Intent intent) {
         if (GeckoThread.checkLaunchState(GeckoThread.LaunchState.GeckoExiting)) {
-            // We're exiting and shouldn't try to do anything else just incase
-            // we're hung for some reason we'll force the process to exit
-            System.exit(0);
+            // We're exiting and shouldn't try to do anything else. In the case
+            // where we are hung while exiting, we should force the process to exit.
+            GeckoAppShell.systemExit();
             return;
         }
 
@@ -2082,6 +2094,7 @@ public abstract class GeckoApp
         unregisterEventListener("Reader:FaviconRequest");
         unregisterEventListener("onCameraCapture");
         unregisterEventListener("Gecko:Ready");
+        unregisterEventListener("Gecko:DelayedStartup");
         unregisterEventListener("Toast:Show");
         unregisterEventListener("DOMFullScreen:Start");
         unregisterEventListener("DOMFullScreen:Stop");

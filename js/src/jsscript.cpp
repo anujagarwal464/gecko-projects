@@ -36,6 +36,7 @@
 #include "jit/BaselineJIT.h"
 #include "jit/IonCode.h"
 #include "js/OldDebugAPI.h"
+#include "js/Utility.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Compression.h"
 #include "vm/Debugger.h"
@@ -1270,6 +1271,31 @@ ScriptSourceObject::elementAttributeName() const
 }
 
 void
+ScriptSourceObject::initIntroductionScript(JSScript *script)
+{
+    JS_ASSERT(!getReservedSlot(INTRODUCTION_SCRIPT_SLOT).toPrivate());
+
+    // There is no equivalent of cross-compartment wrappers for scripts. If
+    // the introduction script would be in a different compartment from the
+    // compiled code, we would be creating a cross-compartment script
+    // reference, which would be bogus. In that case, just don't bother to
+    // retain the introduction script.
+    if (script && script->compartment() == compartment())
+        setReservedSlot(INTRODUCTION_SCRIPT_SLOT, PrivateValue(script));
+}
+
+void
+ScriptSourceObject::trace(JSTracer *trc, JSObject *obj)
+{
+    ScriptSourceObject *sso = static_cast<ScriptSourceObject *>(obj);
+
+    if (JSScript *script = sso->introductionScript()) {
+        MarkScriptUnbarriered(trc, &script, "ScriptSourceObject introductionScript");
+        sso->setReservedSlot(INTRODUCTION_SCRIPT_SLOT, PrivateValue(script));
+    }
+}
+
+void
 ScriptSourceObject::finalize(FreeOp *fop, JSObject *obj)
 {
     // ScriptSource::setSource automatically takes care of the refcount
@@ -1287,7 +1313,11 @@ const Class ScriptSourceObject::class_ = {
     JS_EnumerateStub,
     JS_ResolveStub,
     JS_ConvertStub,
-    ScriptSourceObject::finalize
+    finalize,
+    nullptr,                /* call        */
+    nullptr,                /* hasInstance */
+    nullptr,                /* construct   */
+    trace
 };
 
 ScriptSourceObject *
@@ -1306,6 +1336,9 @@ ScriptSourceObject::create(ExclusiveContext *cx, ScriptSource *source,
         sourceObject->initSlot(ELEMENT_PROPERTY_SLOT, StringValue(options.elementAttributeName()));
     else
         sourceObject->initSlot(ELEMENT_PROPERTY_SLOT, UndefinedValue());
+
+    sourceObject->initSlot(INTRODUCTION_SCRIPT_SLOT, PrivateValue(nullptr));
+    sourceObject->initIntroductionScript(options.introductionScript());
 
     return sourceObject;
 }
@@ -1622,17 +1655,18 @@ ScriptSource::destroy()
     js_free(this);
 }
 
-size_t
-ScriptSource::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf)
+void
+ScriptSource::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
+                                     JS::ScriptSourceInfo *info) const
 {
-    // |data| is a union, but both members are pointers to allocated memory,
-    // |emptySource|, or nullptr, so just using |data.compressed| will work.
-    size_t n = mallocSizeOf(this);
-    n += (ready() && data.compressed != emptySource)
-       ? mallocSizeOf(data.compressed)
-       : 0;
-    n += mallocSizeOf(filename_);
-    return n;
+    if (ready() && data.compressed != emptySource) {
+        if (compressed())
+            info->compressed += mallocSizeOf(data.compressed);
+        else
+            info->uncompressed += mallocSizeOf(data.source);
+    }
+    info->misc += mallocSizeOf(this) + mallocSizeOf(filename_);
+    info->numScripts++;
 }
 
 template<XDRMode mode>
@@ -1794,7 +1828,7 @@ ScriptSource::initFromOptions(ExclusiveContext *cx, const ReadOnlyCompileOptions
         JS_HoldPrincipals(originPrincipals_);
 
     introductionType_ = options.introductionType;
-    introductionOffset_ = options.introductionOffset;
+    setIntroductionOffset(options.introductionOffset);
 
     if (options.hasIntroductionInfo) {
         JS_ASSERT(options.introductionType != nullptr);
@@ -3549,12 +3583,9 @@ LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
     size_t bytes = (p.numFreeVariables * sizeof(HeapPtrAtom))
                  + (p.numInnerFunctions * sizeof(HeapPtrFunction));
 
-    void *table = nullptr;
-    if (bytes) {
-        table = cx->malloc_(bytes);
-        if (!table)
-            return nullptr;
-    }
+    ScopedJSFreePtr<void> table(bytes ? cx->malloc_(bytes) : nullptr);
+    if (bytes && !table)
+        return nullptr;
 
     LazyScript *res = js_NewGCLazyScript(cx);
     if (!res)
@@ -3562,7 +3593,7 @@ LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
 
     cx->compartment()->scheduleDelazificationForDebugMode();
 
-    return new (res) LazyScript(fun, table, packed, begin, end, lineno, column);
+    return new (res) LazyScript(fun, table.forget(), packed, begin, end, lineno, column);
 }
 
 /* static */ LazyScript *
@@ -3586,7 +3617,7 @@ LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
     p.usesArgumentsAndApply = false;
 
     LazyScript *res = LazyScript::CreateRaw(cx, fun, packedFields, begin, end, lineno, column);
-    JS_ASSERT(res->version() == version);
+    JS_ASSERT_IF(res, res->version() == version);
     return res;
 }
 

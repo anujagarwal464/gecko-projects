@@ -674,6 +674,12 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineUnsafeSetReservedSlot(CallInfo &callInfo);
     InliningStatus inlineUnsafeGetReservedSlot(CallInfo &callInfo);
 
+    // ForkJoin intrinsics
+    InliningStatus inlineForkJoinGetSlice(CallInfo &callInfo);
+
+    // TypedObject intrinsics.
+    InliningStatus inlineObjectIsTypeDescr(CallInfo &callInfo);
+
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo &callInfo);
     InliningStatus inlineHaveSameClass(CallInfo &callInfo);

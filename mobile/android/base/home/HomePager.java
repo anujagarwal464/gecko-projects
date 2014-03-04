@@ -216,8 +216,10 @@ public class HomePager extends ViewPager {
     public void setCurrentItem(int item, boolean smoothScroll) {
         super.setCurrentItem(item, smoothScroll);
 
-        if (mDecor != null) {
-            mDecor.onPageSelected(item);
+        // Android doesn't call onPageSelected when there is only one page. Make sure we activate
+        // the banner in this case.
+        if (mHomeBanner != null && getAdapter().getCount() == 1) {
+            mHomeBanner.setActive(true);
         }
     }
 
@@ -245,9 +247,9 @@ public class HomePager extends ViewPager {
     }
 
     public void onToolbarFocusChange(boolean hasFocus) {
-        // We should only enable the banner if the toolbar is not focused and we are on the default page
-        final boolean enabled = !hasFocus && getCurrentItem() == mDefaultPageIndex;
-        mHomeBanner.setEnabled(enabled);
+        // We should only make the banner active if the toolbar is not focused and we are on the default page
+        final boolean active = !hasFocus && getCurrentItem() == mDefaultPageIndex;
+        mHomeBanner.setActive(active);
     }
 
     private void updateUiFromPanelConfigs(List<PanelConfig> panelConfigs) {
@@ -259,6 +261,10 @@ public class HomePager extends ViewPager {
 
         if (mDecor != null) {
             mDecor.removeAllPagerViews();
+        }
+
+        if (mHomeBanner != null) {
+            mHomeBanner.setActive(false);
         }
 
         final HomeAdapter adapter = (HomeAdapter) getAdapter();
@@ -338,7 +344,7 @@ public class HomePager extends ViewPager {
             }
 
             if (mHomeBanner != null) {
-                mHomeBanner.setEnabled(position == mDefaultPageIndex);
+                mHomeBanner.setActive(position == mDefaultPageIndex);
             }
         }
 
