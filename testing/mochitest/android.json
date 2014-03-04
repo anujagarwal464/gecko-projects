@@ -63,6 +63,7 @@
   "content/media/webaudio/test/test_biquadFilterNodeWithGain.html": "Android 2.3",
   "content/media/webaudio/test/test_bug866737.html": "Android 2.3",
   "content/media/webaudio/test/test_bug867104.html": "Android 2.3",
+  "content/media/webaudio/test/test_bug938022.html": "Android 2.3",
   "content/media/webaudio/test/test_convolverNodeChannelCount.html": "Android 2.3",
   "content/media/webaudio/test/test_convolverNodeWithGain.html": "Android 2.3",
   "content/media/webaudio/test/test_delayNode.html": "Android 2.3",
@@ -76,6 +77,9 @@
   "content/media/webaudio/test/test_pannerNodeAbove.html": "Android 2.3",
   "content/media/webaudio/test/test_pannerNodeChannelCount.html": "Android 2.3",
   "content/media/webaudio/test/test_pannerNodeTail.html": "Android 2.3",
+  "content/media/webaudio/test/test_scriptProcessorNodeZeroInputOutput.html": "Android 2.3",
+  "content/media/webaudio/test/test_stereoPanningWithGain.html": "Android 2.3",
+  "content/media/webaudio/test/test_waveShaper.html": "Android 2.3",
   "content/media/webspeech/recognition/test/test_abort.html": "Android 2.3",
   "dom/media/tests/mochitest/test_dataChannel_basicAudio.html":"Android 2.3",
   "dom/media/tests/mochitest/test_dataChannel_basicAudioVideo.html":"Android 2.3",
@@ -86,6 +90,8 @@
   "dom/media/tests/mochitest/test_peerConnection_basicAudio.html":"Android 2.3",
   "dom/media/tests/mochitest/test_peerConnection_basicAudioVideo.html":"Android 2.3",
   "dom/media/tests/mochitest/test_peerConnection_basicAudioVideoCombined.html":"Android 2.3",
-  "dom/media/tests/mochitest/test_peerConnection_bug827843.html":"Android 2.3"
+  "dom/media/tests/mochitest/test_peerConnection_bug827843.html":"Android 2.3",
+  "dom/workers/test/test_suspend.html": "Android 2.3",
+  "layout/style/test/test_namespace_rule.html": "Android 2.3"
   }
 }
