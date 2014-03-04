@@ -391,24 +391,5 @@ CacheFileOutputStream::NotifyListener()
   asyncCallback->OnOutputStreamReady(this);
 }
 
-// Memory reporting
-
-size_t
-CacheFileOutputStream::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
-{
-  // Everything the stream keeps a reference to is already reported somewhere else.
-  // mFile reports itself.
-  // mChunk reported as part of CacheFile.
-  // mCloseListener is CacheEntry, already reported.
-  // mCallback is usually CacheFile or a class that is reported elsewhere.
-  return 0;
-}
-
-size_t
-CacheFileOutputStream::SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const
-{
-  return mallocSizeOf(this) + SizeOfExcludingThis(mallocSizeOf);
-}
-
 } // net
 } // mozilla
