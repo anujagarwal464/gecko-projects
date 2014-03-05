@@ -145,6 +145,7 @@ class RemoteAutomation(Automation):
                 print "Automation Error: No crash directory (%s) found on remote device" % remoteCrashDir
                 # Whilst no crash was found, the run should still display as a failure
                 return True
+            print "== Pulling %s to %s" % (remoteCrashDir, dumpDir)
             self._devicemanager.getDirectory(remoteCrashDir, dumpDir)
             crashed = Automation.checkForCrashes(self, dumpDir, symbolsPath)
 
@@ -193,6 +194,9 @@ class RemoteAutomation(Automation):
             self.dm = dm
             self.stdoutlen = 0
             self.lastTestSeen = "remoteautomation.py"
+            print "== RProcess launches with cmd, env..."
+            print cmd
+            print env
             self.proc = dm.launchProcess(cmd, stdout, cwd, env, True)
             if (self.proc is None):
                 if cmd[0] == 'am':

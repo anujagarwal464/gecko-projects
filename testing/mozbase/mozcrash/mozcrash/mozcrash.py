@@ -53,10 +53,13 @@ def check_for_crashes(dump_directory, symbols_path,
     """
     dumps = glob.glob(os.path.join(dump_directory, '*.dmp'))
     if not dumps:
+        print "== mozcrash -- no dumps found at %s" % dump_directory
         return False
 
     if stackwalk_binary is None:
         stackwalk_binary = os.environ.get('MINIDUMP_STACKWALK', None)
+
+    print "== mozcrash using stackwalk_binary %s" % stackwalk_binary
 
     # try to get the caller's filename if no test name is given
     if test_name is None:
@@ -85,12 +88,14 @@ def check_for_crashes(dump_directory, symbols_path,
             zfile.close()
 
         for d in dumps:
+            print d
             extra = os.path.splitext(d)[0] + '.extra'
 
             stackwalk_output = []
             stackwalk_output.append("Crash dump filename: " + d)
             top_frame = None
             if symbols_path and stackwalk_binary and os.path.exists(stackwalk_binary):
+                print "== mozcrash running minidump_stackwalk"
                 # run minidump_stackwalk
                 p = subprocess.Popen([stackwalk_binary, d, symbols_path],
                                      stdout=subprocess.PIPE,
@@ -133,6 +138,7 @@ def check_for_crashes(dump_directory, symbols_path,
             if dump_save_path is None:
                 dump_save_path = os.environ.get('MINIDUMP_SAVE_PATH', None)
             if dump_save_path:
+                print "== mozcrash using save path %s" % dump_save_path
                 # This code did not previously create the directory,
                 # so there may be a file hanging out with its name.
                 if os.path.isfile(dump_save_path):
@@ -152,6 +158,7 @@ def check_for_crashes(dump_directory, symbols_path,
                     log.info("Saved app info as %s",
                              os.path.join(dump_save_path, os.path.basename(extra)))
             else:
+                print "dump_save_path not set!!"
                 mozfile.remove(d)
                 mozfile.remove(extra)
     finally:
