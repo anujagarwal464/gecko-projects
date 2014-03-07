@@ -799,7 +799,6 @@ class Automation(object):
     return foundZombie
 
   def checkForCrashes(self, minidumpDir, symbolsPath):
-    print "== checkForCrashes on %s (symbols %s)" % (minidumpDir, symbolsPath)
     return mozcrash.check_for_crashes(minidumpDir, symbolsPath, test_name=self.lastTestSeen)
 
   def runApp(self, testURL, env, app, profileDir, extraArgs,
