@@ -23,7 +23,6 @@ public class testPictureLinkContextMenu extends ContentContextMenuTest {
         inputAndLoadUrl(PICTURE_PAGE_URL);
         verifyPageTitle(PICTURE_PAGE_TITLE);
 
-mSolo.sleep(10000);
         verifyContextMenuItems(photoMenuItems);
         verifyCopyOption(photoMenuItems[0], "Firefox.jpg"); // Test the "Copy Image Location" option
         verifyShareOption(photoMenuItems[1], PICTURE_PAGE_TITLE); // Test the "Share Image" option
