@@ -21,8 +21,9 @@ public class testPictureLinkContextMenu extends ContentContextMenuTest {
         PICTURE_PAGE_URL=getAbsoluteUrl("/robocop/robocop_picture_link.html");
         BLANK_PAGE_URL=getAbsoluteUrl("/robocop/robocop_blank_02.html");
         inputAndLoadUrl(PICTURE_PAGE_URL);
-        waitForText(PICTURE_PAGE_TITLE);
+        verifyPageTitle(PICTURE_PAGE_TITLE);
 
+mSolo.sleep(10000);
         verifyContextMenuItems(photoMenuItems);
         verifyCopyOption(photoMenuItems[0], "Firefox.jpg"); // Test the "Copy Image Location" option
         verifyShareOption(photoMenuItems[1], PICTURE_PAGE_TITLE); // Test the "Share Image" option
