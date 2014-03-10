@@ -333,8 +333,12 @@ var shell = {
     window.addEventListener('unload', this);
     this.contentBrowser.addEventListener('mozbrowserloadstart', this, true);
 
+    Cu.import('resource://gre/modules/SystemApp.jsm');
+    SystemApp.registerFrame(this.contentBrowser);
+
     CustomEventManager.init();
     WebappsHelper.init();
+    AlertsHelper.init();
     UserAgentOverrides.init();
     IndexedDBPromptHelper.init();
     CaptivePortalLoginHelper.init();
@@ -660,6 +664,7 @@ var shell = {
 
       Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
 
+      SystemApp.setIsLoaded();
       if ('pendingChromeEvents' in shell) {
         shell.pendingChromeEvents.forEach((shell.sendChromeEvent).bind(shell));
       }
@@ -782,6 +787,11 @@ var CustomEventManager = {
 var AlertsHelper = {
   _listeners: {},
   _count: 0,
+
+  init: function () {
+    Services.obs.addObserver(this, "alert-service-show", false);
+    Services.obs.addObserver(this, "alert-service-close", false);
+  },
 
   handleEvent: function alert_handleEvent(detail) {
     if (!detail || !detail.id)
@@ -961,6 +971,16 @@ var AlertsHelper = {
                           data.uid, details.dir,
                           details.lang, details.manifestURL);
   },
+
+  observe: function alert_observe(subject, topic, data) {
+    if (topic == "alert-service-show") {
+      let args = JSON.parse(data);
+      AlertsHelper.showAlertNotification.apply(AlertsHelper, args);
+    } else if (topic == "alert-service-close") {
+      let name = data;
+      AlertsHelper.closeAlert(name);
+    }
+  }
 }
 
 var WebappsHelper = {

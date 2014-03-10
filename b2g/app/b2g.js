@@ -4,8 +4,24 @@
 
 #filter substitution
 
+#ifndef MOZ_PHOENIX
 pref("toolkit.defaultChromeURI", "chrome://b2g/content/shell.html");
 pref("browser.chromeURL", "chrome://b2g/content/");
+#endif
+
+#ifdef MOZ_PHOENIX
+pref("browser.startup.homepage", "chrome://b2g/content/shell.html");
+// Disable dialog asking to set firefox as default OS browser
+pref("browser.shell.checkDefaultBrowser", false);
+// Automatically open devtools on the firefox os panel
+pref("devtools.toolbox.host", "side");
+pref("devtools.toolbox.sidebar.width", 800);
+// Disable session store to ensure having only one tab opened
+pref("browser.sessionstore.max_tabs_undo", 0);
+pref("browser.sessionstore.max_windows_undo", 0);
+pref("browser.sessionstore.restore_on_demand", false);
+pref("browser.sessionstore.resume_from_crash", false);
+#endif
 
 // Bug 945235: Prevent all bars to be considered visible:
 pref("toolkit.defaultChromeFeatures", "chrome,dialog=no,close,resizable,scrollbars,extrachrome");
@@ -156,9 +172,11 @@ pref("browser.search.suggest.enabled", true);
 pref("browser.search.noCurrentEngine", true);
 
 // Enable sparse localization by setting a few package locale overrides
+#ifndef MOZ_PHOENIX
 pref("chrome.override_package.global", "b2g-l10n");
 pref("chrome.override_package.mozapps", "b2g-l10n");
 pref("chrome.override_package.passwordmgr", "b2g-l10n");
+#endif
 
 // enable xul error pages
 pref("browser.xul.error_pages.enabled", true);
@@ -374,7 +392,7 @@ pref("browser.dom.window.dump.enabled", false);
 // Default Content Security Policy to apply to privileged and certified apps
 pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 // If you change this CSP, make sure to update the fast path in nsCSPService.cpp
-pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
+pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 
 // Temporarily force-enable GL compositing.  This is default-disabled
 // deep within the bowels of the widgetry system.  Remove me when GL
@@ -743,7 +761,7 @@ pref("network.activity.blipIntervalMilliseconds", 250);
 // can be flipped to false.
 pref("network.gonk.manage-offline-status", true);
 
-pref("jsloader.reuseGlobal", true);
+//pref("jsloader.reuseGlobal", true);
 
 // Enable font inflation for browser tab content.
 pref("font.size.inflation.minTwips", 120);
