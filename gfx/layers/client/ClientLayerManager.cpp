@@ -20,11 +20,12 @@
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor
 #include "mozilla/layers/PLayerChild.h"  // for PLayerChild
 #include "mozilla/layers/LayerTransactionChild.h"
+#include "mozilla/layers/TextureClientPool.h" // for TextureClientPool
 #include "nsAString.h"
 #include "nsIWidget.h"                  // for nsIWidget
-#include "nsIWidgetListener.h"
 #include "nsTArray.h"                   // for AutoInfallibleTArray
 #include "nsXULAppAPI.h"                // for XRE_GetProcessType, etc
+#include "TiledLayerBuffer.h"
 #ifdef MOZ_WIDGET_ANDROID
 #include "AndroidBridge.h"
 #endif
@@ -34,6 +35,11 @@ using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace layers {
+
+  TextureClientPoolMember::TextureClientPoolMember(SurfaceFormat aFormat, TextureClientPool* aTexturePool)
+  : mFormat(aFormat)
+  , mTexturePool(aTexturePool)
+{}
 
 ClientLayerManager::ClientLayerManager(nsIWidget* aWidget)
   : mPhase(PHASE_NONE)
@@ -54,6 +60,8 @@ ClientLayerManager::~ClientLayerManager()
   mRoot = nullptr;
 
   MOZ_COUNT_DTOR(ClientLayerManager);
+
+  mTexturePools.clear();
 }
 
 int32_t
@@ -223,6 +231,11 @@ ClientLayerManager::EndTransaction(DrawThebesLayerCallback aCallback,
   } else {
     MakeSnapshotIfRequired();
   }
+
+  for (const TextureClientPoolMember* item = mTexturePools.getFirst();
+       item; item = item->getNext()) {
+    item->mTexturePool->ReturnDeferredClients();
+  }
 }
 
 bool
@@ -262,21 +275,6 @@ ClientLayerManager::Composite()
 {
   if (LayerTransactionChild* manager = mForwarder->GetShadowManager()) {
     manager->SendForceComposite();
-  }
-}
-
-void
-ClientLayerManager::DidComposite()
-{
-  MOZ_ASSERT(mWidget);
-  nsIWidgetListener *listener = mWidget->GetWidgetListener();
-  if (listener) {
-    listener->DidCompositeWindow();
-  } else {
-    listener = mWidget->GetAttachedWidgetListener();
-    if (listener) {
-      listener->DidCompositeWindow();
-    }
   }
 }
 
@@ -456,6 +454,26 @@ ClientLayerManager::SetIsFirstPaint()
   mForwarder->SetIsFirstPaint();
 }
 
+TextureClientPool*
+ClientLayerManager::GetTexturePool(SurfaceFormat aFormat)
+{
+  for (const TextureClientPoolMember* item = mTexturePools.getFirst();
+       item; item = item->getNext()) {
+    if (item->mFormat == aFormat) {
+      return item->mTexturePool;
+    }
+  }
+
+  TextureClientPoolMember* texturePoolMember =
+    new TextureClientPoolMember(aFormat,
+      new TextureClientPool(aFormat, IntSize(TILEDLAYERBUFFER_TILE_SIZE,
+                                             TILEDLAYERBUFFER_TILE_SIZE),
+                            mForwarder));
+  mTexturePools.insertBack(texturePoolMember);
+
+  return texturePoolMember->mTexturePool;
+}
+
 void
 ClientLayerManager::ClearCachedResources(Layer* aSubtree)
 {
@@ -467,6 +485,10 @@ ClientLayerManager::ClearCachedResources(Layer* aSubtree)
     ClearLayer(aSubtree);
   } else if (mRoot) {
     ClearLayer(mRoot);
+  }
+  for (const TextureClientPoolMember* item = mTexturePools.getFirst();
+       item; item = item->getNext()) {
+    item->mTexturePool->Clear();
   }
 }
 
