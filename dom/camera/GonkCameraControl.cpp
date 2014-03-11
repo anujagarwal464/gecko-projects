@@ -1414,6 +1414,12 @@ OnAutoFocusComplete(nsGonkCameraControl* gc, bool aSuccess)
 }
 
 void
+OnAutoFocusMoving(nsGonkCameraControl* gc, bool aIsMoving)
+{
+  gc->OnAutoFocusMoving(aIsMoving);
+}
+
+void
 OnNewPreviewFrame(nsGonkCameraControl* gc, layers::GraphicBufferLocked* aBuffer)
 {
   gc->OnNewPreviewFrame(aBuffer);
