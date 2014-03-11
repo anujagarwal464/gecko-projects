@@ -43,7 +43,7 @@ NS_INTERFACE_MAP_END_INHERITING(DOMMediaStream)
 NS_IMPL_ADDREF_INHERITED(nsDOMCameraControl, DOMMediaStream)
 NS_IMPL_RELEASE_INHERITED(nsDOMCameraControl, DOMMediaStream)
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_19(nsDOMCameraControl, DOMMediaStream,
+NS_IMPL_CYCLE_COLLECTION_INHERITED_18(nsDOMCameraControl, DOMMediaStream,
                                       mCapabilities,
                                       mWindow,
                                       mGetCameraOnSuccessCb,
@@ -61,8 +61,7 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED_19(nsDOMCameraControl, DOMMediaStream,
                                       mOnShutterCb,
                                       mOnClosedCb,
                                       mOnRecorderStateChangeCb,
-                                      mOnPreviewStateChangeCb,
-                                      mOnAutoFocusMovingCb)
+                                      mOnPreviewStateChangeCb)
 
 class mozilla::StartRecordingHelper : public nsIDOMEventListener
 {
@@ -143,7 +142,6 @@ nsDOMCameraControl::nsDOMCameraControl(uint32_t aCameraId,
   , mOnClosedCb(nullptr)
   , mOnRecorderStateChangeCb(nullptr)
   , mOnPreviewStateChangeCb(nullptr)
-  , mOnAutoFocusMovingCb(nullptr)
   , mWindow(aWindow)
 {
   DOM_CAMERA_LOGT("%s:%d : this=%p\n", __func__, __LINE__, this);
@@ -665,18 +663,6 @@ nsDOMCameraControl::SetOnPreviewStateChange(CameraPreviewStateChange* aCb)
   mOnPreviewStateChangeCb = aCb;
 }
 
-already_AddRefed<CameraAutoFocusMovingCallback>
-nsDOMCameraControl::GetOnAutoFocusMoving()
-{
-  nsCOMPtr<CameraAutoFocusMovingCallback> cb = mOnAutoFocusMovingCb;
-  return cb.forget();
-}
-void
-nsDOMCameraControl::SetOnAutoFocusMoving(CameraAutoFocusMovingCallback* aCb)
-{
-  mOnAutoFocusMovingCb = aCb;
-}
-
 already_AddRefed<dom::CameraCapabilities>
 nsDOMCameraControl::Capabilities()
 {
@@ -956,7 +942,6 @@ nsDOMCameraControl::Shutdown()
   mOnClosedCb = nullptr;
   mOnRecorderStateChangeCb = nullptr;
   mOnPreviewStateChangeCb = nullptr;
-  mOnAutoFocusMovingCb = nullptr;
 
   mCameraControl->Shutdown();
 }
@@ -1150,18 +1135,6 @@ nsDOMCameraControl::OnAutoFocusComplete(bool aAutoFocusSucceeded)
   if (cb) {
     ErrorResult ignored;
     cb->Call(aAutoFocusSucceeded, ignored);
-  }
-}
-
-void
-nsDOMCameraControl::OnAutoFocusMoving(bool aIsMoving)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  nsCOMPtr<CameraAutoFocusMovingCallback> cb = mOnAutoFocusMovingCb;
-  if (cb) {
-    ErrorResult ignored;
-    cb->Call(aIsMoving, ignored);
   }
 }
 
