@@ -91,6 +91,8 @@ public:
   void SetOnRecorderStateChange(dom::CameraRecorderStateChange* aCb);
   already_AddRefed<dom::CameraPreviewStateChange> GetOnPreviewStateChange();
   void SetOnPreviewStateChange(dom::CameraPreviewStateChange* aCb);
+  already_AddRefed<dom::CameraAutoFocusMovingCallback> GetOnAutoFocusMoving();
+  void SetOnAutoFocusMoving(dom::CameraAutoFocusMovingCallback* aCb);
 
   // Methods.
   void SetConfiguration(const dom::CameraConfiguration& aConfiguration,
@@ -143,6 +145,7 @@ protected:
   void OnCreatedFileDescriptor(bool aSucceeded);
 
   void OnAutoFocusComplete(bool aAutoFocusSucceeded);
+  void OnAutoFocusMoving(bool aIsMoving);
   void OnTakePictureComplete(nsIDOMBlob* aPicture);
 
   void OnHardwareStateChange(DOMCameraControlListener::HardwareState aState);
@@ -186,6 +189,7 @@ protected:
   nsCOMPtr<dom::CameraClosedCallback>           mOnClosedCb;
   nsCOMPtr<dom::CameraRecorderStateChange>      mOnRecorderStateChangeCb;
   nsCOMPtr<dom::CameraPreviewStateChange>       mOnPreviewStateChangeCb;
+  nsCOMPtr<dom::CameraAutoFocusMovingCallback>  mOnAutoFocusMovingCb;
 
   // Camera event listener; we only need this weak reference so that
   //  we can remove the listener from the camera when we're done
