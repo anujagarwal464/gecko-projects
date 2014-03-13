@@ -233,6 +233,7 @@ namespace FilterWrappers {
 class FilterCachedColorModels : public RefCounted<FilterCachedColorModels>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(FilterCachedColorModels)
   // aFilter can be null. In that case, ForColorModel will return a non-null
   // completely transparent filter for all color models.
   FilterCachedColorModels(DrawTarget* aDT,
@@ -1407,11 +1408,13 @@ SourceNeededRegionForPrimitive(const FilterPrimitiveDescription& aDescription,
   const AttributeMap& atts = aDescription.Attributes();
   switch (aDescription.Type()) {
 
-    case FilterPrimitiveDescription::eNone:
     case FilterPrimitiveDescription::eFlood:
     case FilterPrimitiveDescription::eTurbulence:
     case FilterPrimitiveDescription::eImage:
       MOZ_CRASH("this shouldn't be called for filters without inputs");
+      return nsIntRegion();
+
+    case FilterPrimitiveDescription::eNone:
       return nsIntRegion();
 
     case FilterPrimitiveDescription::eBlend:

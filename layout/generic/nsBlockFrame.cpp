@@ -384,7 +384,7 @@ nsBlockFrame::List(FILE* out, const char* aPrefix, uint32_t aFlags) const
   fprintf_stderr(out, "%s>\n", aPrefix);
 }
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("Block"), aResult);
@@ -392,7 +392,7 @@ nsBlockFrame::GetFrameName(nsAString& aResult) const
 #endif
 
 #ifdef DEBUG
-NS_IMETHODIMP_(nsFrameState)
+nsFrameState
 nsBlockFrame::GetDebugStateBits() const
 {
   // We don't want to include our cursor flag in the bits the
@@ -456,9 +456,10 @@ nsBlockFrame::GetCaretBaseline() const
   nsRefPtr<nsFontMetrics> fm;
   float inflation = nsLayoutUtils::FontSizeInflationFor(this);
   nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm), inflation);
-  return nsLayoutUtils::GetCenteredFontBaseline(fm, nsHTMLReflowState::
-      CalcLineHeight(StyleContext(), contentRect.height, inflation)) +
-    bp.top;
+  nscoord lineHeight =
+    nsHTMLReflowState::CalcLineHeight(GetContent(), StyleContext(),
+                                      contentRect.height, inflation);
+  return nsLayoutUtils::GetCenteredFontBaseline(fm, lineHeight) + bp.top;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -891,11 +892,13 @@ CalculateContainingBlockSizeForAbsolutes(const nsHTMLReflowState& aReflowState,
     // frame and not always sticking them in block frames.
 
     // First, find the reflow state for the outermost frame for this
-    // content.
+    // content, except for fieldsets where the inner anonymous frame has
+    // the correct padding area with the legend taken into account.
     const nsHTMLReflowState* aLastRS = &aReflowState;
     const nsHTMLReflowState* lastButOneRS = &aReflowState;
     while (aLastRS->parentReflowState &&
-           aLastRS->parentReflowState->frame->GetContent() == frame->GetContent()) {
+           aLastRS->parentReflowState->frame->GetContent() == frame->GetContent() &&
+           aLastRS->parentReflowState->frame->GetType() != nsGkAtoms::fieldSetFrame) {
       lastButOneRS = aLastRS;
       aLastRS = aLastRS->parentReflowState;
     }
@@ -931,7 +934,7 @@ CalculateContainingBlockSizeForAbsolutes(const nsHTMLReflowState& aReflowState,
   return cbSize;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::Reflow(nsPresContext*           aPresContext,
                      nsHTMLReflowMetrics&     aMetrics,
                      const nsHTMLReflowState& aReflowState,
@@ -1128,7 +1131,7 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
         mLines.front() != mLines.back() &&
         mLines.begin().next()->IsBlock()))) {
     // Reflow the bullet
-    nsHTMLReflowMetrics metrics(aReflowState.GetWritingMode());
+    nsHTMLReflowMetrics metrics(aReflowState);
     // XXX Use the entire line when we fix bug 25888.
     nsLayoutUtils::LinePosition position;
     bool havePosition = nsLayoutUtils::GetFirstLinePosition(this, &position);
@@ -1383,7 +1386,7 @@ nsBlockFrame::ComputeFinalSize(const nsHTMLReflowState& aReflowState,
     // Include the float manager's state to properly account for the
     // bottom margin of any floated elements; e.g., inside a table cell.
     nscoord floatHeight =
-      aState.ClearFloats(bottomEdgeOfChildren, NS_STYLE_CLEAR_LEFT_AND_RIGHT,
+      aState.ClearFloats(bottomEdgeOfChildren, NS_STYLE_CLEAR_BOTH,
                          nullptr, nsFloatManager::DONT_CLEAR_PUSHED_FLOATS);
     bottomEdgeOfChildren = std::max(bottomEdgeOfChildren, floatHeight);
   }
@@ -1448,7 +1451,7 @@ nsBlockFrame::ComputeFinalSize(const nsHTMLReflowState& aReflowState,
   *aBottomEdgeOfChildren = bottomEdgeOfChildren;
 
 #ifdef DEBUG_blocks
-  if (CRAZY_WIDTH(aMetrics.Width()) || CRAZY_HEIGHT(aMetrics.Height())) {
+  if (CRAZY_SIZE(aMetrics.Width()) || CRAZY_SIZE(aMetrics.Height())) {
     ListTag(stdout);
     printf(": WARNING: desired:%d,%d\n", aMetrics.Width(), aMetrics.Height());
   }
@@ -2361,7 +2364,7 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
 
   // Handle an odd-ball case: a list-item with no lines
   if (HasOutsideBullet() && mLines.empty()) {
-    nsHTMLReflowMetrics metrics(aState.mReflowState.GetWritingMode());
+    nsHTMLReflowMetrics metrics(aState.mReflowState);
     nsIFrame* bullet = GetOutsideBullet();
     ReflowBullet(bullet, aState, metrics,
                  aState.mReflowState.ComputedPhysicalBorderPadding().top);
@@ -2662,7 +2665,7 @@ nsBlockFrame::SlideLine(nsBlockReflowState& aState,
   }
 }
 
-NS_IMETHODIMP 
+nsresult 
 nsBlockFrame::AttributeChanged(int32_t         aNameSpaceID,
                                nsIAtom*        aAttribute,
                                int32_t         aModType)
@@ -3446,35 +3449,32 @@ nsBlockFrame::DoReflowInlineFrames(nsBlockReflowState& aState,
          this, aFloatAvailableSpace.mHasFloats);
 #endif
 
-  nscoord x = aFloatAvailableSpace.mRect.x;
-  nscoord availWidth = aFloatAvailableSpace.mRect.width;
-  nscoord availHeight;
+  WritingMode wm = GetWritingMode(aLine->mFirstChild);
+  nscoord lineWidth = aFloatAvailableSpace.mRect.width +
+                      aState.BorderPadding().LeftRight();
+  LogicalRect lineRect(wm, aFloatAvailableSpace.mRect, lineWidth);
+
+  nscoord iStart = lineRect.IStart(wm);
+
+  nscoord availISize = lineRect.ISize(wm);
+  nscoord availBSize;
   if (aState.GetFlag(BRS_UNCONSTRAINEDHEIGHT)) {
-    availHeight = NS_UNCONSTRAINEDSIZE;
+    availBSize = NS_UNCONSTRAINEDSIZE;
   }
   else {
     /* XXX get the height right! */
-    availHeight = aFloatAvailableSpace.mRect.height;
+    availBSize = lineRect.BSize(wm);
   }
 
   // Make sure to enable resize optimization before we call BeginLineReflow
   // because it might get disabled there
   aLine->EnableResizeReflowOptimization();
 
-  // For unicode-bidi: plaintext, we need to get the direction of the line from
-  // the resolved paragraph level of the first frame on the line, not the block
-  // frame, because the block frame could be split by hard line breaks into
-  // multiple paragraphs with different base direction
-  uint8_t direction =
-    (StyleTextReset()->mUnicodeBidi & NS_STYLE_UNICODE_BIDI_PLAINTEXT) ?
-      nsBidiPresUtils::GetFrameBaseLevel(aLine->mFirstChild) & 1 :
-      StyleVisibility()->mDirection;
-
-  aLineLayout.BeginLineReflow(x, aState.mY,
-                              availWidth, availHeight,
+  aLineLayout.BeginLineReflow(iStart, aState.mY,
+                              availISize, availBSize,
                               aFloatAvailableSpace.mHasFloats,
                               false, /*XXX isTopOfPage*/
-                              direction);
+                              wm, lineWidth);
 
   aState.SetFlag(BRS_LINE_LAYOUT_EMPTY, false);
 
@@ -3754,7 +3754,7 @@ nsBlockFrame::ReflowInlineFrame(nsBlockReflowState& aState,
     uint8_t breakType = NS_INLINE_GET_BREAK_TYPE(frameReflowStatus);
     NS_ASSERTION((NS_STYLE_CLEAR_NONE != breakType) || 
                  (NS_STYLE_CLEAR_NONE != aState.mFloatBreakType), "bad break type");
-    NS_ASSERTION(NS_STYLE_CLEAR_LAST_VALUE >= breakType, "invalid break type");
+    NS_ASSERTION(NS_STYLE_CLEAR_MAX >= breakType, "invalid break type");
 
     if (NS_INLINE_IS_BREAK_BEFORE(frameReflowStatus)) {
       // Break-before cases.
@@ -4050,11 +4050,11 @@ nsBlockFrame::PlaceLine(nsBlockReflowState& aState,
   bool addedBullet = false;
   if (HasOutsideBullet() &&
       ((aLine == mLines.front() &&
-        (!aLineLayout.IsZeroHeight() || (aLine == mLines.back()))) ||
+        (!aLineLayout.IsZeroBSize() || (aLine == mLines.back()))) ||
        (mLines.front() != mLines.back() &&
         0 == mLines.front()->mBounds.height &&
         aLine == mLines.begin().next()))) {
-    nsHTMLReflowMetrics metrics(aState.mReflowState.GetWritingMode());
+    nsHTMLReflowMetrics metrics(aState.mReflowState);
     nsIFrame* bullet = GetOutsideBullet();
     ReflowBullet(bullet, aState, metrics, aState.mY);
     NS_ASSERTION(!BulletIsEmpty() || metrics.Height() == 0,
@@ -4062,7 +4062,7 @@ nsBlockFrame::PlaceLine(nsBlockReflowState& aState,
     aLineLayout.AddBulletFrame(bullet, metrics);
     addedBullet = true;
   }
-  aLineLayout.VerticalAlignLine();
+  aLineLayout.BlockDirAlignLine();
 
   // We want to compare to the available space that we would have had in
   // the line's height *before* we placed any floats in the line itself.
@@ -4090,9 +4090,9 @@ nsBlockFrame::PlaceLine(nsBlockReflowState& aState,
 #ifdef DEBUG
   {
     static nscoord lastHeight = 0;
-    if (CRAZY_HEIGHT(aLine->mBounds.y)) {
+    if (CRAZY_SIZE(aLine->mBounds.y)) {
       lastHeight = aLine->mBounds.y;
-      if (abs(aLine->mBounds.y - lastHeight) > CRAZY_H/10) {
+      if (abs(aLine->mBounds.y - lastHeight) > CRAZY_COORD/10) {
         nsFrame::ListTag(stdout);
         printf(": line=%p y=%d line.bounds.height=%d\n",
                static_cast<void*>(aLine.get()),
@@ -4123,20 +4123,9 @@ nsBlockFrame::PlaceLine(nsBlockReflowState& aState,
       NS_STYLE_TEXT_ALIGN_JUSTIFY == styleText->mTextAlign) &&
      (aLineLayout.GetLineEndsInBR() ||
       IsLastLine(aState, aLine)));
-  aLineLayout.HorizontalAlignFrames(aLine->mBounds, isLastLine);
-  // XXX: not only bidi: right alignment can be broken after
-  // RelativePositionFrames!!!
-  // XXXldb Is something here considering relatively positioned frames at
-  // other than their original positions?
-#ifdef IBMBIDI
-  // XXXldb Why don't we do this earlier?
-  if (aState.mPresContext->BidiEnabled()) {
-    if (!aState.mPresContext->IsVisualMode() ||
-        StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
-      nsBidiPresUtils::ReorderFrames(aLine->mFirstChild, aLine->GetChildCount());
-    } // not visual mode
-  } // bidi enabled
-#endif // IBMBIDI
+
+  aLineLayout.InlineDirAlignFrames(aLine->mBounds, isLastLine,
+                                   aLine->GetChildCount());
 
   // From here on, pfd->mBounds rectangles are incorrect because bidi
   // might have moved frames around!
@@ -4676,7 +4665,7 @@ nsBlockFrame::RemovePushedFloats()
 //////////////////////////////////////////////////////////////////////
 // Frame list manipulation routines
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::AppendFrames(ChildListID  aListID,
                            nsFrameList& aFrameList)
 {
@@ -4721,7 +4710,7 @@ nsBlockFrame::AppendFrames(ChildListID  aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::InsertFrames(ChildListID aListID,
                            nsIFrame* aPrevFrame,
                            nsFrameList& aFrameList)
@@ -4775,9 +4764,9 @@ ShouldPutNextSiblingOnNewLine(nsIFrame* aLastFrame)
   if (type == nsGkAtoms::brFrame) {
     return true;
   }
-  // XXX the IS_DIRTY check is a wallpaper for bug 822910.
+  // XXX the TEXT_OFFSETS_NEED_FIXING check is a wallpaper for bug 822910.
   if (type == nsGkAtoms::textFrame &&
-      !(aLastFrame->GetStateBits() & NS_FRAME_IS_DIRTY)) {
+      !(aLastFrame->GetStateBits() & TEXT_OFFSETS_NEED_FIXING)) {
     return aLastFrame->HasSignificantTerminalNewline();
   }
   return false;
@@ -5007,7 +4996,7 @@ static bool BlockHasAnyFloats(nsIFrame* aFrame)
   return false;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::RemoveFrame(ChildListID aListID,
                           nsIFrame* aOldFrame)
 {
@@ -5976,7 +5965,7 @@ nsBlockFrame::ReflowPushedFloats(nsBlockReflowState& aState,
   }
 
   // If there are continued floats, then we may need to continue BR clearance
-  if (0 != aState.ClearFloats(0, NS_STYLE_CLEAR_LEFT_AND_RIGHT)) {
+  if (0 != aState.ClearFloats(0, NS_STYLE_CLEAR_BOTH)) {
     aState.mFloatBreakType = static_cast<nsBlockFrame*>(GetPrevInFlow())
                                ->FindTrailingClear();
   }
@@ -6467,7 +6456,7 @@ nsBlockFrame::Init(nsIContent*      aContent,
   }
 }
 
-NS_IMETHODIMP
+nsresult
 nsBlockFrame::SetInitialChildList(ChildListID     aListID,
                                   nsFrameList&    aChildList)
 {
@@ -6853,25 +6842,23 @@ nsBlockFrame::ReflowBullet(nsIFrame* aBulletFrame,
   // the edge of the floats is the content-edge of the block, and place
   // the bullet at a position offset from there by the block's padding,
   // the block's border, and the bullet frame's margin.
-  nscoord x;
-  if (rs.mStyleVisibility->mDirection == NS_STYLE_DIRECTION_LTR) {
-    // The floatAvailSpace.x gives us the content/float edge. Then we
-    // subtract out the left border/padding and the bullet's width and
-    // margin to offset the position.
-    x = floatAvailSpace.x - rs.ComputedPhysicalBorderPadding().left
-        - reflowState.ComputedPhysicalMargin().right - aMetrics.Width();
-  } else {
-    // The XMost() of the available space give us offsets from the left
-    // border edge.  Then we add the right border/padding and the
-    // bullet's margin to offset the position.
-    x = floatAvailSpace.XMost() + rs.ComputedPhysicalBorderPadding().right
-        + reflowState.ComputedPhysicalMargin().left;
-  }
+
+  // IStart from floatAvailSpace gives us the content/float start edge
+  // in the current writing mode. Then we subtract out the start
+  // border/padding and the bullet's width and margin to offset the position.
+  WritingMode wm = rs.GetWritingMode();
+  LogicalRect logicalFAS(wm, floatAvailSpace, floatAvailSpace.XMost());
+  nscoord iStart = logicalFAS.IStart(wm) -
+    rs.ComputedLogicalBorderPadding().IStart(wm)
+    - reflowState.ComputedLogicalMargin().IEnd(wm) - aMetrics.ISize();
 
   // Approximate the bullets position; vertical alignment will provide
   // the final vertical location.
-  nscoord y = aState.mContentArea.y;
-  aBulletFrame->SetRect(nsRect(x, y, aMetrics.Width(), aMetrics.Height()));
+  nscoord bStart = logicalFAS.BStart(wm);
+  aBulletFrame->SetRect(LogicalRect(wm, LogicalPoint(wm, iStart, bStart),
+                                    LogicalSize(wm, aMetrics.ISize(),
+                                                aMetrics.BSize())),
+                        floatAvailSpace.XMost());
   aBulletFrame->DidReflow(aState.mPresContext, &aState.mReflowState,
                           nsDidReflowStatus::FINISHED);
 }

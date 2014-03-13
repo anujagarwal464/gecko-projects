@@ -53,9 +53,9 @@ public:
                                 const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) MOZ_OVERRIDE {}
 
-  NS_IMETHOD AttributeChanged(int32_t         aNameSpaceID,
-                              nsIAtom*        aAttribute,
-                              int32_t         aModType) MOZ_OVERRIDE;
+  virtual nsresult AttributeChanged(int32_t         aNameSpaceID,
+                                    nsIAtom*        aAttribute,
+                                    int32_t         aModType) MOZ_OVERRIDE;
 
 #ifdef DEBUG
   virtual void Init(nsIContent*      aContent,
@@ -84,11 +84,6 @@ private:
   uint16_t GetEnumValue(uint32_t aIndex)
   {
     return GetEnumValue(aIndex, mContent);
-  }
-  const nsSVGIntegerPair *GetIntegerPairValue(uint32_t aIndex, nsIContent *aDefault);
-  const nsSVGIntegerPair *GetIntegerPairValue(uint32_t aIndex)
-  {
-    return GetIntegerPairValue(aIndex, mContent);
   }
   const nsSVGLength2 *GetLengthValue(uint32_t aIndex, nsIContent *aDefault);
   const nsSVGLength2 *GetLengthValue(uint32_t aIndex)

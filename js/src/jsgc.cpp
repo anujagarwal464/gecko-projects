@@ -595,8 +595,8 @@ FinalizeArenas(FreeOp *fop,
 #ifdef JS_ION
       {
         // JitCode finalization may release references on an executable
-        // allocator that is accessed when triggering interrupts.
-        JSRuntime::AutoLockForOperationCallback lock(fop->runtime());
+        // allocator that is accessed when requesting interrupts.
+        JSRuntime::AutoLockForInterrupt lock(fop->runtime());
         return FinalizeTypedArenas<jit::JitCode>(fop, src, dest, thingKind, budget);
       }
 #endif
@@ -2093,6 +2093,7 @@ void
 js::SetMarkStackLimit(JSRuntime *rt, size_t limit)
 {
     JS_ASSERT(!rt->isHeapBusy());
+    AutoStopVerifyingBarriers pauseVerification(rt, false);
     rt->gcMarker.setMaxCapacity(limit);
 }
 
@@ -2103,14 +2104,14 @@ js::MarkCompartmentActive(StackFrame *fp)
 }
 
 static void
-TriggerOperationCallback(JSRuntime *rt, JS::gcreason::Reason reason)
+RequestInterrupt(JSRuntime *rt, JS::gcreason::Reason reason)
 {
     if (rt->gcIsNeeded)
         return;
 
     rt->gcIsNeeded = true;
     rt->gcTriggerReason = reason;
-    rt->triggerOperationCallback(JSRuntime::TriggerCallbackMainThread);
+    rt->requestInterrupt(JSRuntime::RequestInterruptMainThread);
 }
 
 bool
@@ -2122,8 +2123,8 @@ js::TriggerGC(JSRuntime *rt, JS::gcreason::Reason reason)
         return true;
     }
 
-    /* Don't trigger GCs when allocating under the operation callback lock. */
-    if (rt->currentThreadOwnsOperationCallbackLock())
+    /* Don't trigger GCs when allocating under the interrupt callback lock. */
+    if (rt->currentThreadOwnsInterruptLock())
         return false;
 
     JS_ASSERT(CurrentThreadCanAccessRuntime(rt));
@@ -2133,7 +2134,7 @@ js::TriggerGC(JSRuntime *rt, JS::gcreason::Reason reason)
         return false;
 
     JS::PrepareForFullGC(rt);
-    TriggerOperationCallback(rt, reason);
+    RequestInterrupt(rt, reason);
     return true;
 }
 
@@ -2155,8 +2156,8 @@ js::TriggerZoneGC(Zone *zone, JS::gcreason::Reason reason)
 
     JSRuntime *rt = zone->runtimeFromMainThread();
 
-    /* Don't trigger GCs when allocating under the operation callback lock. */
-    if (rt->currentThreadOwnsOperationCallbackLock())
+    /* Don't trigger GCs when allocating under the interrupt callback lock. */
+    if (rt->currentThreadOwnsInterruptLock())
         return false;
 
     /* GC is already running. */
@@ -2175,7 +2176,7 @@ js::TriggerZoneGC(Zone *zone, JS::gcreason::Reason reason)
     }
 
     PrepareZoneForGC(zone);
-    TriggerOperationCallback(rt, reason);
+    RequestInterrupt(rt, reason);
     return true;
 }
 
@@ -2437,11 +2438,10 @@ GCHelperThread::init()
 void
 GCHelperThread::finish()
 {
-    if (!rt->useHelperThreads()) {
+    if (!rt->useHelperThreads() || !rt->gcLock) {
         JS_ASSERT(state == IDLE);
         return;
     }
-
 
 #ifdef JS_THREADSAFE
     PRThread *join = nullptr;
@@ -3139,7 +3139,7 @@ BeginMarkPhase(JSRuntime *rt)
      */
 
     for (GCZonesIter zone(rt); !zone.done(); zone.next()) {
-        if (!zone->maybeAlive)
+        if (!zone->maybeAlive && !rt->isAtomsZone(zone))
             zone->scheduledForDestruction = true;
     }
     rt->gcFoundBlackGrayEdges = false;
@@ -3919,7 +3919,7 @@ BeginSweepingZoneGroup(JSRuntime *rt)
 
     if (sweepingAtoms) {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_ATOMS);
-        SweepAtoms(rt);
+        rt->sweepAtoms();
     }
 
     /* Prune out dead views from ArrayBuffer's view lists. */
@@ -5523,12 +5523,12 @@ AutoMaybeTouchDeadZones::AutoMaybeTouchDeadZones(JSObject *obj)
 
 AutoMaybeTouchDeadZones::~AutoMaybeTouchDeadZones()
 {
+    runtime->gcManipulatingDeadZones = manipulatingDeadZones;
+
     if (inIncremental && runtime->gcObjectsMarkedInDeadZones != markCount) {
         JS::PrepareForFullGC(runtime);
         js::GC(runtime, GC_NORMAL, JS::gcreason::TRANSPLANT);
     }
-
-    runtime->gcManipulatingDeadZones = manipulatingDeadZones;
 }
 
 AutoSuppressGC::AutoSuppressGC(ExclusiveContext *cx)

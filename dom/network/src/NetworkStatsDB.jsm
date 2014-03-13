@@ -79,7 +79,15 @@ NetworkStatsDB.prototype = {
         // to modify the keyPath is mandatory to delete the object store
         // and create it again. Old data is going to be deleted because the
         // networkId for each sample can not be set.
-        db.deleteObjectStore(DEPRECATED_STORE_NAME);
+
+        // In version 1.2 objectStore name was 'net_stats_v2', to avoid errors when
+        // upgrading from 1.2 to 1.3 objectStore name should be checked.
+        let stores = db.objectStoreNames;
+        if(stores.contains("net_stats_v2")) {
+          db.deleteObjectStore("net_stats_v2");
+        } else {
+          db.deleteObjectStore(DEPRECATED_STORE_NAME);
+        }
 
         objectStore = db.createObjectStore(DEPRECATED_STORE_NAME, { keyPath: ["appId", "network", "timestamp"] });
         objectStore.createIndex("appId", "appId", { unique: false });
@@ -576,7 +584,7 @@ NetworkStatsDB.prototype = {
   },
 
   clearInterfaceStats: function clearInterfaceStats(aNetwork, aResultCb) {
-    let network = [aNetwork.id, aNetwork.type];
+    let network = [aNetwork.network.id, aNetwork.network.type];
     let self = this;
 
     // Clear and save an empty sample to keep sync with system counters
@@ -609,7 +617,7 @@ NetworkStatsDB.prototype = {
           self._saveStats(aTxn, aStore, sample);
         }
       };
-    }, aResultCb);
+    }, this._resetAlarms.bind(this, aNetwork.networkId, aResultCb));
   },
 
   clearStats: function clearStats(aNetworks, aResultCb) {
@@ -863,6 +871,7 @@ NetworkStatsDB.prototype = {
     let record = { networkId: aAlarm.networkId,
                    absoluteThreshold: aAlarm.absoluteThreshold,
                    relativeThreshold: aAlarm.relativeThreshold,
+                   startTime: aAlarm.startTime,
                    data: aAlarm.data,
                    manifestURL: aAlarm.manifestURL,
                    pageURL: aAlarm.pageURL };
@@ -878,6 +887,7 @@ NetworkStatsDB.prototype = {
     let alarm = { networkId: aRecord.networkId,
                   absoluteThreshold: aRecord.absoluteThreshold,
                   relativeThreshold: aRecord.relativeThreshold,
+                  startTime: aRecord.startTime,
                   data: aRecord.data,
                   manifestURL: aRecord.manifestURL,
                   pageURL: aRecord.pageURL };
@@ -1003,6 +1013,30 @@ NetworkStatsDB.prototype = {
 
         cursor.continue();
       }
+    }, aResultCb);
+  },
+
+  _resetAlarms: function _resetAlarms(aNetworkId, aResultCb) {
+    this.dbNewTxn(ALARMS_STORE_NAME, "readwrite", function(txn, store) {
+      if (DEBUG) {
+        debug("Reset alarms for network " + aNetworkId);
+      }
+
+      let lowerFilter = [aNetworkId, 0];
+      let upperFilter = [aNetworkId, ""];
+      let range = IDBKeyRange.bound(lowerFilter, upperFilter);
+
+      store.index("alarm").openCursor(range).onsuccess = function onsuccess(event) {
+        let cursor = event.target.result;
+        if (cursor) {
+          if (cursor.value.startTime) {
+            cursor.value.relativeThreshold = cursor.value.threshold;
+            cursor.update(cursor.value);
+          }
+          cursor.continue();
+          return;
+        }
+      };
     }, aResultCb);
   }
 };

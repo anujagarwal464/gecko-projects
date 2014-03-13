@@ -442,7 +442,8 @@ DeprecatedTextureHostYCbCrD3D9::UpdateImpl(const SurfaceDescriptor& aImage,
     return;
   }
 
-  YCbCrImageDataDeserializer yuvDeserializer(aImage.get_YCbCrImage().data().get<uint8_t>());
+  YCbCrImageDataDeserializer yuvDeserializer(aImage.get_YCbCrImage().data().get<uint8_t>(),
+                                             aImage.get_YCbCrImage().data().Size<uint8_t>());
 
   mSize = yuvDeserializer.GetYSize();
   IntSize cbCrSize = yuvDeserializer.GetCbCrSize();
@@ -1274,12 +1275,30 @@ CairoTextureClientD3D9::Lock(OpenMode)
   if (!IsValid() || !IsAllocated()) {
     return false;
   }
+
+  if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
+    // If the device has failed then we should not lock the surface,
+    // even if we could.
+    mD3D9Surface = nullptr;
+    return false;
+  }
+
+  if (!mD3D9Surface) {
+    HRESULT hr = mTexture->GetSurfaceLevel(0, getter_AddRefs(mD3D9Surface));
+    if (FAILED(hr)) {
+      NS_WARNING("Failed to get texture surface level.");
+      return false;
+    }
+  }
+
+  mIsLocked = true;
+
   if (mNeedsClear) {
     mDrawTarget = GetAsDrawTarget();
     mDrawTarget->ClearRect(Rect(0, 0, GetSize().width, GetSize().height));
     mNeedsClear = false;
   }
-  mIsLocked = true;
+
   return true;
 }
 
@@ -1318,25 +1337,9 @@ CairoTextureClientD3D9::ToSurfaceDescriptor(SurfaceDescriptor& aOutDescriptor)
 TemporaryRef<gfx::DrawTarget>
 CairoTextureClientD3D9::GetAsDrawTarget()
 {
-  MOZ_ASSERT(mIsLocked && mTexture);
+  MOZ_ASSERT(mIsLocked && mD3D9Surface);
   if (mDrawTarget) {
     return mDrawTarget;
-  }
-
-  if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
-    // If the device has failed then we should not lock the surface,
-    // even if we could.
-    mD3D9Surface = nullptr;
-    mTexture = nullptr;
-    return nullptr;
-  }
-
-  if (!mD3D9Surface) {
-    HRESULT hr = mTexture->GetSurfaceLevel(0, getter_AddRefs(mD3D9Surface));
-    if (FAILED(hr)) {
-      NS_WARNING("Failed to get texture surface level.");
-      return nullptr;
-    }
   }
 
   if (ContentForFormat(mFormat) == gfxContentType::COLOR) {

@@ -34,11 +34,8 @@ class FramePropertyTable;
 // dependency on nsDeviceContext.h.  It doesn't matter if it's a
 // little off.
 #ifdef DEBUG
-#define CRAZY_W (1000000*60)
-#define CRAZY_H CRAZY_W
-
-#define CRAZY_WIDTH(_x) (((_x) < -CRAZY_W) || ((_x) > CRAZY_W))
-#define CRAZY_HEIGHT(_y) (((_y) < -CRAZY_H) || ((_y) > CRAZY_H))
+#define CRAZY_COORD (1000000*60)
+#define CRAZY_SIZE(_x) (((_x) < -CRAZY_COORD) || ((_x) > CRAZY_COORD))
 #endif
 
 /**
@@ -55,15 +52,15 @@ public:
   virtual void Init(nsIContent* aContent,
                     nsIFrame*   aParent,
                     nsIFrame*   aPrevInFlow) MOZ_OVERRIDE;
-  NS_IMETHOD SetInitialChildList(ChildListID  aListID,
-                                 nsFrameList& aChildList) MOZ_OVERRIDE;
-  NS_IMETHOD AppendFrames(ChildListID  aListID,
-                          nsFrameList& aFrameList) MOZ_OVERRIDE;
-  NS_IMETHOD InsertFrames(ChildListID aListID,
-                          nsIFrame* aPrevFrame,
-                          nsFrameList& aFrameList) MOZ_OVERRIDE;
-  NS_IMETHOD RemoveFrame(ChildListID aListID,
-                         nsIFrame* aOldFrame) MOZ_OVERRIDE;
+  virtual nsresult SetInitialChildList(ChildListID  aListID,
+                                       nsFrameList& aChildList) MOZ_OVERRIDE;
+  virtual nsresult AppendFrames(ChildListID  aListID,
+                                nsFrameList& aFrameList) MOZ_OVERRIDE;
+  virtual nsresult InsertFrames(ChildListID aListID,
+                                nsIFrame* aPrevFrame,
+                                nsFrameList& aFrameList) MOZ_OVERRIDE;
+  virtual nsresult RemoveFrame(ChildListID aListID,
+                               nsIFrame* aOldFrame) MOZ_OVERRIDE;
 
   virtual const nsFrameList& GetChildList(ChildListID aList) const MOZ_OVERRIDE;
   virtual void GetChildLists(nsTArray<ChildList>* aLists) const MOZ_OVERRIDE;

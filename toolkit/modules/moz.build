@@ -41,6 +41,9 @@ EXTRA_JS_MODULES += [
     'RemoteWebProgress.jsm',
     'SelectContentHelper.jsm',
     'SelectParentHelper.jsm',
+    'sessionstore/FormData.jsm',
+    'sessionstore/ScrollPosition.jsm',
+    'sessionstore/XPathGenerator.jsm',
     'ShortcutUtils.jsm',
     'Sntp.jsm',
     'SpatialNavigation.jsm',
@@ -48,6 +51,7 @@ EXTRA_JS_MODULES += [
     'Task.jsm',
     'TelemetryTimestamps.jsm',
     'Timer.jsm',
+    'ZipUtils.jsm',
 ]
 
 EXTRA_PP_JS_MODULES += [

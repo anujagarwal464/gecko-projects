@@ -37,6 +37,9 @@ dictionary RTCInboundRTPStreamStats : RTCRTPStreamStats {
   unsigned long packetsReceived;
   unsigned long long bytesReceived;
   double jitter;
+  unsigned long packetsLost;
+  long mozAvSyncDelay;
+  long mozJitterBufferDelay;
 };
 
 dictionary RTCOutboundRTPStreamStats : RTCRTPStreamStats {
@@ -107,6 +110,8 @@ dictionary RTCIceCandidateStats : RTCStats {
   DOMString componentId;
   DOMString candidateId;
   DOMString ipAddress;
+  DOMString transport;
+  DOMString mozLocalTransport; // needs standardization
   long portNumber;
   RTCStatsIceCandidateType candidateType;
 };
@@ -145,7 +150,7 @@ dictionary RTCStatsReportInternal {
 interface RTCStatsReport {
   [ChromeOnly]
   readonly attribute DOMString mozPcid;
-  void forEach(RTCStatsReportCallback callbackFn, optional any thisArg);
+  void forEach(RTCStatsReportCallback callbackFn, any thisArg);
   object get(DOMString key);
   boolean has(DOMString key);
 };

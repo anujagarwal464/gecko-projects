@@ -20,8 +20,14 @@
 #include "nsIConsoleListener.h"
 #include "nsPrintfCString.h"
 
-#include "mozilla/Debug.h"
 #include "mozilla/Preferences.h"
+
+#if defined(ANDROID)
+#include <android/log.h>
+#endif
+#ifdef XP_WIN
+#include <windows.h>
+#endif
 
 using namespace mozilla;
 
@@ -162,12 +168,11 @@ nsConsoleService::LogMessageWithMode(nsIConsoleMessage *message, nsConsoleServic
     }
 
     if (NS_IsMainThread() && mDeliveringMessage) {
-        nsString msg;
-        message->GetMessageMoz(getter_Copies(msg));
+        nsCString msg;
+        message->ToString(msg);
         NS_WARNING(nsPrintfCString("Reentrancy error: some client attempted "
             "to display a message to the console while in a console listener. "
-            "The following message was discarded: \"%s\"",
-            NS_ConvertUTF16toUTF8(msg).get()).get());
+            "The following message was discarded: \"%s\"", msg.get()).get());
         return NS_ERROR_FAILURE;
     }
 
@@ -185,13 +190,23 @@ nsConsoleService::LogMessageWithMode(nsIConsoleMessage *message, nsConsoleServic
     {
         MutexAutoLock lock(mLock);
 
-        nsString msg;
-        message->GetMessageMoz(getter_Copies(msg));
-        LogOptions options = kPrintToDebugger | kPrintNewLine;
-        if (outputMode == OutputToLog) {
-            options |= kPrintErrorLog;
+#if defined(ANDROID)
+        if (outputMode == OutputToLog)
+        {
+            nsCString msg;
+            message->ToString(msg);
+            __android_log_print(ANDROID_LOG_ERROR, "GeckoConsole",
+                        "%s", msg.get());
         }
-        PrintToDebugger(msg, nullptr, options);
+#endif
+#ifdef XP_WIN
+        if (IsDebuggerPresent()) {
+            nsString msg;
+            message->GetMessageMoz(getter_Copies(msg));
+            msg.AppendLiteral("\n");
+            OutputDebugStringW(msg.get());
+        }
+#endif
 
         /*
          * If there's already a message in the slot we're about to replace,

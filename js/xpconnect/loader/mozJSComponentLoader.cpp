@@ -13,12 +13,17 @@
 #include <cstdarg>
 
 #include "prlog.h"
+#ifdef ANDROID
+#include <android/log.h>
+#endif
+#ifdef XP_WIN
+#include <windows.h>
+#endif
 
 #include "jsapi.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsIComponentManager.h"
-#include "mozilla/Debug.h"
 #include "mozilla/Module.h"
 #include "nsIFile.h"
 #include "mozJSComponentLoader.h"
@@ -113,9 +118,18 @@ Dump(JSContext *cx, unsigned argc, Value *vp)
     if (!chars)
         return false;
 
-    nsDependentSubstring ustr(reinterpret_cast<const char16_t*>(chars),
-                              length);
-    PrintToDebugger(ustr, stdout);
+    NS_ConvertUTF16toUTF8 utf8str(reinterpret_cast<const char16_t*>(chars),
+                                  length);
+#ifdef ANDROID
+    __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", utf8str.get());
+#endif
+#ifdef XP_WIN
+    if (IsDebuggerPresent()) {
+      OutputDebugStringW(reinterpret_cast<const wchar_t*>(chars));
+    }
+#endif
+    fputs(utf8str.get(), stdout);
+    fflush(stdout);
     return true;
 }
 
@@ -793,8 +807,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ContextOptionsRef(cx).setDontReportUncaught(true);
 
         CompileOptions options(cx);
-        options.setPrincipals(nsJSPrincipals::get(mSystemPrincipal))
-               .setNoScriptRval(mReuseLoaderGlobal ? false : true)
+        options.setNoScriptRval(mReuseLoaderGlobal ? false : true)
                .setVersion(JSVERSION_LATEST)
                .setFileAndLine(nativePath.get(), 1)
                .setSourcePolicy(mReuseLoaderGlobal ?
@@ -856,7 +869,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
 #else  /* HAVE_PR_MEMMAP */
 
             /**
-             * No memmap implementation, so fall back to 
+             * No memmap implementation, so fall back to
              * reading in the file
              */
 
@@ -999,7 +1012,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ok = JS_ExecuteScriptVersion(cx, obj, script, nullptr, JSVERSION_LATEST);
         } else {
             RootedValue rval(cx);
-            ok = JS_CallFunction(cx, obj, function, JS::EmptyValueArray, rval.address());
+            ok = JS_CallFunction(cx, obj, function, JS::HandleValueArray::empty(), &rval);
         }
      }
 

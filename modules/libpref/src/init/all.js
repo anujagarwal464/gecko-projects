@@ -208,9 +208,7 @@ pref("media.fragmented-mp4.use-blank-decoder", false);
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
-#ifdef MOZ_OGG
 pref("media.ogg.enabled", true);
-#endif
 #ifdef MOZ_OPUS
 pref("media.opus.enabled", true);
 #endif
@@ -230,16 +228,18 @@ pref("media.apple.mp3.enabled", true);
 pref("media.navigator.enabled", true);
 pref("media.navigator.video.enabled", true);
 pref("media.navigator.load_adapt", false);
-pref("media.navigator.video.default_width",640);
-pref("media.navigator.video.default_height",480);
 pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
 #ifdef MOZ_WIDGET_GONK
+pref("media.navigator.video.default_width",320);
+pref("media.navigator.video.default_height",240);
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
 pref("media.navigator.video.max_fr", 30);
 #else
+pref("media.navigator.video.default_width",640);
+pref("media.navigator.video.default_height",480);
 pref("media.peerconnection.enabled", true);
 pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 0); // unrestricted
@@ -249,6 +249,12 @@ pref("media.navigator.permission.disabled", false);
 pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:stun.services.mozilla.com\"}]");
 pref("media.peerconnection.trickle_ice", true);
 pref("media.peerconnection.use_document_iceservers", true);
+// Do not enable identity before ensuring that the UX cannot be spoofed
+// see Bug 884573 for details
+// Do not enable identity before fixing domain comparison: see Bug 958741
+// Do not enable identity before fixing origin spoofing: see Bug 968335
+pref("media.peerconnection.identity.enabled", false);
+pref("media.peerconnection.identity.timeout", 5000);
 // These values (aec, agc, and noice) are from media/webrtc/trunk/webrtc/common_types.h
 // kXxxUnchanged = 0, kXxxDefault = 1, and higher values are specific to each 
 // setting (for Xxx = Ec, Agc, or Ns).  Defaults are all set to kXxxDefault here.
@@ -259,6 +265,19 @@ pref("media.peerconnection.agc_enabled", false);
 pref("media.peerconnection.agc", 1);
 pref("media.peerconnection.noise_enabled", false);
 pref("media.peerconnection.noise", 1);
+// Adjustments for OS mediastream+output+OS+input delay (lower bound)
+#if defined(XP_MACOSX)
+pref("media.peerconnection.capture_delay", 50);
+#elif defined(XP_WIN)
+pref("media.peerconnection.capture_delay", 50);
+#elif defined(ANDROID)
+pref("media.peerconnection.capture_delay", 100);
+#elif defined(XP_LINUX)
+pref("media.peerconnection.capture_delay", 70);
+#else
+// *BSD, others - merely a guess for now
+pref("media.peerconnection.capture_delay", 50);
+#endif
 #else
 #ifdef ANDROID
 pref("media.navigator.enabled", true);
@@ -303,6 +322,9 @@ pref("media.audio_data.enabled", false);
 // 1 = STANDARD (Once locked, remain locked until scrolling ends)
 // 2 = STICKY (Allow lock to be broken, with hysteresis)
 pref("apz.axis_lock_mode", 0);
+
+// Whether to print the APZC tree for debugging
+pref("apz.printtree", false);
 
 #ifdef XP_MACOSX
 // Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
@@ -432,6 +454,7 @@ pref("accessibility.tabfocus_applies_to_xul", true);
 // provide ability to turn on support for canvas focus rings
 pref("canvas.focusring.enabled", false);
 pref("canvas.customfocusring.enabled", false);
+pref("canvas.hitregions.enabled", false);
 
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
@@ -531,8 +554,6 @@ pref("devtools.debugger.remote-port", 6000);
 pref("devtools.debugger.force-local", true);
 // Display a prompt when a new connection starts to accept/reject it
 pref("devtools.debugger.prompt-connection", true);
-// Temporary setting to enable webapps actors
-pref("devtools.debugger.enable-content-actors", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
 
@@ -735,15 +756,12 @@ pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     true);
 #endif
-pref("javascript.options.baselinejit.content", true);
-pref("javascript.options.baselinejit.chrome",  true);
-pref("javascript.options.ion.content",      true);
-pref("javascript.options.ion.chrome",       false);
+pref("javascript.options.baselinejit",      true);
+pref("javascript.options.ion",              true);
 pref("javascript.options.asmjs",            true);
 pref("javascript.options.parallel_parsing", true);
 pref("javascript.options.ion.parallel_compilation", true);
-pref("javascript.options.typeinference.content", true);
-pref("javascript.options.typeinference.chrome", false);
+pref("javascript.options.typeinference",    true);
 // This preference limits the memory usage of javascript.
 // If you want to change these values for your device,
 // please find Bug 417052 comment 17 and Bug 456721
@@ -992,7 +1010,7 @@ pref("network.http.spdy.enabled.v3", true);
 pref("network.http.spdy.enabled.v3-1", true);
 pref("network.http.spdy.enabled.http2draft", false);
 pref("network.http.spdy.enforce-tls-profile", true);
-pref("network.http.spdy.chunk-size", 4096);
+pref("network.http.spdy.chunk-size", 16000);
 pref("network.http.spdy.timeout", 180);
 pref("network.http.spdy.coalesce-hostnames", true);
 pref("network.http.spdy.persistent-settings", false);
@@ -1231,10 +1249,15 @@ pref("network.dns.ipv4OnlyDomains", "");
 // This preference can be used to turn off IPv6 name lookups. See bug 68796.
 pref("network.dns.disableIPv6", false);
 
+// This is the number of dns cache entries allowed
+pref("network.dnsCacheEntries", 400);
+
+// In the absence of OS TTLs, the DNS cache TTL value
+pref("network.dnsCacheExpiration", 60);
+
 // The grace period allows the DNS cache to use expired entries, while kicking off
-// a revalidation in the background. In seconds, but rounded to minutes in gecko.
-// Default to 30 days. (basically forever)
-pref("network.dnsCacheExpirationGracePeriod", 2592000);
+// a revalidation in the background.
+pref("network.dnsCacheExpirationGracePeriod", 60);
 
 // This preference can be used to turn off DNS prefetch.
 pref("network.dns.disablePrefetch", false);
@@ -1804,11 +1827,7 @@ pref("layout.css.scope-pseudo.enabled", true);
 #endif
 
 // Is support for background-blend-mode enabled?
-#ifdef RELEASE_BUILD
-pref("layout.css.background-blend-mode.enabled", false);
-#else
 pref("layout.css.background-blend-mode.enabled", true);
-#endif
 
 // Is support for CSS vertical text enabled?
 pref("layout.css.vertical-text.enabled", false);
@@ -1833,6 +1852,9 @@ pref("layout.css.variables.enabled", false);
 #else
 pref("layout.css.variables.enabled", true);
 #endif
+
+// Is support for CSS overflow-clip-box enabled for non-UA sheets?
+pref("layout.css.overflow-clip-box.enabled", false);
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1905,6 +1927,11 @@ pref("plugins.enumerable_names", "Java,Nexus Personal,QuickTime,Shockwave");
 
 // The default value for nsIPluginTag.enabledState (STATE_ENABLED = 2)
 pref("plugin.default.state", 2);
+
+// The MIME type that should bind to legacy java-specific invocations like
+// <applet> and <object data="java:foo">. Setting this to a non-java MIME type
+// is undefined behavior.
+pref("plugin.java.mime", "application/x-java-vm");
 
 // How long in minutes we will allow a plugin to work after the user has chosen
 // to allow it "now"
@@ -2565,10 +2592,6 @@ pref("intl.tsf.enable", false);
 
 // Support IMEs implemented with IMM in TSF mode.
 pref("intl.tsf.support_imm", true);
-
-// We need to notify the layout change to TSF, but we cannot check the actual
-// change now, therefore, we always notify it by this fequency.
-pref("intl.tsf.on_layout_change_interval", 100);
 
 // Enables/Disables hack for specific TIP.
 
@@ -3655,8 +3678,6 @@ pref("ui.panel.default_level_parent", true);
 
 pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
-pref("ui.key.menuAccessKeyFocuses", true);
-
 #if MOZ_WIDGET_GTK == 2
 pref("intl.ime.use_simple_context_on_password_field", true);
 #else
@@ -3700,9 +3721,8 @@ pref("print.print_command", "lp -c -s ${MOZ_PRINTER_NAME:+-d\"$MOZ_PRINTER_NAME\
 pref("signon.rememberSignons",              true);
 pref("signon.autofillForms",                true);
 pref("signon.autologin.proxy",              false);
+pref("signon.storeWhenAutocompleteOff",     true);
 pref("signon.debug",                        false);
-// Override autocomplete=false for password manager
-pref("signon.overrideAutocomplete",         false);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -3858,6 +3878,7 @@ pref("webgl.lose-context-on-heap-minimize", false);
 pref("webgl.can-lose-context-in-foreground", true);
 pref("webgl.max-warnings-per-context", 32);
 pref("webgl.enable-draft-extensions", false);
+pref("webgl.enable-privileged-extensions", false);
 #ifdef MOZ_WIDGET_GONK
 pref("gfx.gralloc.fence-with-readpixels", false);
 #endif
@@ -3955,6 +3976,9 @@ pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", false);
+
+// Whether to log information about off main thread animations to stderr
+pref("layers.offmainthreadcomposition.log-animations", false);
 
 pref("layers.bufferrotation.enabled", true);
 
@@ -4134,17 +4158,19 @@ pref("memory.free_dirty_pages", false);
 pref("memory.system_memory_reporter", false);
 #endif
 
+// Don't dump memory reports on OOM, by default.
+pref("memory.dump_reports_on_oom", false);
+
 // Number of stack frames to capture in createObjectURL for about:memory.
 pref("memory.blob_report.stack_frames", 0);
 
-pref("social.enabled", false);
 // comma separated list of domain origins (e.g. https://domain.com) for
 // providers that can install from their own website without user warnings.
 // entries are
 pref("social.whitelist", "https://mozsocial.cliqz.com,https://now.msn.com,https://mixi.jp");
-// omma separated list of domain origins (e.g. https://domain.com) for directory
-// websites (e.g. AMO) that can install providers for other sites
-pref("social.directories", "https://addons.mozilla.org");
+// comma separated list of domain origins (e.g. https://domain.com) for
+// directory websites (e.g. AMO) that can install providers for other sites
+pref("social.directories", "https://activations.mozilla.org");
 // remote-install allows any website to activate a provider, with extended UI
 // notifying user of installation. we can later pref off remote install if
 // necessary. This does not affect whitelisted and directory installs.
@@ -4309,3 +4335,12 @@ pref("urlclassifier.download_allow_table", "");
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);
+
+// Wakelock is disabled by default.
+pref("dom.wakelock.enabled", false);
+
+// The URL of the Firefox Accounts auth server backend
+pref("identity.fxaccounts.auth.uri", "https://api.accounts.firefox.com/v1");
+
+// disable mozsample size for now
+pref("image.mozsamplesize.enabled", false);

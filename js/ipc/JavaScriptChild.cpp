@@ -167,7 +167,6 @@ EmptyDesc(PPropertyDescriptor *desc)
 {
     desc->objId() = 0;
     desc->attrs() = 0;
-    desc->shortid() = 0;
     desc->value() = void_t();
     desc->getter() = 0;
     desc->setter() = 0;
@@ -502,7 +501,7 @@ JavaScriptChild::AnswerCall(const ObjectId &objId, const nsTArray<JSParam> &argv
         ContextOptionsRef(cx).setDontReportUncaught(true);
 
         HandleValueArray args = HandleValueArray::subarray(vals, 2, vals.length() - 2);
-        bool success = JS::Call(cx, vals[1], vals[0], args, &rval);
+        bool success = JS::Call(cx, vals.handleAt(1), vals.handleAt(0), args, &rval);
         if (!success)
             return fail(cx, rs);
     }

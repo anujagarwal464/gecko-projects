@@ -93,8 +93,6 @@ js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
     if (!WorkerThreadState().ionWorklist().append(builder))
         return false;
 
-    cx->runtime()->addCompilationThread();
-
     WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
     return true;
 }
@@ -179,8 +177,9 @@ ParseTask::ParseTask(ExclusiveContext *cx, JSObject *exclusiveContextGlobal, JSC
                      JS::OffThreadCompileCallback callback, void *callbackData)
   : cx(cx), options(initCx), chars(chars), length(length),
     alloc(JSRuntime::TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE), scopeChain(initCx, scopeChain),
-    exclusiveContextGlobal(initCx, exclusiveContextGlobal), optionsElement(initCx), callback(callback),
-    callbackData(callbackData), script(nullptr), errors(cx), overRecursed(false)
+    exclusiveContextGlobal(initCx, exclusiveContextGlobal), optionsElement(initCx),
+    optionsIntroductionScript(initCx), callback(callback), callbackData(callbackData),
+    script(nullptr), errors(cx), overRecursed(false)
 {
 }
 
@@ -194,6 +193,8 @@ ParseTask::init(JSContext *cx, const ReadOnlyCompileOptions &options)
     // point at while it's in the compilation's temporary compartment.
     optionsElement = this->options.element();
     this->options.setElement(nullptr);
+    optionsIntroductionScript = this->options.introductionScript();
+    this->options.setIntroductionScript(nullptr);
 
     return true;
 }
@@ -213,6 +214,7 @@ ParseTask::finish()
         // was in the temporary compartment.
         ScriptSourceObject &sso = script->sourceObject()->as<ScriptSourceObject>();
         sso.initElement(optionsElement);
+        sso.initIntroductionScript(optionsIntroductionScript);
     }
 }
 
@@ -318,19 +320,19 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     // Initialize all classes needed for parsing while we are still on the main
     // thread. Do this for both the target and the new global so that prototype
     // pointers can be changed infallibly after parsing finishes.
-    if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
-        !js_GetClassObject(cx, JSProto_Array, &obj) ||
-        !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
-        !js_GetClassObject(cx, JSProto_Iterator, &obj))
+    if (!GetBuiltinConstructor(cx, JSProto_Function, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_Array, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_RegExp, &obj) ||
+        !GetBuiltinConstructor(cx, JSProto_Iterator, &obj))
     {
         return false;
     }
     {
         AutoCompartment ac(cx, global);
-        if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
-            !js_GetClassObject(cx, JSProto_Array, &obj) ||
-            !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
-            !js_GetClassObject(cx, JSProto_Iterator, &obj))
+        if (!GetBuiltinConstructor(cx, JSProto_Function, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_Array, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_RegExp, &obj) ||
+            !GetBuiltinConstructor(cx, JSProto_Iterator, &obj))
         {
             return false;
         }
@@ -642,15 +644,13 @@ GlobalWorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
         if (!proto.isObject())
             continue;
 
-        JSProtoKey key = js_IdentifyClassPrototype(proto.toObject());
+        JSProtoKey key = JS::IdentifyStandardPrototype(proto.toObject());
         if (key == JSProto_Null)
             continue;
 
-        JSObject *newProto = GetClassPrototypePure(&parseTask->scopeChain->global(), key);
+        JSObject *newProto = GetBuiltinPrototypePure(&parseTask->scopeChain->global(), key);
         JS_ASSERT(newProto);
 
-        // Note: this is safe to do without requiring the compilation lock, as
-        // the new type is not yet available to compilation threads.
         object->setProtoUnchecked(newProto);
     }
 
@@ -791,21 +791,17 @@ WorkerThread::handleIonWorkload()
         jit::IonContext ictx(jit::CompileRuntime::get(rt),
                              jit::CompileCompartment::get(ionBuilder->script()->compartment()),
                              &ionBuilder->alloc());
-        AutoEnterIonCompilation ionCompiling;
-        bool succeeded = ionBuilder->build();
-        ionBuilder->clearForBackEnd();
-        if (succeeded)
-            ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
+        ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
     }
 
     FinishOffThreadIonCompile(ionBuilder);
     ionBuilder = nullptr;
 
     // Ping the main thread so that the compiled code can be incorporated
-    // at the next operation callback. Don't interrupt Ion code for this, as
+    // at the next interrupt callback. Don't interrupt Ion code for this, as
     // this incorporation can be delayed indefinitely without affecting
     // performance as long as the main thread is actually executing Ion code.
-    rt->triggerOperationCallback(JSRuntime::TriggerCallbackAnyThreadDontStopIon);
+    rt->requestInterrupt(JSRuntime::RequestInterruptAnyThreadDontStopIon);
 
     // Notify the main thread in case it is waiting for the compilation to finish.
     WorkerThreadState().notifyAll(GlobalWorkerThreadState::CONSUMER);

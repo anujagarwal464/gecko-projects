@@ -74,7 +74,6 @@
 
 // DOM core includes
 #include "nsError.h"
-#include "nsIDOMDOMStringList.h"
 #include "nsIDOMUserDataHandler.h"
 #include "nsIDOMXPathNamespace.h"
 #include "nsIDOMXULButtonElement.h"
@@ -131,15 +130,13 @@
 #include "nsPIDOMStorage.h"
 
 // Drag and drop
-#include "nsIDOMDataTransfer.h"
-
 #include "nsIDOMFile.h"
 #include "nsDOMBlobBuilder.h" // nsDOMMultipartFile
 
 #include "nsIEventListenerService.h"
 #include "nsIMessageManager.h"
 
-#include "nsDOMTouchEvent.h"
+#include "mozilla/dom/TouchEvent.h"
 
 #include "nsWrapperCacheInlines.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
@@ -160,7 +157,6 @@
 #include "FMRadio.h"
 #endif
 
-#include "nsIDOMCameraManager.h"
 #include "nsIDOMGlobalObjectConstructor.h"
 #include "nsIDOMLockedFile.h"
 #include "nsDebug.h"
@@ -359,9 +355,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                                       DEFAULT_SCRIPTABLE_FLAGS)
 #endif
 
-  NS_DEFINE_CLASSINFO_DATA(DOMStringList, nsStringListSH,
-                           ARRAY_SCRIPTABLE_FLAGS)
-
 #ifdef MOZ_XUL
   NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(TreeColumn, nsDOMGenericSH,
                                       DEFAULT_SCRIPTABLE_FLAGS)
@@ -442,10 +435,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(CSSFontFaceRule, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
-  // data transfer for drag and drop
-  NS_DEFINE_CLASSINFO_DATA(DataTransfer, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
   NS_DEFINE_CLASSINFO_DATA(EventListenerInfo, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CHROME_ONLY_CLASSINFO_DATA(ContentFrameMessageManager, nsEventTargetSH,
@@ -469,9 +458,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(MozIccManager, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 #endif
-
-  NS_DEFINE_CLASSINFO_DATA(CameraCapabilities, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
   NS_DEFINE_CLASSINFO_DATA(LockedFile, nsEventTargetSH,
                            EVENTTARGET_SCRIPTABLE_FLAGS)
@@ -882,7 +868,7 @@ nsDOMClassInfo::RegisterExternalClasses()
   DOM_CLASSINFO_MAP_ENTRY(nsIDOMWindowPerformance)                             \
   DOM_CLASSINFO_MAP_ENTRY(nsIInterfaceRequestor)                               \
   DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsITouchEventReceiver,                   \
-                                      nsDOMTouchEvent::PrefEnabled())
+                                      TouchEvent::PrefEnabled())
 #else // !MOZ_B2G
 #define DOM_CLASSINFO_WINDOW_MAP_ENTRIES                                       \
   DOM_CLASSINFO_MAP_ENTRY(nsIDOMWindow)                                        \
@@ -892,7 +878,7 @@ nsDOMClassInfo::RegisterExternalClasses()
   DOM_CLASSINFO_MAP_ENTRY(nsIDOMWindowPerformance)                             \
   DOM_CLASSINFO_MAP_ENTRY(nsIInterfaceRequestor)                               \
   DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsITouchEventReceiver,                   \
-                                      nsDOMTouchEvent::PrefEnabled())
+                                      TouchEvent::PrefEnabled())
 #endif // MOZ_B2G
 
 nsresult
@@ -1024,10 +1010,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_END
 #endif
 
-  DOM_CLASSINFO_MAP_BEGIN(DOMStringList, nsIDOMDOMStringList)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMDOMStringList)
-  DOM_CLASSINFO_MAP_END
-
 #ifdef MOZ_XUL
   DOM_CLASSINFO_MAP_BEGIN(TreeColumn, nsITreeColumn)
     DOM_CLASSINFO_MAP_ENTRY(nsITreeColumn)
@@ -1127,10 +1109,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSFontFaceRule)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(DataTransfer, nsIDOMDataTransfer)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMDataTransfer)
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(EventListenerInfo, nsIEventListenerInfo)
     DOM_CLASSINFO_MAP_ENTRY(nsIEventListenerInfo)
   DOM_CLASSINFO_MAP_END
@@ -1175,10 +1153,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_END
 
 #endif
-
-  DOM_CLASSINFO_MAP_BEGIN(CameraCapabilities, nsICameraCapabilities)
-    DOM_CLASSINFO_MAP_ENTRY(nsICameraCapabilities)
-  DOM_CLASSINFO_MAP_END
 
   DOM_CLASSINFO_MAP_BEGIN(LockedFile, nsIDOMLockedFile)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMLockedFile)
@@ -2060,7 +2034,7 @@ BaseStubConstructor(nsIWeakReference* aWeakOwner,
         }
 
         JS::Rooted<JS::Value> frval(cx);
-        bool ret = JS_CallFunctionValue(cx, thisObject, funval, argv, frval.address());
+        bool ret = JS_CallFunctionValue(cx, thisObject, funval, argv, &frval);
 
         if (!ret) {
           return NS_ERROR_FAILURE;
@@ -3715,61 +3689,6 @@ nsArraySH::GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
   }
 
   return rv;
-}
-
-
-// StringList scriptable helper
-
-nsresult
-nsStringListSH::GetStringAt(nsISupports *aNative, int32_t aIndex,
-                            nsAString& aResult)
-{
-  nsCOMPtr<nsIDOMDOMStringList> list(do_QueryInterface(aNative));
-  NS_ENSURE_TRUE(list, NS_ERROR_UNEXPECTED);
-
-  nsresult rv = list->Item(aIndex, aResult);
-#ifdef DEBUG
-  if (DOMStringIsNull(aResult)) {
-    uint32_t length = 0;
-    list->GetLength(&length);
-    NS_ASSERTION(uint32_t(aIndex) >= length, "Item should only return null for out-of-bounds access");
-  }
-#endif
-  return rv;
-}
-
-
-// StringArray helper
-
-NS_IMETHODIMP
-nsStringArraySH::GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                             JSObject *aObj, jsid aId, jsval *vp,
-                             bool *_retval)
-{
-  JS::Rooted<JSObject*> obj(cx, aObj);
-  JS::Rooted<jsid> id(cx, aId);
-  bool is_number = false;
-  int32_t n = GetArrayIndexFromId(cx, id, &is_number);
-
-  if (!is_number) {
-    return NS_OK;
-  }
-
-  nsAutoString val;
-
-  nsresult rv = GetStringAt(GetNative(wrapper, obj), n, val);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (DOMStringIsNull(val)) {
-    *vp = JSVAL_VOID;
-    return NS_SUCCESS_I_DID_SOMETHING;
-  }
-
-  JS::Rooted<JS::Value> rval(cx);
-  NS_ENSURE_TRUE(xpc::NonVoidStringToJsval(cx, val, &rval),
-                 NS_ERROR_OUT_OF_MEMORY);
-  *vp = rval;
-  return NS_SUCCESS_I_DID_SOMETHING;
 }
 
 

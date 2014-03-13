@@ -50,12 +50,43 @@ WebGLFramebuffer::Attachment::IsDeleteRequested() const
 bool
 WebGLFramebuffer::Attachment::HasAlpha() const
 {
+    MOZ_ASSERT(HasImage());
+
     GLenum format = 0;
     if (Texture() && Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel))
         format = Texture()->ImageInfoAt(mTexImageTarget, mTexImageLevel).InternalFormat();
     else if (Renderbuffer())
         format = Renderbuffer()->InternalFormat();
     return FormatHasAlpha(format);
+}
+
+bool
+WebGLFramebuffer::Attachment::IsReadableFloat() const
+{
+    if (Texture() && Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel)) {
+        GLenum type = Texture()->ImageInfoAt(mTexImageTarget, mTexImageLevel).Type();
+        switch (type) {
+        case LOCAL_GL_FLOAT:
+        case LOCAL_GL_HALF_FLOAT_OES:
+            return true;
+        }
+        return false;
+    }
+
+    if (Renderbuffer()) {
+        GLenum format = Renderbuffer()->InternalFormat();
+        switch (format) {
+        case LOCAL_GL_RGB16F:
+        case LOCAL_GL_RGBA16F:
+        case LOCAL_GL_RGB32F:
+        case LOCAL_GL_RGBA32F:
+            return true;
+        }
+        return false;
+    }
+
+    MOZ_ASSERT(false, "Should not get here.");
+    return false;
 }
 
 void
@@ -65,6 +96,17 @@ WebGLFramebuffer::Attachment::SetTexImage(WebGLTexture* tex, GLenum target, GLin
     mRenderbufferPtr = nullptr;
     mTexImageTarget = target;
     mTexImageLevel = level;
+
+    mNeedsFinalize = true;
+}
+
+void
+WebGLFramebuffer::Attachment::SetRenderbuffer(WebGLRenderbuffer* rb)
+{
+    mTexturePtr = nullptr;
+    mRenderbufferPtr = rb;
+
+    mNeedsFinalize = true;
 }
 
 bool
@@ -75,7 +117,9 @@ WebGLFramebuffer::Attachment::HasUninitializedImageData() const
 
     if (Renderbuffer()) {
         return Renderbuffer()->HasUninitializedImageData();
-    } else if (Texture()) {
+    }
+
+    if (Texture()) {
         MOZ_ASSERT(Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel));
         return Texture()->ImageInfoAt(mTexImageTarget, mTexImageLevel).HasUninitializedImageData();
     }
@@ -90,11 +134,13 @@ WebGLFramebuffer::Attachment::SetImageDataStatus(WebGLImageDataStatus newStatus)
     if (!HasImage())
         return;
 
-    if (mRenderbufferPtr) {
-        mRenderbufferPtr->SetImageDataStatus(newStatus);
+    if (Renderbuffer()) {
+        Renderbuffer()->SetImageDataStatus(newStatus);
         return;
-    } else if (mTexturePtr) {
-        mTexturePtr->SetImageDataStatus(mTexImageTarget, mTexImageLevel, newStatus);
+    }
+
+    if (Texture()) {
+        Texture()->SetImageDataStatus(mTexImageTarget, mTexImageLevel, newStatus);
         return;
     }
 
@@ -106,7 +152,8 @@ WebGLFramebuffer::Attachment::HasImage() const
 {
     if (Texture() && Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel))
         return true;
-    else if (Renderbuffer())
+
+    if (Renderbuffer())
         return true;
 
     return false;
@@ -120,7 +167,9 @@ WebGLFramebuffer::Attachment::RectangleObject() const
     if (Texture()) {
         MOZ_ASSERT(Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel));
         return Texture()->ImageInfoAt(mTexImageTarget, mTexImageLevel);
-    } else if (Renderbuffer()) {
+    }
+
+    if (Renderbuffer()) {
         return *Renderbuffer();
     }
 
@@ -228,10 +277,10 @@ WebGLFramebuffer::Attachment::IsComplete() const
         return false;
     }
 
-    if (mTexturePtr) {
-        MOZ_ASSERT(mTexturePtr->HasImageInfoAt(mTexImageTarget, mTexImageLevel));
+    if (Texture()) {
+        MOZ_ASSERT(Texture()->HasImageInfoAt(mTexImageTarget, mTexImageLevel));
         const WebGLTexture::ImageInfo& imageInfo =
-            mTexturePtr->ImageInfoAt(mTexImageTarget, mTexImageLevel);
+            Texture()->ImageInfoAt(mTexImageTarget, mTexImageLevel);
         GLenum internalFormat = imageInfo.InternalFormat();
 
         if (mAttachmentPoint == LOCAL_GL_DEPTH_ATTACHMENT)
@@ -250,8 +299,8 @@ WebGLFramebuffer::Attachment::IsComplete() const
         return false;
     }
 
-    if (mRenderbufferPtr) {
-        GLenum internalFormat = mRenderbufferPtr->InternalFormat();
+    if (Renderbuffer()) {
+        GLenum internalFormat = Renderbuffer()->InternalFormat();
 
         if (mAttachmentPoint == LOCAL_GL_DEPTH_ATTACHMENT)
             return IsValidFBORenderbufferDepthFormat(internalFormat);
@@ -277,12 +326,31 @@ WebGLFramebuffer::Attachment::IsComplete() const
 }
 
 void
-WebGLFramebuffer::Attachment::FinalizeAttachment(GLenum attachmentLoc) const
+WebGLFramebuffer::Attachment::FinalizeAttachment(GLContext* gl, GLenum attachmentLoc) const
 {
+    if (!mNeedsFinalize)
+        return;
+
+    mNeedsFinalize = false;
+
+    if (!HasImage()) {
+        if (attachmentLoc == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
+            gl->fFramebufferRenderbuffer(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_ATTACHMENT,
+                                         LOCAL_GL_RENDERBUFFER, 0);
+            gl->fFramebufferRenderbuffer(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_STENCIL_ATTACHMENT,
+                                         LOCAL_GL_RENDERBUFFER, 0);
+        } else {
+            gl->fFramebufferRenderbuffer(LOCAL_GL_FRAMEBUFFER, attachmentLoc,
+                                         LOCAL_GL_RENDERBUFFER, 0);
+        }
+
+        return;
+    }
     MOZ_ASSERT(HasImage());
 
     if (Texture()) {
-        GLContext* gl = Texture()->Context()->gl;
+        MOZ_ASSERT(gl == Texture()->Context()->gl);
+
         if (attachmentLoc == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
             gl->fFramebufferTexture2D(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_ATTACHMENT,
                                       TexImageTarget(), Texture()->GLName(), TexImageLevel());
@@ -438,7 +506,8 @@ WebGLFramebuffer::GetAttachment(GLenum attachment) const
 void
 WebGLFramebuffer::DetachTexture(const WebGLTexture* tex)
 {
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         if (mColorAttachments[i].Texture() == tex) {
             FramebufferTexture2D(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_COLOR_ATTACHMENT0, LOCAL_GL_TEXTURE_2D, nullptr, 0);
             // a texture might be attached more that once while editing the framebuffer
@@ -456,7 +525,8 @@ WebGLFramebuffer::DetachTexture(const WebGLTexture* tex)
 void
 WebGLFramebuffer::DetachRenderbuffer(const WebGLRenderbuffer* rb)
 {
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         if (mColorAttachments[0].Renderbuffer() == rb) {
             FramebufferRenderbuffer(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_COLOR_ATTACHMENT0, LOCAL_GL_RENDERBUFFER, nullptr);
             // a renderbuffer might be attached more that once while editing the framebuffer
@@ -476,7 +546,8 @@ WebGLFramebuffer::HasDefinedAttachments() const
 {
     bool hasAttachments = false;
 
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         hasAttachments |= mColorAttachments[i].IsDefined();
     }
 
@@ -491,7 +562,7 @@ WebGLFramebuffer::HasDefinedAttachments() const
 static bool
 IsIncomplete(const WebGLFramebuffer::Attachment& cur)
 {
-  return cur.IsDefined() && !cur.IsComplete();
+    return cur.IsDefined() && !cur.IsComplete();
 }
 
 bool
@@ -499,7 +570,8 @@ WebGLFramebuffer::HasIncompleteAttachments() const
 {
     bool hasIncomplete = false;
 
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         hasIncomplete |= IsIncomplete(mColorAttachments[i]);
     }
 
@@ -516,7 +588,8 @@ WebGLFramebuffer::GetAnyRectObject() const
 {
     MOZ_ASSERT(HasDefinedAttachments());
 
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         if (mColorAttachments[i].HasImage())
             return mColorAttachments[i].RectangleObject();
     }
@@ -552,7 +625,8 @@ WebGLFramebuffer::AllImageRectsMatch() const
     // Alright, we have *a* rect, let's check all the others.
     bool imageRectsMatch = true;
 
-    for (size_t i = 0; i < mColorAttachments.Length(); i++) {
+    size_t count = mColorAttachments.Length();
+    for (size_t i = 0; i < count; i++) {
         if (mColorAttachments[i].HasImage())
             imageRectsMatch &= RectsMatch(mColorAttachments[i], rect);
     }
@@ -591,7 +665,7 @@ WebGLFramebuffer::PrecheckFramebufferStatus() const
         return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
 
     if (!AllImageRectsMatch())
-        return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS; // No consistent size
+        return LOCAL_GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS; // Inconsistent sizes
 
     if (HasDepthStencilConflict())
         return LOCAL_GL_FRAMEBUFFER_UNSUPPORTED;
@@ -615,7 +689,31 @@ WebGLFramebuffer::CheckFramebufferStatus() const
     return mContext->gl->fCheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
 }
 
+bool
+WebGLFramebuffer::HasCompletePlanes(GLbitfield mask)
+{
+    if (CheckFramebufferStatus() != LOCAL_GL_FRAMEBUFFER_COMPLETE)
+        return false;
 
+    MOZ_ASSERT(mContext->mBoundFramebuffer == this);
+    bool hasPlanes = true;
+    if (mask & LOCAL_GL_COLOR_BUFFER_BIT) {
+        hasPlanes &= ColorAttachmentCount() &&
+                     ColorAttachment(0).IsDefined();
+    }
+
+    if (mask & LOCAL_GL_DEPTH_BUFFER_BIT) {
+        hasPlanes &= DepthAttachment().IsDefined() ||
+                     DepthStencilAttachment().IsDefined();
+    }
+
+    if (mask & LOCAL_GL_STENCIL_BUFFER_BIT) {
+        hasPlanes &= StencilAttachment().IsDefined() ||
+                     DepthStencilAttachment().IsDefined();
+    }
+
+    return hasPlanes;
+}
 
 bool
 WebGLFramebuffer::CheckAndInitializeAttachments()
@@ -626,7 +724,7 @@ WebGLFramebuffer::CheckAndInitializeAttachments()
         return false;
 
     // Cool! We've checked out ok. Just need to initialize.
-    size_t colorAttachmentCount = size_t(mColorAttachments.Length());
+    size_t colorAttachmentCount = mColorAttachments.Length();
 
     // Check if we need to initialize anything
     {
@@ -764,21 +862,18 @@ FinalizeDrawAndReadBuffers(GLContext* aGL, bool aColorBufferDefined)
 void
 WebGLFramebuffer::FinalizeAttachments() const
 {
-    for (size_t i = 0; i < ColorAttachmentCount(); i++) {
-        if (ColorAttachment(i).IsDefined())
-            ColorAttachment(i).FinalizeAttachment(LOCAL_GL_COLOR_ATTACHMENT0 + i);
+    GLContext* gl = mContext->gl;
+
+    size_t count = ColorAttachmentCount();
+    for (size_t i = 0; i < count; i++) {
+        ColorAttachment(i).FinalizeAttachment(gl, LOCAL_GL_COLOR_ATTACHMENT0 + i);
     }
 
-    if (DepthAttachment().IsDefined())
-        DepthAttachment().FinalizeAttachment(LOCAL_GL_DEPTH_ATTACHMENT);
+    DepthAttachment().FinalizeAttachment(gl, LOCAL_GL_DEPTH_ATTACHMENT);
+    StencilAttachment().FinalizeAttachment(gl, LOCAL_GL_STENCIL_ATTACHMENT);
+    DepthStencilAttachment().FinalizeAttachment(gl, LOCAL_GL_DEPTH_STENCIL_ATTACHMENT);
 
-    if (StencilAttachment().IsDefined())
-        StencilAttachment().FinalizeAttachment(LOCAL_GL_STENCIL_ATTACHMENT);
-
-    if (DepthStencilAttachment().IsDefined())
-        DepthStencilAttachment().FinalizeAttachment(LOCAL_GL_DEPTH_STENCIL_ATTACHMENT);
-
-    FinalizeDrawAndReadBuffers(mContext->gl, ColorAttachment(0).IsDefined());
+    FinalizeDrawAndReadBuffers(gl, ColorAttachment(0).IsDefined());
 }
 
 inline void

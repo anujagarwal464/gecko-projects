@@ -67,6 +67,7 @@
 #include "nsITimedChannel.h"
 #include "nsIPrivacyTransitionObserver.h"
 #include "nsIReflowObserver.h"
+#include "nsIScrollObserver.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIChannel.h"
 #include "IHistory.h"
@@ -829,6 +830,7 @@ nsDocShell::nsDocShell():
     mIsAppTab(false),
     mUseGlobalHistory(false),
     mInPrivateBrowsing(false),
+    mUseRemoteTabs(false),
     mDeviceSizeIsPageSize(false),
     mCanExecuteScripts(false),
     mFiredUnloadEvent(false),
@@ -2246,6 +2248,29 @@ nsDocShell::SetPrivateBrowsing(bool aUsePrivateBrowsing)
 }
 
 NS_IMETHODIMP
+nsDocShell::GetUseRemoteTabs(bool* aUseRemoteTabs)
+{
+    NS_ENSURE_ARG_POINTER(aUseRemoteTabs);
+
+    *aUseRemoteTabs = mUseRemoteTabs;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::SetRemoteTabs(bool aUseRemoteTabs)
+{
+#ifdef MOZ_CRASHREPORTER
+    if (aUseRemoteTabs) {
+        CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("DOMIPCEnabled"),
+                                           NS_LITERAL_CSTRING("1"));
+    }
+#endif
+
+    mUseRemoteTabs = aUseRemoteTabs;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDocShell::SetAffectPrivateSessionLifetime(bool aAffectLifetime)
 {
     bool change = aAffectLifetime != mAffectPrivateSessionLifetime;
@@ -2831,6 +2856,39 @@ nsDocShell::GetCurrentDocChannel()
         }
     }
     return nullptr;
+}
+
+NS_IMETHODIMP
+nsDocShell::AddWeakScrollObserver(nsIScrollObserver* aObserver)
+{
+    nsWeakPtr weakObs = do_GetWeakReference(aObserver);
+    if (!weakObs) {
+        return NS_ERROR_FAILURE;
+    }
+    return mScrollObservers.AppendElement(weakObs) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsDocShell::RemoveWeakScrollObserver(nsIScrollObserver* aObserver)
+{
+    nsWeakPtr obs = do_GetWeakReference(aObserver);
+    return mScrollObservers.RemoveElement(obs) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsDocShell::NotifyScrollObservers()
+{
+    nsTObserverArray<nsWeakPtr>::ForwardIterator iter(mScrollObservers);
+    while (iter.HasMore()) {
+        nsWeakPtr ref = iter.GetNext();
+        nsCOMPtr<nsIScrollObserver> obs = do_QueryReferent(ref);
+        if (obs) {
+            obs->ScrollPositionChanged();
+        } else {
+            mScrollObservers.RemoveElement(ref);
+        }
+    }
+    return NS_OK;
 }
 
 //*****************************************************************************
@@ -4255,6 +4313,18 @@ nsDocShell::LoadURI(const char16_t * aURI,
                     nsIInputStream * aPostStream,
                     nsIInputStream * aHeaderStream)
 {
+    return LoadURIWithBase(aURI, aLoadFlags, aReferringURI, aPostStream,
+                           aHeaderStream, nullptr);
+}
+
+NS_IMETHODIMP
+nsDocShell::LoadURIWithBase(const char16_t * aURI,
+                            uint32_t aLoadFlags,
+                            nsIURI * aReferringURI,
+                            nsIInputStream * aPostStream,
+                            nsIInputStream * aHeaderStream,
+                            nsIURI * aBaseURI)
+{
     NS_ASSERTION((aLoadFlags & 0xf) == 0, "Unexpected flags");
     
     if (!IsNavigationAllowed()) {
@@ -4347,6 +4417,7 @@ nsDocShell::LoadURI(const char16_t * aURI,
     loadInfo->SetPostDataStream(postStream);
     loadInfo->SetReferrer(aReferringURI);
     loadInfo->SetHeadersStream(aHeaderStream);
+    loadInfo->SetBaseURI(aBaseURI);
 
     rv = LoadURI(uri, loadInfo, extraFlags, true);
 
@@ -7942,8 +8013,16 @@ nsDocShell::RestoreFromHistory()
         nsCOMPtr<nsIDocument> d = do_GetInterface(parent);
         if (d) {
             if (d->EventHandlingSuppressed()) {
-                document->SuppressEventHandling(d->EventHandlingSuppressed());
+                document->SuppressEventHandling(nsIDocument::eEvents,
+                                                d->EventHandlingSuppressed());
             }
+
+            // Ick, it'd be nicer to not rewalk all of the subdocs here.
+            if (d->AnimationsPaused()) {
+                document->SuppressEventHandling(nsIDocument::eAnimationsOnly,
+                                                d->AnimationsPaused());
+            }
+
             nsCOMPtr<nsPIDOMWindow> parentWindow = d->GetWindow();
             if (parentWindow) {
                 parentSuspendCount = parentWindow->TimeoutSuspendCount();
@@ -9235,19 +9314,6 @@ nsDocShell::InternalLoad(nsIURI * aURI,
            sameExceptHashes && !newHash.IsEmpty());
 
         if (doShortCircuitedLoad) {
-            // Cancel an outstanding new-document load if this is a history
-            // load.
-            //
-            // We can't cancel the oustanding load unconditionally, because if a
-            // page does
-            //   - load a.html
-            //   - start loading b.html
-            //   - load a.html#h
-            // we break the web if we cancel the load of b.html.
-            if (aSHEntry && mDocumentRequest) {
-                mDocumentRequest->Cancel(NS_BINDING_ABORTED);
-            }
-
             // Save the position of the scrollers.
             nscoord cx = 0, cy = 0;
             GetCurScrollPos(ScrollOrientation_X, &cx);
@@ -9278,6 +9344,8 @@ nsDocShell::InternalLoad(nsIURI * aURI,
             }
 
             mURIResultedInDocument = true;
+
+            nsCOMPtr<nsISHEntry> oldLSHE = mLSHE;
 
             /* we need to assign mLSHE to aSHEntry right here, so that on History loads,
              * SetCurrentURI() called from OnNewURI() will send proper
@@ -9356,10 +9424,10 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                 SetCurScrollPosEx(bx, by);
             }
 
-            /* Clear out mLSHE so that further anchor visits get
-             * recorded in SH and SH won't misbehave. 
+            /* Restore the original LSHE if we were loading something
+             * while short-circuited load was initiated.
              */
-            SetHistoryEntry(&mLSHE, nullptr);
+            SetHistoryEntry(&mLSHE, oldLSHE);
             /* Set the title for the SH entry for this target url. so that
              * SH menus in go/back/forward buttons won't be empty for this.
              */
@@ -9742,6 +9810,12 @@ nsDocShell::DoURILoad(nsIURI * aURI,
                 }
             }
             return rv;
+        }
+        if (aBaseURI) {
+            nsCOMPtr<nsIViewSourceChannel> vsc = do_QueryInterface(channel);
+            if (vsc) {
+                vsc->SetBaseURI(aBaseURI);
+            }
         }
     }
     else {

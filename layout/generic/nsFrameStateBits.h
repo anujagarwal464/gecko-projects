@@ -284,6 +284,14 @@ FRAME_STATE_BIT(Box, 60, NS_FRAME_MOUSE_THROUGH_ALWAYS)
 FRAME_STATE_BIT(Box, 61, NS_FRAME_MOUSE_THROUGH_NEVER)
 
 
+// == Frame state bits that apply to flex container frames ====================
+
+FRAME_STATE_GROUP(FlexContainer, nsFlexContainerFrame)
+
+// Set for a flex container whose children have been reordered due to 'order'.
+// (Means that we have to be more thorough about checking them for sortedness.)
+FRAME_STATE_BIT(FlexContainer, 20, NS_STATE_FLEX_CHILDREN_REORDERED)
+
 // == Frame state bits that apply to SVG frames ===============================
 
 FRAME_STATE_GROUP(SVG, nsISVGChildFrame)
@@ -379,6 +387,10 @@ FRAME_STATE_BIT(Text, 28, TEXT_ISNOT_ONLY_WHITESPACE)
 
 // Set when this text frame is mentioned in the userdata for mTextRun
 FRAME_STATE_BIT(Text, 29, TEXT_IN_TEXTRUN_USER_DATA)
+
+// This state bit is set on frames whose character data offsets need to be
+// fixed up
+FRAME_STATE_BIT(Text, 30, TEXT_OFFSETS_NEED_FIXING)
 
 // This state bit is set on frames that have some non-collapsed characters after
 // reflow

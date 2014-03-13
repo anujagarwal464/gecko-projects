@@ -6,6 +6,7 @@
 package org.mozilla.gecko.home;
 
 import org.mozilla.gecko.R;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -17,7 +18,11 @@ import android.os.Parcelable;
 import android.text.TextUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 public final class HomeConfig {
@@ -106,8 +111,7 @@ public final class HomeConfig {
 
         public enum Flags {
             DEFAULT_PANEL,
-            DISABLED_PANEL,
-            DELETED_PANEL
+            DISABLED_PANEL
         }
 
         public PanelConfig(JSONObject json) throws JSONException, IllegalArgumentException {
@@ -266,7 +270,7 @@ public final class HomeConfig {
             return mFlags.contains(Flags.DEFAULT_PANEL);
         }
 
-        public void setIsDefault(boolean isDefault) {
+        private void setIsDefault(boolean isDefault) {
             if (isDefault) {
                 mFlags.add(Flags.DEFAULT_PANEL);
             } else {
@@ -278,23 +282,11 @@ public final class HomeConfig {
             return mFlags.contains(Flags.DISABLED_PANEL);
         }
 
-        public void setIsDisabled(boolean isDisabled) {
+        private void setIsDisabled(boolean isDisabled) {
             if (isDisabled) {
                 mFlags.add(Flags.DISABLED_PANEL);
             } else {
                 mFlags.remove(Flags.DISABLED_PANEL);
-            }
-        }
-
-        public boolean isDeleted() {
-            return mFlags.contains(Flags.DELETED_PANEL);
-        }
-
-        public void setIsDeleted(boolean isDeleted) {
-            if (isDeleted) {
-                mFlags.add(Flags.DELETED_PANEL);
-            } else {
-                mFlags.remove(Flags.DELETED_PANEL);
             }
         }
 
@@ -482,16 +474,126 @@ public final class HomeConfig {
         };
     }
 
+    public static enum ItemType implements Parcelable {
+        ARTICLE("article"),
+        IMAGE("image");
+
+        private final String mId;
+
+        ItemType(String id) {
+            mId = id;
+        }
+
+        public static ItemType fromId(String id) {
+            if (id == null) {
+                throw new IllegalArgumentException("Could not convert null String to ItemType");
+            }
+
+            for (ItemType itemType : ItemType.values()) {
+                if (TextUtils.equals(itemType.mId, id.toLowerCase())) {
+                    return itemType;
+                }
+            }
+
+            throw new IllegalArgumentException("Could not convert String id to ItemType");
+        }
+
+        @Override
+        public String toString() {
+            return mId;
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(ordinal());
+        }
+
+        public static final Creator<ItemType> CREATOR = new Creator<ItemType>() {
+            @Override
+            public ItemType createFromParcel(final Parcel source) {
+                return ItemType.values()[source.readInt()];
+            }
+
+            @Override
+            public ItemType[] newArray(final int size) {
+                return new ItemType[size];
+            }
+        };
+    }
+
+    public static enum ItemHandler implements Parcelable {
+        BROWSER("browser"),
+        INTENT("intent");
+
+        private final String mId;
+
+        ItemHandler(String id) {
+            mId = id;
+        }
+
+        public static ItemHandler fromId(String id) {
+            if (id == null) {
+                throw new IllegalArgumentException("Could not convert null String to ItemHandler");
+            }
+
+            for (ItemHandler itemHandler : ItemHandler.values()) {
+                if (TextUtils.equals(itemHandler.mId, id.toLowerCase())) {
+                    return itemHandler;
+                }
+            }
+
+            throw new IllegalArgumentException("Could not convert String id to ItemHandler");
+        }
+
+        @Override
+        public String toString() {
+            return mId;
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(ordinal());
+        }
+
+        public static final Creator<ItemHandler> CREATOR = new Creator<ItemHandler>() {
+            @Override
+            public ItemHandler createFromParcel(final Parcel source) {
+                return ItemHandler.values()[source.readInt()];
+            }
+
+            @Override
+            public ItemHandler[] newArray(final int size) {
+                return new ItemHandler[size];
+            }
+        };
+    }
+
     public static class ViewConfig implements Parcelable {
         private final ViewType mType;
         private final String mDatasetId;
+        private final ItemType mItemType;
+        private final ItemHandler mItemHandler;
 
         private static final String JSON_KEY_TYPE = "type";
         private static final String JSON_KEY_DATASET = "dataset";
+        private static final String JSON_KEY_ITEM_TYPE = "itemType";
+        private static final String JSON_KEY_ITEM_HANDLER = "itemHandler";
 
         public ViewConfig(JSONObject json) throws JSONException, IllegalArgumentException {
             mType = ViewType.fromId(json.getString(JSON_KEY_TYPE));
             mDatasetId = json.getString(JSON_KEY_DATASET);
+            mItemType = ItemType.fromId(json.getString(JSON_KEY_ITEM_TYPE));
+            mItemHandler = ItemHandler.fromId(json.getString(JSON_KEY_ITEM_HANDLER));
 
             validate();
         }
@@ -500,6 +602,8 @@ public final class HomeConfig {
         public ViewConfig(Parcel in) {
             mType = (ViewType) in.readParcelable(getClass().getClassLoader());
             mDatasetId = in.readString();
+            mItemType = (ItemType) in.readParcelable(getClass().getClassLoader());
+            mItemHandler = (ItemHandler) in.readParcelable(getClass().getClassLoader());
 
             validate();
         }
@@ -507,13 +611,17 @@ public final class HomeConfig {
         public ViewConfig(ViewConfig viewConfig) {
             mType = viewConfig.mType;
             mDatasetId = viewConfig.mDatasetId;
+            mItemType = viewConfig.mItemType;
+            mItemHandler = viewConfig.mItemHandler;
 
             validate();
         }
 
-        public ViewConfig(ViewType type, String datasetId) {
+        public ViewConfig(ViewType type, String datasetId, ItemType itemType, ItemHandler itemHandler) {
             mType = type;
             mDatasetId = datasetId;
+            mItemType = itemType;
+            mItemHandler = itemHandler;
 
             validate();
         }
@@ -526,6 +634,14 @@ public final class HomeConfig {
             if (TextUtils.isEmpty(mDatasetId)) {
                 throw new IllegalArgumentException("Can't create ViewConfig with empty dataset ID");
             }
+
+            if (mItemType == null) {
+                throw new IllegalArgumentException("Can't create ViewConfig with null item type");
+            }
+
+            if (mItemHandler == null) {
+                throw new IllegalArgumentException("Can't create ViewConfig with null item handler");
+            }
         }
 
         public ViewType getType() {
@@ -536,11 +652,21 @@ public final class HomeConfig {
             return mDatasetId;
         }
 
+        public ItemType getItemType() {
+            return mItemType;
+        }
+
+        public ItemHandler getItemHandler() {
+            return mItemHandler;
+        }
+
         public JSONObject toJSON() throws JSONException {
             final JSONObject json = new JSONObject();
 
             json.put(JSON_KEY_TYPE, mType.toString());
             json.put(JSON_KEY_DATASET, mDatasetId);
+            json.put(JSON_KEY_ITEM_TYPE, mItemType.toString());
+            json.put(JSON_KEY_ITEM_HANDLER, mItemHandler.toString());
 
             return json;
         }
@@ -554,6 +680,8 @@ public final class HomeConfig {
         public void writeToParcel(Parcel dest, int flags) {
             dest.writeParcelable(mType, 0);
             dest.writeString(mDatasetId);
+            dest.writeParcelable(mItemType, 0);
+            dest.writeParcelable(mItemHandler, 0);
         }
 
         public static final Creator<ViewConfig> CREATOR = new Creator<ViewConfig>() {
@@ -569,6 +697,374 @@ public final class HomeConfig {
         };
     }
 
+    /**
+     * Immutable representation of the current state of {@code HomeConfig}.
+     * This is what HomeConfig returns from a load() call and takes as
+     * input to save a new state.
+     *
+     * Users of {@code State} should use an {@code Iterator} to iterate
+     * through the contained {@code PanelConfig} instances.
+     *
+     * {@code State} is immutable i.e. you can't add, remove, or update
+     * contained elements directly. You have to use an {@code Editor} to
+     * change the state, which can be created through the {@code edit()}
+     * method.
+     */
+    public static class State implements Iterable<PanelConfig> {
+        private final HomeConfig mHomeConfig;
+        private final List<PanelConfig> mPanelConfigs;
+
+        private State(HomeConfig homeConfig, List<PanelConfig> panelConfigs) {
+            mHomeConfig = homeConfig;
+            mPanelConfigs = Collections.unmodifiableList(panelConfigs);
+        }
+
+        @Override
+        public Iterator<PanelConfig> iterator() {
+            return mPanelConfigs.iterator();
+        }
+
+        /**
+         * Creates an {@code Editor} for this state.
+         */
+        public Editor edit() {
+            return new Editor(mHomeConfig, this);
+        }
+    }
+
+    /**
+     * {@code Editor} allows you to make changes to a {@code State}. You
+     * can create {@code Editor} by calling {@code edit()} on the target
+     * {@code State} instance.
+     *
+     * {@code Editor} works on a copy of the {@code State} that originated
+     * it. This means that adding, removing, or updating panels in an
+     * {@code Editor} will never change the {@code State} which you
+     * created the {@code Editor} from. Calling {@code commit()} or
+     * {@code apply()} will cause the new {@code State} instance to be
+     * created and saved using the {@code HomeConfig} instance that
+     * created the source {@code State}.
+     *
+     * {@code Editor} is *not* thread-safe. You can only make calls on it
+     * from the thread where it was originally created. It will throw an
+     * exception if you don't follow this invariant.
+     */
+    public static class Editor implements Iterable<PanelConfig> {
+        private final HomeConfig mHomeConfig;
+        private final HashMap<String, PanelConfig> mConfigMap;
+        private final Thread mOriginalThread;
+
+        private PanelConfig mDefaultPanel;
+        private int mEnabledCount;
+
+        private Editor(HomeConfig homeConfig, State configState) {
+            mHomeConfig = homeConfig;
+            mOriginalThread = Thread.currentThread();
+            mConfigMap = new LinkedHashMap<String, PanelConfig>();
+            mEnabledCount = 0;
+
+            initFromState(configState);
+        }
+
+        /**
+         * Initialize the initial state of the editor from the given
+         * {@sode State}. A LinkedHashMap is used to represent the list of
+         * panels as it provides fast access to specific panels from IDs
+         * while also being order-aware. We keep a reference to the
+         * default panel and the number of enabled panels to avoid iterating
+         * through the map every time we need those.
+         *
+         * @param configState The source State to load the editor from.
+         */
+        private void initFromState(State configState) {
+            for (PanelConfig panelConfig : configState) {
+                final PanelConfig panelCopy = new PanelConfig(panelConfig);
+
+                if (!panelCopy.isDisabled()) {
+                    mEnabledCount++;
+                }
+
+                if (panelCopy.isDefault()) {
+                    if (mDefaultPanel == null) {
+                        mDefaultPanel = panelCopy;
+                    } else {
+                        throw new IllegalStateException("Multiple default panels in HomeConfig state");
+                    }
+                }
+
+                mConfigMap.put(panelConfig.getId(), panelCopy);
+            }
+
+            // We should always have a defined default panel if there's
+            // at least one enabled panel around.
+            if (mEnabledCount > 0 && mDefaultPanel == null) {
+                throw new IllegalStateException("Default panel in HomeConfig state is undefined");
+            }
+        }
+
+        private PanelConfig getPanelOrThrow(String panelId) {
+            final PanelConfig panelConfig = mConfigMap.get(panelId);
+            if (panelConfig == null) {
+                throw new IllegalStateException("Tried to access non-existing panel: " + panelId);
+            }
+
+            return panelConfig;
+        }
+
+        private boolean isCurrentDefaultPanel(PanelConfig panelConfig) {
+            if (mDefaultPanel == null) {
+                return false;
+            }
+
+            return mDefaultPanel.equals(panelConfig);
+        }
+
+        private void findNewDefault() {
+            // Pick the first panel that is neither disabled nor currently
+            // set as default.
+            for (PanelConfig panelConfig : mConfigMap.values()) {
+                if (!panelConfig.isDefault() && !panelConfig.isDisabled()) {
+                    setDefault(panelConfig.getId());
+                    return;
+                }
+            }
+
+            mDefaultPanel = null;
+        }
+
+        private List<PanelConfig> makeDeepCopy() {
+            List<PanelConfig> copiedList = new ArrayList<PanelConfig>();
+            for (PanelConfig panelConfig : mConfigMap.values()) {
+                copiedList.add(new PanelConfig(panelConfig));
+            }
+
+            return copiedList;
+        }
+
+        private void setPanelIsDisabled(PanelConfig panelConfig, boolean disabled) {
+            if (panelConfig.isDisabled() == disabled) {
+                return;
+            }
+
+            panelConfig.setIsDisabled(disabled);
+            mEnabledCount += (disabled ? -1 : 1);
+        }
+
+        /**
+         * Gets the ID of the current default panel.
+         */
+        public String getDefaultPanelId() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            if (mDefaultPanel == null) {
+                return null;
+            }
+
+            return mDefaultPanel.getId();
+        }
+
+        /**
+         * Set a new default panel.
+         *
+         * @param panelId the ID of the new default panel.
+         */
+        public void setDefault(String panelId) {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            final PanelConfig panelConfig = getPanelOrThrow(panelId);
+            if (isCurrentDefaultPanel(panelConfig)) {
+                return;
+            }
+
+            if (mDefaultPanel != null) {
+                mDefaultPanel.setIsDefault(false);
+            }
+
+            panelConfig.setIsDefault(true);
+            setPanelIsDisabled(panelConfig, false);
+
+            mDefaultPanel = panelConfig;
+        }
+
+        /**
+         * Toggles disabled state for a panel.
+         *
+         * @param panelId the ID of the target panel.
+         * @param disabled true to disable the panel.
+         */
+        public void setDisabled(String panelId, boolean disabled) {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            final PanelConfig panelConfig = getPanelOrThrow(panelId);
+            if (panelConfig.isDisabled() == disabled) {
+                return;
+            }
+
+            setPanelIsDisabled(panelConfig, disabled);
+
+            if (disabled) {
+                if (isCurrentDefaultPanel(panelConfig)) {
+                    panelConfig.setIsDefault(false);
+                    findNewDefault();
+                }
+            } else if (mEnabledCount == 1) {
+                setDefault(panelId);
+            }
+        }
+
+        /**
+         * Adds a new {@code PanelConfig}. It will do nothing if the
+         * {@code Editor} already contains a panel with the same ID.
+         *
+         * @param panelConfig the {@code PanelConfig} instance to be added.
+         * @return true if the item has been added.
+         */
+        public boolean install(PanelConfig panelConfig) {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            if (panelConfig == null) {
+                throw new IllegalStateException("Can't install a null panel");
+            }
+
+            if (!panelConfig.isDynamic()) {
+                throw new IllegalStateException("Can't install a built-in panel: " + panelConfig.getId());
+            }
+
+            if (panelConfig.isDisabled()) {
+                throw new IllegalStateException("Can't install a disabled panel: " + panelConfig.getId());
+            }
+
+            boolean installed = false;
+
+            final String id = panelConfig.getId();
+            if (!mConfigMap.containsKey(id)) {
+                mConfigMap.put(id, panelConfig);
+
+                mEnabledCount++;
+                if (mEnabledCount == 1 || panelConfig.isDefault()) {
+                    setDefault(panelConfig.getId());
+                }
+
+                installed = true;
+            }
+
+            return installed;
+        }
+
+        /**
+         * Removes an existing panel.
+         *
+         * @return true if the item has been removed.
+         */
+        public boolean uninstall(String panelId) {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            final PanelConfig panelConfig = mConfigMap.get(panelId);
+            if (panelConfig == null) {
+                return false;
+            }
+
+            if (!panelConfig.isDynamic()) {
+                throw new IllegalStateException("Can't uninstall a built-in panel: " + panelConfig.getId());
+            }
+
+            mConfigMap.remove(panelId);
+
+            if (!panelConfig.isDisabled()) {
+                mEnabledCount--;
+            }
+
+            if (isCurrentDefaultPanel(panelConfig)) {
+                findNewDefault();
+            }
+
+            return true;
+        }
+
+        /**
+         * Replaces an existing panel with a new {@code PanelConfig} instance.
+         *
+         * @return true if the item has been updated.
+         */
+        public boolean update(PanelConfig panelConfig) {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            if (panelConfig == null) {
+                throw new IllegalStateException("Can't update a null panel");
+            }
+
+            boolean updated = false;
+
+            final String id = panelConfig.getId();
+            if (mConfigMap.containsKey(id)) {
+                final PanelConfig oldPanelConfig = mConfigMap.put(id, panelConfig);
+
+                // The disabled and default states can't never be
+                // changed by an update operation.
+                panelConfig.setIsDefault(oldPanelConfig.isDefault());
+                panelConfig.setIsDisabled(oldPanelConfig.isDisabled());
+
+                updated = true;
+            }
+
+            return updated;
+        }
+
+        /**
+         * Saves the current {@code Editor} state asynchronously in the
+         * background thread.
+         *
+         * @return the resulting {@code State} instance.
+         */
+        public State apply() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            // We're about to save the current state in the background thread
+            // so we should use a deep copy of the PanelConfig instances to
+            // avoid saving corrupted state.
+            final State newConfigState = new State(mHomeConfig, makeDeepCopy());
+
+            ThreadUtils.getBackgroundHandler().post(new Runnable() {
+                @Override
+                public void run() {
+                    mHomeConfig.save(newConfigState);
+                }
+            });
+
+            return newConfigState;
+        }
+
+        /**
+         * Saves the current {@code Editor} state synchronously in the
+         * current thread.
+         *
+         * @return the resulting {@code State} instance.
+         */
+        public State commit() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            final State newConfigState =
+                    new State(mHomeConfig, new ArrayList<PanelConfig>(mConfigMap.values()));
+
+            // This is a synchronous blocking operation, hence no
+            // need to deep copy the current PanelConfig instances.
+            mHomeConfig.save(newConfigState);
+
+            return newConfigState;
+        }
+
+        public boolean isEmpty() {
+            return mConfigMap.isEmpty();
+        }
+
+        @Override
+        public Iterator<PanelConfig> iterator() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            return mConfigMap.values().iterator();
+        }
+    }
+
     public interface OnChangeListener {
         public void onChange();
     }
@@ -576,6 +1072,7 @@ public final class HomeConfig {
     public interface HomeConfigBackend {
         public List<PanelConfig> load();
         public void save(List<PanelConfig> entries);
+        public String getLocale();
         public void setOnChangeListener(OnChangeListener listener);
     }
 
@@ -591,18 +1088,17 @@ public final class HomeConfig {
         mBackend = backend;
     }
 
-    public List<PanelConfig> load() {
-        return mBackend.load();
+    public State load() {
+        final List<PanelConfig> panelConfigs = mBackend.load();
+        return new State(this, panelConfigs);
     }
 
-    public void save(List<PanelConfig> panelConfigs) {
-        for (PanelConfig panelConfig : panelConfigs) {
-            if (panelConfig.isDeleted()) {
-                throw new IllegalArgumentException("Should never save a deleted PanelConfig: " + panelConfig.getId());
-            }
-        }
+    public String getLocale() {
+        return mBackend.getLocale();
+    }
 
-        mBackend.save(panelConfigs);
+    public void save(State configState) {
+        mBackend.save(configState.mPanelConfigs);
     }
 
     public void setOnChangeListener(OnChangeListener listener) {

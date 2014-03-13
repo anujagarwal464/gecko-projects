@@ -24,6 +24,7 @@
 #include "builtin/RegExp.h"
 #include "builtin/SIMD.h"
 #include "builtin/TypedObject.h"
+#include "vm/PIC.h"
 #include "vm/RegExpStatics.h"
 #include "vm/StopIterationObject.h"
 #include "vm/WeakMapObject.h"
@@ -247,11 +248,12 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         if (!source)
             return nullptr;
         ScriptSource *ss =
-            cx->new_<ScriptSource>(/* originPrincipals = */ (JSPrincipals*)nullptr);
+            cx->new_<ScriptSource>();
         if (!ss) {
             js_free(source);
             return nullptr;
         }
+        ScriptSourceHolder ssHolder(ss);
         ss->setSource(source, sourceLen);
         CompileOptions options(cx);
         options.setNoScriptRval(true)
@@ -444,15 +446,15 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
 /* static */ bool
 GlobalObject::ensureConstructor(JSContext *cx, Handle<GlobalObject*> global, JSProtoKey key)
 {
-    if (global->getConstructor(key).isObject())
+    if (global->isStandardClassResolved(key))
         return true;
-    return initConstructor(cx, global, key);
+    return resolveConstructor(cx, global, key);
 }
 
 /* static*/ bool
-GlobalObject::initConstructor(JSContext *cx, Handle<GlobalObject*> global, JSProtoKey key)
+GlobalObject::resolveConstructor(JSContext *cx, Handle<GlobalObject*> global, JSProtoKey key)
 {
-    MOZ_ASSERT(global->getConstructor(key).isUndefined());
+    MOZ_ASSERT(!global->isStandardClassResolved(key));
 
     // There are two different kinds of initialization hooks. One of them is
     // the class js_InitFoo hook, defined in a JSProtoKey-keyed table at the
@@ -466,7 +468,7 @@ GlobalObject::initConstructor(JSContext *cx, Handle<GlobalObject*> global, JSPro
 
     // Some classes have no init routine, which means that they're disabled at
     // compile-time. We could try to enforce that callers never pass such keys
-    // to initConstructor, but that would cramp the style of consumers like
+    // to resolveConstructor, but that would cramp the style of consumers like
     // GlobalObject::initStandardClasses that want to just carpet-bomb-call
     // ensureConstructor with every JSProtoKey. So it's easier to just handle
     // it here.
@@ -517,7 +519,30 @@ GlobalObject::initConstructor(JSContext *cx, Handle<GlobalObject*> global, JSPro
         return false;
 
     // Stash things in the right slots and define the constructor on the global.
-    return DefineConstructorAndPrototype(cx, global, key, ctor, proto);
+    return initBuiltinConstructor(cx, global, key, ctor, proto);
+}
+
+/* static */ bool
+GlobalObject::initBuiltinConstructor(JSContext *cx, Handle<GlobalObject*> global,
+                                     JSProtoKey key, HandleObject ctor, HandleObject proto)
+{
+    JS_ASSERT(!global->nativeEmpty()); // reserved slots already allocated
+    JS_ASSERT(key != JSProto_Null);
+    JS_ASSERT(ctor);
+    JS_ASSERT(proto);
+
+    RootedId id(cx, NameToId(ClassName(key, cx)));
+    JS_ASSERT(!global->nativeLookup(cx, id));
+
+    if (!global->addDataProperty(cx, id, constructorPropertySlot(key), 0))
+        return false;
+
+    global->setConstructor(key, ObjectValue(*ctor));
+    global->setPrototype(key, ObjectValue(*proto));
+    global->setConstructorPropertySlot(key, ObjectValue(*ctor));
+
+    types::AddTypePropertyId(cx, global, id, ObjectValue(*ctor));
+    return true;
 }
 
 GlobalObject *
@@ -553,14 +578,14 @@ GlobalObject::getOrCreateEval(JSContext *cx, Handle<GlobalObject*> global,
 {
     if (!global->getOrCreateObjectPrototype(cx))
         return false;
-    eval.set(&global->getSlotForCompilation(EVAL).toObject());
+    eval.set(&global->getSlot(EVAL).toObject());
     return true;
 }
 
 bool
 GlobalObject::valueIsEval(Value val)
 {
-    Value eval = getSlotForCompilation(EVAL);
+    Value eval = getSlot(EVAL);
     return eval.isObject() && eval == val;
 }
 
@@ -741,6 +766,21 @@ GlobalObject::addDebugger(JSContext *cx, Handle<GlobalObject*> global, Debugger 
     return true;
 }
 
+/* static */ JSObject *
+GlobalObject::getOrCreateForOfPICObject(JSContext *cx, Handle<GlobalObject *> global)
+{
+    assertSameCompartment(cx, global);
+    JSObject *forOfPIC = global->getForOfPICObject();
+    if (forOfPIC)
+        return forOfPIC;
+
+    forOfPIC = ForOfPIC::createForOfPICObject(cx, global);
+    if (!forOfPIC)
+        return nullptr;
+    global->setReservedSlot(FOR_OF_PIC_CHAIN, ObjectValue(*forOfPIC));
+    return forOfPIC;
+}
+
 bool
 GlobalObject::getSelfHostedFunction(JSContext *cx, HandleAtom selfHostedName, HandleAtom name,
                                     unsigned nargs, MutableHandleValue funVal)
@@ -749,11 +789,6 @@ GlobalObject::getSelfHostedFunction(JSContext *cx, HandleAtom selfHostedName, Ha
     RootedObject holder(cx, cx->global()->intrinsicsHolder());
 
     if (cx->global()->maybeGetIntrinsicValue(shId, funVal.address()))
-        return true;
-
-    if (!cx->runtime()->maybeWrappedSelfHostedFunction(cx, shId, funVal))
-        return false;
-    if (!funVal.isUndefined())
         return true;
 
     JSFunction *fun = NewFunction(cx, NullPtr(), nullptr, nargs, JSFunction::INTERPRETED_LAZY,
@@ -772,20 +807,15 @@ GlobalObject::addIntrinsicValue(JSContext *cx, HandleId id, HandleValue value)
 {
     RootedObject holder(cx, intrinsicsHolder());
 
-    // Work directly with the shape machinery underlying the object, so that we
-    // don't take the compilation lock until we are ready to update the object
-    // without triggering a GC.
-
     uint32_t slot = holder->slotSpan();
     RootedShape last(cx, holder->lastProperty());
     Rooted<UnownedBaseShape*> base(cx, last->base()->unowned());
 
-    StackShape child(base, id, slot, 0, 0, 0);
+    StackShape child(base, id, slot, 0, 0);
     RootedShape shape(cx, cx->compartment()->propertyTree.getChild(cx, last, child));
     if (!shape)
         return false;
 
-    AutoLockForCompilation lock(cx);
     if (!JSObject::setLastProperty(cx, holder, shape))
         return false;
 

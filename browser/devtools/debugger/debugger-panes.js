@@ -911,7 +911,7 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
    * The keypress listener for the breakpoints conditional expression textbox.
    */
   _onConditionalTextboxKeyPress: function(e) {
-    if (e.keyCode == e.DOM_VK_RETURN || e.keyCode == e.DOM_VK_ENTER) {
+    if (e.keyCode == e.DOM_VK_RETURN) {
       this._hideConditionalPopup();
     }
   },
@@ -1961,10 +1961,14 @@ VariableBubbleView.prototype = {
   /**
    * The mousemove listener for the source editor.
    */
-  _onMouseMove: function({ clientX: x, clientY: y }) {
+  _onMouseMove: function({ clientX: x, clientY: y, buttons: btns }) {
     // Prevent the variable inspection popup from showing when the thread client
-    // is not paused, or while a popup is already visible.
-    if (gThreadClient && gThreadClient.state != "paused" || !this._tooltip.isHidden()) {
+    // is not paused, or while a popup is already visible, or when the user tries
+    // to select text in the editor.
+    if (gThreadClient && gThreadClient.state != "paused"
+        || !this._tooltip.isHidden()
+        || (DebuggerView.editor.somethingSelected()
+         && btns > 0)) {
       clearNamedTimeout("editor-mouse-move");
       return;
     }
@@ -2268,7 +2272,6 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
   _onKeyPress: function(e) {
     switch(e.keyCode) {
       case e.DOM_VK_RETURN:
-      case e.DOM_VK_ENTER:
       case e.DOM_VK_ESCAPE:
         e.stopPropagation();
         DebuggerView.editor.focus();

@@ -24,13 +24,16 @@
 #include "nsAutoPtr.h"                  // for nsRefPtr, nsAutoPtr
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsDebug.h"                    // for NS_ASSERTION, NS_WARNING
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsSize.h"                     // for nsIntSize
 #include "nsTArray.h"                   // for nsAutoTArray, nsTArray, etc
 #include "nsThreadUtils.h"              // for nsRunnable
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "nsXULAppAPI.h"                // for XRE_GetProcessType
 #include "nscore.h"                     // for NS_IMETHOD
 #include "VBOArena.h"                   // for gl::VBOArena
+#ifdef MOZ_WIDGET_GONK
+#include <ui/GraphicBuffer.h>
+#endif
 
 class gfx3DMatrix;
 class nsIWidget;
@@ -52,13 +55,106 @@ class TextureSource;
 struct Effect;
 struct EffectChain;
 
+/**
+ * Interface for pools of temporary gl textures for the compositor.
+ * The textures are fully owned by the pool, so the latter is responsible
+ * calling fDeleteTextures accordingly.
+ * Users of GetTexture receive a texture that is only valid for the duration
+ * of the current frame.
+ * This is primarily intended for direct texturing APIs that need to attach
+ * shared objects (such as an EGLImage) to a gl texture.
+ */
+class CompositorTexturePoolOGL : public RefCounted<CompositorTexturePoolOGL>
+{
+public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(CompositorTexturePoolOGL)
+
+  virtual ~CompositorTexturePoolOGL() {}
+
+  virtual void Clear() = 0;
+
+  virtual GLuint GetTexture(GLenum aUnit) = 0;
+
+  virtual void EndFrame() = 0;
+};
+
+/**
+ * Agressively reuses textures. One gl texture per texture unit in total.
+ * So far this hasn't shown the best results on b2g.
+ */
+class PerUnitTexturePoolOGL : public CompositorTexturePoolOGL
+{
+public:
+  PerUnitTexturePoolOGL(gl::GLContext* aGL)
+  : mGL(aGL)
+  {}
+
+  virtual ~PerUnitTexturePoolOGL()
+  {
+    DestroyTextures();
+  }
+
+  virtual void Clear() MOZ_OVERRIDE
+  {
+    DestroyTextures();
+  }
+
+  virtual GLuint GetTexture(GLenum aUnit) MOZ_OVERRIDE;
+
+  virtual void EndFrame() MOZ_OVERRIDE {}
+
+protected:
+  void DestroyTextures();
+
+  nsTArray<GLuint> mTextures;
+  RefPtr<gl::GLContext> mGL;
+};
+
+/**
+ * Reuse gl textures from a pool of textures that haven't yet been
+ * used during the current frame.
+ * All the textures that are not used at the end of a frame are
+ * deleted.
+ * This strategy seems to work well with gralloc textures because destroying
+ * unused textures which are bound to gralloc buffers let drivers know that it
+ * can unlock the gralloc buffers.
+ */
+class PerFrameTexturePoolOGL : public CompositorTexturePoolOGL
+{
+public:
+  PerFrameTexturePoolOGL(gl::GLContext* aGL)
+  : mGL(aGL)
+  {}
+
+  virtual ~PerFrameTexturePoolOGL()
+  {
+    DestroyTextures();
+  }
+
+  virtual void Clear() MOZ_OVERRIDE
+  {
+    DestroyTextures();
+  }
+
+  virtual GLuint GetTexture(GLenum aUnit) MOZ_OVERRIDE;
+
+  virtual void EndFrame() MOZ_OVERRIDE;
+
+protected:
+  void DestroyTextures();
+
+  RefPtr<gl::GLContext> mGL;
+  nsTArray<GLuint> mCreatedTextures;
+  nsTArray<GLuint> mUnusedTextures;
+};
+
 class CompositorOGL : public Compositor
 {
   typedef mozilla::gl::GLContext GLContext;
-  typedef ShaderProgramType ProgramType;
   
   friend class GLManagerCompositor;
 
+  std::map<ShaderConfigOGL, ShaderProgramOGL*> mPrograms;
 public:
   CompositorOGL(nsIWidget *aWidget, int aSurfaceWidth = -1, int aSurfaceHeight = -1,
                 bool aUseExternalSurfaceSize = false);
@@ -150,16 +246,16 @@ public:
   virtual const char* Name() const MOZ_OVERRIDE { return "OGL"; }
 #endif // MOZ_DUMP_PAINTING
 
+  virtual LayersBackend GetBackendType() const MOZ_OVERRIDE {
+    return LayersBackend::LAYERS_OPENGL;
+  }
+
   virtual void Pause() MOZ_OVERRIDE;
   virtual bool Resume() MOZ_OVERRIDE;
 
   virtual nsIWidget* GetWidget() const MOZ_OVERRIDE { return mWidget; }
 
   GLContext* gl() const { return mGLContext; }
-  ShaderProgramType GetFBOLayerProgramType() const {
-    return mFBOTextureTarget == LOCAL_GL_TEXTURE_RECTANGLE_ARB ?
-           RGBARectLayerProgramType : RGBALayerProgramType;
-  }
   gfx::SurfaceFormat GetFBOFormat() const {
     return gfx::SurfaceFormat::R8G8B8A8;
   }
@@ -171,6 +267,10 @@ public:
    * (see https://wiki.mozilla.org/Platform/GFX/Gralloc)
    */
   GLuint GetTemporaryTexture(GLenum aUnit);
+
+  const gfx::Matrix4x4& GetProjMatrix() const {
+    return mProjMatrix;
+  }
 private:
   virtual void DrawQuadInternal(const gfx::Rect& aRect,
                                 const gfx::Rect& aClipRect,
@@ -188,6 +288,7 @@ private:
   nsIWidget *mWidget;
   nsIntSize mWidgetSize;
   nsRefPtr<GLContext> mGLContext;
+  gfx::Matrix4x4 mProjMatrix;
 
   /** The size of the surface we are rendering to */
   nsIntSize mSurfaceSize;
@@ -195,19 +296,6 @@ private:
   ScreenPoint mRenderOffset;
 
   already_AddRefed<mozilla::gl::GLContext> CreateContext();
-
-  /** Shader Programs */
-  struct ShaderProgramVariations {
-    nsAutoTArray<nsAutoPtr<ShaderProgramOGL>, NumMaskTypes> mVariations;
-    ShaderProgramVariations() {
-      MOZ_COUNT_CTOR(ShaderProgramVariations);
-      mVariations.SetLength(NumMaskTypes);
-    }
-    ~ShaderProgramVariations() {
-      MOZ_COUNT_DTOR(ShaderProgramVariations);
-    }
-  };
-  nsTArray<ShaderProgramVariations> mPrograms;
 
   /** Texture target to use for FBOs */
   GLenum mFBOTextureTarget;
@@ -257,25 +345,8 @@ private:
                           gfx::Rect *aClipRectOut = nullptr,
                           gfx::Rect *aRenderBoundsOut = nullptr) MOZ_OVERRIDE;
 
-  ShaderProgramType GetProgramTypeForEffect(Effect* aEffect) const;
-
-  /**
-   * Updates all layer programs with a new projection matrix.
-   */
-  void SetLayerProgramProjectionMatrix(const gfx::Matrix4x4& aMatrix);
-
-  /**
-   * Helper method for Initialize, creates all valid variations of a program
-   * and adds them to mPrograms
-   */
-  void AddPrograms(ShaderProgramType aType);
-
-  ShaderProgramOGL* GetProgram(ShaderProgramType aType,
-                               MaskType aMask = MaskNone) {
-    MOZ_ASSERT(ProgramProfileOGL::ProgramExists(aType, aMask),
-               "Invalid program type.");
-    return mPrograms[aType].mVariations[aMask];
-  }
+  ShaderConfigOGL GetShaderConfigFor(Effect *aEffect, MaskType aMask = MaskNone) const;
+  ShaderProgramOGL* GetShaderProgramFor(const ShaderConfigOGL &aConfig);
 
   /**
    * Create a FBO backed by a texture.
@@ -327,12 +398,9 @@ private:
    */
   GLint FlipY(GLint y) const { return mHeight - y; }
 
-  bool mDestroyed;
+  RefPtr<CompositorTexturePoolOGL> mTexturePool;
 
-  // Textures used for direct texturing of buffers like gralloc.
-  // The index of the texture in this array must correspond to the texture unit.
-  nsTArray<GLuint> mTextures;
-  static bool sDrawFPS;
+  bool mDestroyed;
 
   /**
    * Height of the OpenGL context's primary framebuffer in pixels. Used by

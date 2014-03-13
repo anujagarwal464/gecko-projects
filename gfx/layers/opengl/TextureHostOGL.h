@@ -28,10 +28,12 @@
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsDebug.h"                    // for NS_WARNING
 #include "nsISupportsImpl.h"            // for TextureImage::Release, etc
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "OGLShaderProgram.h"           // for ShaderProgramType, etc
 #ifdef MOZ_WIDGET_GONK
 #include <ui/GraphicBuffer.h>
+#if ANDROID_VERSION >= 17
+#include <ui/Fence.h>
+#endif
 #endif
 
 class gfxImageSurface;
@@ -70,13 +72,21 @@ public:
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
   virtual void ClearData() MOZ_OVERRIDE;
-  GLuint GetTexture();
-  void DeleteTextureIfPresent();
   gl::GLContext* gl() const;
 protected:
   RefPtr<CompositorOGL> mCompositor;
-  GLuint mTexture;
 };
+
+inline void ApplyFilterToBoundTexture(gl::GLContext* aGL,
+                                      gfx::Filter aFilter,
+                                      GLuint aTarget = LOCAL_GL_TEXTURE_2D)
+{
+  GLenum filter =
+    (aFilter == gfx::Filter::POINT ? LOCAL_GL_NEAREST : LOCAL_GL_LINEAR);
+
+  aGL->fTexParameteri(aTarget, LOCAL_GL_TEXTURE_MIN_FILTER, filter);
+  aGL->fTexParameteri(aTarget, LOCAL_GL_TEXTURE_MAG_FILTER, filter);
+}
 
 /*
  * TextureHost implementations for the OpenGL backend.
@@ -93,29 +103,6 @@ protected:
  * sequence as simple as possible.
  */
 
-inline ShaderProgramType
-GetProgramTypeForSurfaceFormat(gfx::SurfaceFormat aFormat)
- {
-  switch (aFormat) {
-  case gfx::SurfaceFormat::B8G8R8A8:
-    return BGRALayerProgramType;;
-  case gfx::SurfaceFormat::B8G8R8X8:
-    return BGRXLayerProgramType;;
-  case gfx::SurfaceFormat::R8G8B8X8:
-    return RGBXLayerProgramType;;
-  case gfx::SurfaceFormat::R8G8B8A8:
-    return RGBALayerProgramType;;
-  default:
-    MOZ_CRASH("unhandled program type");
-  }
-}
-
-inline ShaderProgramType
-GetProgramTypeForTexture(const DeprecatedTextureHost *aDeprecatedTextureHost)
-{
-  return GetProgramTypeForSurfaceFormat(aDeprecatedTextureHost->GetFormat());
-}
-
 /**
  * TextureSourceOGL provides the necessary API for CompositorOGL to composite
  * a TextureSource.
@@ -123,9 +110,13 @@ GetProgramTypeForTexture(const DeprecatedTextureHost *aDeprecatedTextureHost)
 class TextureSourceOGL
 {
 public:
+  TextureSourceOGL()
+    : mHasCachedFilter(false)
+  {}
+
   virtual bool IsValid() const = 0;
 
-  virtual void BindTexture(GLenum aTextureUnit) = 0;
+  virtual void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) = 0;
 
   virtual gfx::IntSize GetSize() const = 0;
 
@@ -138,6 +129,46 @@ public:
   virtual gfx::Matrix4x4 GetTextureTransform() { return gfx::Matrix4x4(); }
 
   virtual TextureImageDeprecatedTextureHostOGL* AsTextureImageDeprecatedTextureHost() { return nullptr; }
+
+  void SetFilter(gl::GLContext* aGL, gfx::Filter aFilter)
+  {
+    if (mHasCachedFilter &&
+        mCachedFilter == aFilter) {
+      return;
+    }
+    mHasCachedFilter = true;
+    mCachedFilter = aFilter;
+    ApplyFilterToBoundTexture(aGL, aFilter, GetTextureTarget());
+  }
+
+  void ClearCachedFilter() { mHasCachedFilter = false; }
+
+private:
+  gfx::Filter mCachedFilter;
+  bool mHasCachedFilter;
+};
+
+/**
+ * TextureHostOGL provides the necessary API for platform specific composition.
+ */
+class TextureHostOGL
+{
+public:
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 17
+
+  /**
+   * Store a fence that will signal when the current buffer is no longer being read.
+   * Similar to android's GLConsumer::setReleaseFence()
+   */
+  virtual bool SetReleaseFence(const android::sp<android::Fence>& aReleaseFence);
+
+  /**
+   * Return a releaseFence's Fence and clear a reference to the Fence.
+   */
+  virtual android::sp<android::Fence> GetAndResetReleaseFence();
+protected:
+  android::sp<android::Fence> mReleaseFence;
+#endif
 };
 
 /**
@@ -177,7 +208,7 @@ public:
 
   virtual TextureSourceOGL* AsSourceOGL() MOZ_OVERRIDE { return this; }
 
-  virtual void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
+  virtual void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
 
@@ -250,7 +281,7 @@ public:
 
   virtual TextureSourceOGL* AsSourceOGL() { return this; }
 
-  virtual void BindTexture(GLenum activetex) MOZ_OVERRIDE;
+  virtual void BindTexture(GLenum activetex, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual bool IsValid() const MOZ_OVERRIDE;
 
@@ -363,7 +394,7 @@ public:
 
   virtual TextureSourceOGL* AsSourceOGL() { return this; }
 
-  virtual void BindTexture(GLenum activetex) MOZ_OVERRIDE;
+  virtual void BindTexture(GLenum activetex, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual bool IsValid() const MOZ_OVERRIDE { return !!gl(); }
 
@@ -496,7 +527,7 @@ public:
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
   // textureSource
-  void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE
+  void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) MOZ_OVERRIDE
   {
     mTexture->BindTexture(aTextureUnit);
   }
@@ -586,7 +617,7 @@ public:
   virtual TextureSourceOGL* AsSourceOGL() MOZ_OVERRIDE { return this; }
   virtual bool IsValid() const MOZ_OVERRIDE { return true; }
   virtual GLenum GetWrapMode() const MOZ_OVERRIDE { return LOCAL_GL_CLAMP_TO_EDGE; }
-  virtual void BindTexture(GLenum aTextureUnit);
+  virtual void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter);
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE
   {
     return mSize;
@@ -668,7 +699,7 @@ public:
 
   virtual const char* Name() { return "GrallocDeprecatedTextureHostOGL"; }
 
-  void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
+  void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual TextureSourceOGL* AsSourceOGL() MOZ_OVERRIDE
   {

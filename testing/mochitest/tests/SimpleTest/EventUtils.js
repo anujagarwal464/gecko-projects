@@ -537,7 +537,7 @@ function isKeypressFiredKey(aDOMKeyCode)
  * actual keypress by the user, typically the focused element.
  *
  * aKey should be either a character or a keycode starting with VK_ such as
- * VK_ENTER.
+ * VK_RETURN.
  *
  * aEvent is an object which may contain the properties:
  *   shiftKey, ctrlKey, altKey, metaKey, accessKey, type, location
@@ -946,8 +946,21 @@ function synthesizeText(aEvent, aWindow)
   compositionString.setString(aEvent.composition.string);
   if (aEvent.composition.clauses[0].length) {
     for (var i = 0; i < aEvent.composition.clauses.length; i++) {
-      compositionString.appendClause(aEvent.composition.clauses[i].length,
-                                     aEvent.composition.clauses[i].attr);
+      switch (aEvent.composition.clauses[i].attr) {
+        case compositionString.ATTR_RAWINPUT:
+        case compositionString.ATTR_SELECTEDRAWTEXT:
+        case compositionString.ATTR_CONVERTEDTEXT:
+        case compositionString.ATTR_SELECTEDCONVERTEDTEXT:
+          compositionString.appendClause(aEvent.composition.clauses[i].length,
+                                         aEvent.composition.clauses[i].attr);
+          break;
+        case 0:
+          // Ignore dummy clause for the argument.
+          break;
+        default:
+          throw new Error("invalid clause attribute specified");
+          break;
+      }
     }
   }
 

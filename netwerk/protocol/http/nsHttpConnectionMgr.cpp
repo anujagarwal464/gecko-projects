@@ -30,6 +30,7 @@
 #include "nsISocketTransportService.h"
 #include <algorithm>
 #include "Http2Compression.h"
+#include "mozilla/ChaosMode.h"
 
 // defined by the socket transport service while active
 extern PRThread *gSocketThread;
@@ -51,6 +52,16 @@ InsertTransactionSorted(nsTArray<nsHttpTransaction*> &pendingQ, nsHttpTransactio
     for (int32_t i=pendingQ.Length()-1; i>=0; --i) {
         nsHttpTransaction *t = pendingQ[i];
         if (trans->Priority() >= t->Priority()) {
+            if (ChaosMode::isActive()) {
+                int32_t samePriorityCount;
+                for (samePriorityCount = 0; i - samePriorityCount >= 0; ++samePriorityCount) {
+                    if (pendingQ[i - samePriorityCount]->Priority() != trans->Priority()) {
+                        break;
+                    }
+                }
+                // skip over 0...all of the elements with the same priority.
+                i -= ChaosMode::randomUint32LessThan(samePriorityCount + 1);
+            }
             pendingQ.InsertElementAt(i+1, trans);
             return;
         }
@@ -2132,6 +2143,10 @@ nsHttpConnectionMgr::OnMsgShutdown(int32_t, void *param)
         mTimeoutTick = nullptr;
         mTimeoutTickArmed = false;
     }
+    if (mTimer) {
+      mTimer->Cancel();
+      mTimer = nullptr;
+    }
 
     // signal shutdown complete
     nsRefPtr<nsIRunnable> runnable =
@@ -2224,7 +2239,9 @@ nsHttpConnectionMgr::OnMsgCancelTransaction(int32_t reason, void *param)
         // anything that might get canceled from the rest of gecko, so best
         // to assume that's what was meant by the cancel we did receive if
         // it only applied to something in the queue.
-        for (uint32_t index = 0; index < ent->mActiveConns.Length(); ++index) {
+        for (uint32_t index = 0;
+             ent && (index < ent->mActiveConns.Length());
+             ++index) {
             nsHttpConnection *activeConn = ent->mActiveConns[index];
             nsAHttpTransaction *liveTransaction = activeConn->Transaction();
             if (liveTransaction && liveTransaction->IsNullTransaction()) {

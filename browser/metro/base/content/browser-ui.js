@@ -32,6 +32,7 @@ let Elements = {};
   ["urlbarState",        "bcast_urlbarState"],
   ["loadingState",       "bcast_loadingState"],
   ["windowState",        "bcast_windowState"],
+  ["chromeState",        "bcast_chromeState"],
   ["mainKeyset",         "mainKeyset"],
   ["stack",              "stack"],
   ["tabList",            "tabs"],
@@ -175,6 +176,8 @@ var BrowserUI = {
         Util.dumpLn("Exception in delay load module:", ex.message);
       }
 
+      BrowserUI._initFirstRunContent();
+
       // check for left over crash reports and submit them if found.
       BrowserUI.startupCrashCheck();
 
@@ -260,7 +263,6 @@ var BrowserUI = {
   },
 
   showContent: function showContent(aURI) {
-    this.updateStartURIAttributes(aURI);
     ContextUI.dismissTabs();
     ContextUI.dismissContextAppbar();
     FlyoutPanelsUI.hide();
@@ -1215,6 +1217,24 @@ var BrowserUI = {
     }
 
     prefsClearButton.disabled = false;
+  },
+
+  _initFirstRunContent: function () {
+    let dismissed = Services.prefs.getBoolPref("browser.firstrun-content.dismissed");
+    let firstRunCount = Services.prefs.getIntPref("browser.firstrun.count");
+
+    if (!dismissed && firstRunCount > 0) {
+      document.loadOverlay("chrome://browser/content/FirstRunContentOverlay.xul", null);
+    }
+  },
+
+  firstRunContentDismiss: function() {
+    let firstRunElements = Elements.stack.querySelectorAll(".firstrun-content");
+    for (let node of firstRunElements) {
+      node.parentNode.removeChild(node);
+    }
+
+    Services.prefs.setBoolPref("browser.firstrun-content.dismissed", true);
   },
 };
 

@@ -89,7 +89,7 @@ class MachCommands(MachCommandBase):
 
             env = os.environ.copy()
             env['G_SLICE'] = 'always-malloc'
-            env['XPCOM_CC_RUN_DURING_SHUTDOWN'] = '1'
+            env['MOZ_CC_RUN_DURING_SHUTDOWN'] = '1'
             env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
             env['XPCOM_DEBUG_BREAK'] = 'warn'
 
@@ -105,7 +105,7 @@ class MachCommands(MachCommandBase):
                 '--smc-check=all-non-file',
                 '--vex-iropt-register-updates=allregs-at-mem-access',
                 '--gen-suppressions=all',
-                '--num-callers=20',
+                '--num-callers=36',
                 '--leak-check=full',
                 '--show-possibly-lost=no',
                 '--track-origins=yes'

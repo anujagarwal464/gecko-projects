@@ -26,6 +26,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "BrowserUITelemetry",
 
 const UITOUR_PERMISSION   = "uitour";
 const PREF_PERM_BRANCH    = "browser.uitour.";
+const PREF_SEENPAGEIDS    = "browser.uitour.seenPageIDs";
 const MAX_BUTTONS         = 4;
 
 const BUCKET_NAME         = "UITour";
@@ -36,16 +37,27 @@ const BUCKET_TIMESTEPS    = [
   60 * 60 * 1000, // Until 1 hour after tab is closed/inactive.
 ];
 
+// Time after which seen Page IDs expire.
+const SEENPAGEID_EXPIRY  = 2 * 7 * 24 * 60 * 60 * 1000; // 2 weeks.
 
 
 this.UITour = {
-  seenPageIDs: new Set(),
+  url: null,
+  seenPageIDs: null,
   pageIDSourceTabs: new WeakMap(),
   pageIDSourceWindows: new WeakMap(),
+  /* Map from browser windows to a set of tabs in which a tour is open */
   originTabs: new WeakMap(),
+  /* Map from browser windows to a set of pinned tabs opened by (a) tour(s) */
   pinnedTabs: new WeakMap(),
   urlbarCapture: new WeakMap(),
   appMenuOpenForAnnotation: new Set(),
+  availableTargetsCache: new WeakMap(),
+
+  _detachingTab: false,
+  _annotationPanelMutationObservers: new WeakMap(),
+  _queuedEvents: [],
+  _pendingDoc: null,
 
   highlightEffects: ["random", "wobble", "zoom", "color"],
   targets: new Map([
@@ -96,7 +108,7 @@ this.UITour = {
         let element = aDocument.getAnonymousElementByAttribute(selectedtab,
                                                                "anonid",
                                                                "tab-icon-image");
-        if (!element || !this.isElementVisible(element)) {
+        if (!element || !UITour.isElementVisible(element)) {
           return null;
         }
         return element;
@@ -109,8 +121,88 @@ this.UITour = {
   ]),
 
   init: function() {
+    // Lazy getter is initialized here so it can be replicated any time
+    // in a test.
+    delete this.seenPageIDs;
+    Object.defineProperty(this, "seenPageIDs", {
+      get: this.restoreSeenPageIDs.bind(this),
+      configurable: true,
+    });
+
+    delete this.url;
+    XPCOMUtils.defineLazyGetter(this, "url", function () {
+      return Services.urlFormatter.formatURLPref("browser.uitour.url");
+    });
+
     UITelemetry.addSimpleMeasureFunction("UITour",
                                          this.getTelemetry.bind(this));
+
+    // Clear the availableTargetsCache on widget changes.
+    let listenerMethods = [
+      "onWidgetAdded",
+      "onWidgetMoved",
+      "onWidgetRemoved",
+      "onWidgetReset",
+      "onAreaReset",
+    ];
+    CustomizableUI.addListener(listenerMethods.reduce((listener, method) => {
+      listener[method] = () => this.availableTargetsCache.clear();
+      return listener;
+    }, {}));
+  },
+
+  restoreSeenPageIDs: function() {
+    delete this.seenPageIDs;
+
+    if (UITelemetry.enabled) {
+      let dateThreshold = Date.now() - SEENPAGEID_EXPIRY;
+
+      try {
+        let data = Services.prefs.getCharPref(PREF_SEENPAGEIDS);
+        data = new Map(JSON.parse(data));
+
+        for (let [pageID, details] of data) {
+
+          if (typeof pageID != "string" ||
+              typeof details != "object" ||
+              typeof details.lastSeen != "number" ||
+              details.lastSeen < dateThreshold) {
+
+            data.delete(pageID);
+          }
+        }
+
+        this.seenPageIDs = data;
+      } catch (e) {}
+    }
+
+    if (!this.seenPageIDs)
+      this.seenPageIDs = new Map();
+
+    this.persistSeenIDs();
+
+    return this.seenPageIDs;
+  },
+
+  addSeenPageID: function(aPageID) {
+    if (!UITelemetry.enabled)
+      return;
+
+    this.seenPageIDs.set(aPageID, {
+      lastSeen: Date.now(),
+    });
+
+    this.persistSeenIDs();
+  },
+
+  persistSeenIDs: function() {
+    if (this.seenPageIDs.size === 0) {
+      Services.prefs.clearUserPref(PREF_SEENPAGEIDS);
+      return;
+    }
+
+    Services.prefs.setCharPref(PREF_SEENPAGEIDS,
+                               JSON.stringify([...this.seenPageIDs]));
   },
 
   onPageEvent: function(aEvent) {
@@ -138,15 +230,32 @@ this.UITour = {
       return false;
 
     let window = this.getChromeWindow(contentDocument);
+    // Do this before bailing if there's no tab, so later we can pick up the pieces:
+    window.gBrowser.tabContainer.addEventListener("TabSelect", this);
     let tab = window.gBrowser._getTabForContentWindow(contentDocument.defaultView);
+    if (!tab) {
+      // This should only happen while detaching a tab:
+      if (this._detachingTab) {
+        this._queuedEvents.push(aEvent);
+        this._pendingDoc = Cu.getWeakReference(contentDocument);
+        return;
+      }
+      Cu.reportError("Discarding tabless UITour event (" + action + ") while not detaching a tab." +
+                     "This shouldn't happen!");
+      return;
+    }
 
     switch (action) {
       case "registerPageID": {
+        // This is only relevant if Telemtry is enabled.
+        if (!UITelemetry.enabled)
+          break;
+
         // We don't want to allow BrowserUITelemetry.BUCKET_SEPARATOR in the
         // pageID, as it could make parsing the telemetry bucket name difficult.
         if (typeof data.pageID == "string" &&
             !data.pageID.contains(BrowserUITelemetry.BUCKET_SEPARATOR)) {
-          this.seenPageIDs.add(data.pageID);
+          this.addSeenPageID(data.pageID);
 
           // Store tabs and windows separately so we don't need to loop over all
           // tabs when a window is closed.
@@ -216,7 +325,12 @@ this.UITour = {
             }
           }
 
-          this.showInfo(contentDocument, target, data.title, data.text, iconURL, buttons);
+          let infoOptions = {};
+
+          if (typeof data.closeButtonCallbackID == "string")
+            infoOptions.closeButtonCallbackID = data.closeButtonCallbackID;
+
+          this.showInfo(contentDocument, target, data.title, data.text, iconURL, buttons, infoOptions);
         }).then(null, Cu.reportError);
         break;
       }
@@ -299,10 +413,10 @@ this.UITour = {
 
     if (!this.originTabs.has(window))
       this.originTabs.set(window, new Set());
-    this.originTabs.get(window).add(tab);
 
+    this.originTabs.get(window).add(tab);
     tab.addEventListener("TabClose", this);
-    window.gBrowser.tabContainer.addEventListener("TabSelect", this);
+    tab.addEventListener("TabBecomingWindow", this);
     window.addEventListener("SSWindowClosing", this);
 
     return true;
@@ -316,6 +430,9 @@ this.UITour = {
         break;
       }
 
+      case "TabBecomingWindow":
+        this._detachingTab = true;
+        // Fall through
       case "TabClose": {
         let tab = aEvent.target;
         if (this.pageIDSourceTabs.has(tab)) {
@@ -346,12 +463,33 @@ this.UITour = {
         }
 
         let window = aEvent.target.ownerDocument.defaultView;
+        let selectedTab = window.gBrowser.selectedTab;
         let pinnedTab = this.pinnedTabs.get(window);
-        if (pinnedTab && pinnedTab.tab == window.gBrowser.selectedTab)
+        if (pinnedTab && pinnedTab.tab == selectedTab)
           break;
         let originTabs = this.originTabs.get(window);
-        if (originTabs && originTabs.has(window.gBrowser.selectedTab))
+        if (originTabs && originTabs.has(selectedTab))
           break;
+
+        let pendingDoc;
+        if (this._detachingTab && this._pendingDoc && (pendingDoc = this._pendingDoc.get())) {
+          if (selectedTab.linkedBrowser.contentDocument == pendingDoc) {
+            if (!this.originTabs.get(window)) {
+              this.originTabs.set(window, new Set());
+            }
+            this.originTabs.get(window).add(selectedTab);
+            this.pendingDoc = null;
+            this._detachingTab = false;
+            while (this._queuedEvents.length) {
+              try {
+                this.onPageEvent(this._queuedEvents.shift());
+              } catch (ex) {
+                Cu.reportError(ex);
+              }
+            }
+            break;
+          }
+        }
 
         this.teardownTour(window);
         break;
@@ -375,14 +513,6 @@ this.UITour = {
         }
         break;
       }
-
-      case "command": {
-        if (aEvent.target.id == "UITourTooltipClose") {
-          let window = aEvent.target.ownerDocument.defaultView;
-          this.hideInfo(window);
-        }
-        break;
-      }
     }
   },
 
@@ -401,7 +531,7 @@ this.UITour = {
 
   getTelemetry: function() {
     return {
-      seenPageIDs: [...this.seenPageIDs],
+      seenPageIDs: [...this.seenPageIDs.keys()],
     };
   },
 
@@ -413,8 +543,10 @@ this.UITour = {
 
     let originTabs = this.originTabs.get(aWindow);
     if (originTabs) {
-      for (let tab of originTabs)
+      for (let tab of originTabs) {
         tab.removeEventListener("TabClose", this);
+        tab.removeEventListener("TabBecomingWindow", this);
+      }
     }
     this.originTabs.delete(aWindow);
 
@@ -708,6 +840,8 @@ this.UITour = {
                       - (Math.max(0, highlightWidthWithMin - targetRect.width) / 2);
       let offsetY = paddingLeftPx
                       - (Math.max(0, highlightHeightWithMin - targetRect.height) / 2);
+
+      this._addAnnotationPanelMutationObserver(highlighter.parentElement);
       highlighter.parentElement.openPopup(aTargetEl, "overlap", offsetX, offsetY);
     }
 
@@ -726,13 +860,27 @@ this.UITour = {
       this.removePinnedTab(aWindow);
 
     let highlighter = aWindow.document.getElementById("UITourHighlight");
+    this._removeAnnotationPanelMutationObserver(highlighter.parentElement);
     highlighter.parentElement.hidePopup();
     highlighter.removeAttribute("active");
 
     this._setAppMenuStateForAnnotation(aWindow, "highlight", false);
   },
 
-  showInfo: function(aContentDocument, aAnchor, aTitle = "", aDescription = "", aIconURL = "", aButtons = []) {
+  /**
+   * Show an info panel.
+   *
+   * @param {Document} aContentDocument
+   * @param {Node}     aAnchor
+   * @param {String}   [aTitle=""]
+   * @param {String}   [aDescription=""]
+   * @param {String}   [aIconURL=""]
+   * @param {Object[]} [aButtons=[]]
+   * @param {Object}   [aOptions={}]
+   * @param {String}   [aOptions.closeButtonCallbackID]
+   */
+  showInfo: function(aContentDocument, aAnchor, aTitle = "", aDescription = "", aIconURL = "",
+                     aButtons = [], aOptions = {}) {
     function showInfoPanel(aAnchorEl) {
       aAnchorEl.focus();
 
@@ -776,11 +924,21 @@ this.UITour = {
       tooltipButtons.hidden = !aButtons.length;
 
       let tooltipClose = document.getElementById("UITourTooltipClose");
-      tooltipClose.addEventListener("command", this);
+      let closeButtonCallback = (event) => {
+        this.hideInfo(document.defaultView);
+        if (aOptions && aOptions.closeButtonCallbackID)
+          this.sendPageCallback(aContentDocument, aOptions.closeButtonCallbackID);
+      };
+      tooltipClose.addEventListener("command", closeButtonCallback);
+      tooltip.addEventListener("popuphiding", function tooltipHiding(event) {
+        tooltip.removeEventListener("popuphiding", tooltipHiding);
+        tooltipClose.removeEventListener("command", closeButtonCallback);
+      });
 
       tooltip.setAttribute("targetName", aAnchor.targetName);
       tooltip.hidden = false;
       let alignment = "bottomcenter topright";
+      this._addAnnotationPanelMutationObserver(tooltip);
       tooltip.openPopup(aAnchorEl, alignment);
     }
 
@@ -797,6 +955,7 @@ this.UITour = {
     let document = aWindow.document;
 
     let tooltip = document.getElementById("UITourTooltip");
+    this._removeAnnotationPanelMutationObserver(tooltip);
     tooltip.hidePopup();
     this._setAppMenuStateForAnnotation(aWindow, "info", false);
 
@@ -806,8 +965,8 @@ this.UITour = {
   },
 
   showMenu: function(aWindow, aMenuName, aOpenCallback = null) {
-    function openMenuButton(aId) {
-      let menuBtn = aWindow.document.getElementById(aId);
+    function openMenuButton(aID) {
+      let menuBtn = aWindow.document.getElementById(aID);
       if (!menuBtn || !menuBtn.boxObject) {
         aOpenCallback();
         return;
@@ -839,8 +998,8 @@ this.UITour = {
   },
 
   hideMenu: function(aWindow, aMenuName) {
-    function closeMenuButton(aId) {
-      let menuBtn = aWindow.document.getElementById(aId);
+    function closeMenuButton(aID) {
+      let menuBtn = aWindow.document.getElementById(aID);
       if (menuBtn && menuBtn.boxObject)
         menuBtn.boxObject.QueryInterface(Ci.nsIMenuBoxObject).openMenu(false);
     }
@@ -882,6 +1041,12 @@ this.UITour = {
   recreatePopup: function(aPanel) {
     // After changing popup attributes that relate to how the native widget is created
     // (e.g. @noautohide) we need to re-create the frame/widget for it to take effect.
+    if (aPanel.hidden) {
+      // If the panel is already hidden, we don't need to recreate it but flush
+      // in case someone just hid it.
+      aPanel.clientWidth; // flush
+      return;
+    }
     aPanel.hidden = true;
     aPanel.clientWidth; // flush
     aPanel.hidden = false;
@@ -922,19 +1087,94 @@ this.UITour = {
     aWindow.gBrowser.selectedTab = tab;
   },
 
-  getConfiguration: function(aContentDocument, aConfiguration, aCallbackId) {
-    let config = null;
+  getConfiguration: function(aContentDocument, aConfiguration, aCallbackID) {
     switch (aConfiguration) {
+      case "availableTargets":
+        this.getAvailableTargets(aContentDocument, aCallbackID);
+        break;
       case "sync":
-        config = {
+        this.sendPageCallback(aContentDocument, aCallbackID, {
           setup: Services.prefs.prefHasUserValue("services.sync.username"),
-        };
+        });
         break;
       default:
         Cu.reportError("getConfiguration: Unknown configuration requested: " + aConfiguration);
         break;
     }
-    this.sendPageCallback(aContentDocument, aCallbackId, config);
+  },
+
+  getAvailableTargets: function(aContentDocument, aCallbackID) {
+    let window = this.getChromeWindow(aContentDocument);
+    let data = this.availableTargetsCache.get(window);
+    if (data) {
+      this.sendPageCallback(aContentDocument, aCallbackID, data);
+      return;
+    }
+
+    let promises = [];
+    for (let targetName of this.targets.keys()) {
+      promises.push(this.getTarget(window, targetName));
+    }
+    Promise.all(promises).then((targetObjects) => {
+      let targetNames = [
+        "pinnedTab",
+      ];
+      for (let targetObject of targetObjects) {
+        if (targetObject.node)
+          targetNames.push(targetObject.targetName);
+      }
+      let data = {
+        targets: targetNames,
+      };
+      this.availableTargetsCache.set(window, data);
+      this.sendPageCallback(aContentDocument, aCallbackID, data);
+    }, (err) => {
+      Cu.reportError(err);
+      this.sendPageCallback(aContentDocument, aCallbackID, {
+        targets: [],
+      });
+    });
+  },
+
+  _addAnnotationPanelMutationObserver: function(aPanelEl) {
+#ifdef XP_LINUX
+    let observer = this._annotationPanelMutationObservers.get(aPanelEl);
+    if (observer) {
+      return;
+    }
+    let win = aPanelEl.ownerDocument.defaultView;
+    observer = new win.MutationObserver(this._annotationMutationCallback);
+    this._annotationPanelMutationObservers.set(aPanelEl, observer);
+    let observerOptions = {
+      attributeFilter: ["height", "width"],
+      attributes: true,
+    };
+    observer.observe(aPanelEl, observerOptions);
+#endif
+  },
+
+  _removeAnnotationPanelMutationObserver: function(aPanelEl) {
+#ifdef XP_LINUX
+    let observer = this._annotationPanelMutationObservers.get(aPanelEl);
+    if (observer) {
+      observer.disconnect();
+      this._annotationPanelMutationObservers.delete(aPanelEl);
+    }
+#endif
+  },
+
+/**
+ * Workaround for Ubuntu panel craziness in bug 970788 where incorrect sizes get passed to
+ * nsXULPopupManager::PopupResized and lead to incorrect width and height attributes getting
+ * set on the panel.
+ */
+  _annotationMutationCallback: function(aMutations) {
+    for (let mutation of aMutations) {
+      // Remove both attributes at once and ignore remaining mutations to be proccessed.
+      mutation.target.removeAttribute("width");
+      mutation.target.removeAttribute("height");
+      return;
+    }
   },
 };
 

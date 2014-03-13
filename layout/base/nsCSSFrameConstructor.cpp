@@ -34,7 +34,7 @@
 #include "nsStyleConsts.h"
 #include "nsIDOMXULElement.h"
 #include "nsContainerFrame.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIComboboxControlFrame.h"
 #include "nsIListControlFrame.h"
 #include "nsIDOMCharacterData.h"
@@ -58,6 +58,7 @@
 #include "nsBoxFrame.h"
 #include "nsBoxLayout.h"
 #include "nsFlexContainerFrame.h"
+#include "nsGridContainerFrame.h"
 #include "nsImageFrame.h"
 #include "nsIObjectLoadingContent.h"
 #include "nsTArray.h"
@@ -362,7 +363,8 @@ ShouldSuppressFloatingOfDescendants(nsIFrame* aFrame)
 {
   return aFrame->IsFrameOfType(nsIFrame::eMathML) ||
     aFrame->IsBoxFrame() ||
-    aFrame->GetType() == nsGkAtoms::flexContainerFrame;
+    aFrame->GetType() == nsGkAtoms::flexContainerFrame ||
+    aFrame->GetType() == nsGkAtoms::gridContainerFrame;
 }
 
 /**
@@ -1982,26 +1984,63 @@ nsCSSFrameConstructor::ConstructTable(nsFrameConstructorState& aState,
   return newFrame;
 }
 
-nsIFrame*
-nsCSSFrameConstructor::ConstructTableRow(nsFrameConstructorState& aState,
-                                         FrameConstructionItem&   aItem,
-                                         nsIFrame*                aParentFrame,
-                                         const nsStyleDisplay*    aDisplay,
-                                         nsFrameItems&            aFrameItems)
+static void
+MakeTablePartAbsoluteContainingBlockIfNeeded(nsFrameConstructorState&     aState,
+                                             const nsStyleDisplay*        aDisplay,
+                                             nsFrameConstructorSaveState& aAbsSaveState,
+                                             nsIFrame*                    aFrame)
 {
-  NS_PRECONDITION(aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_ROW,
+  // If we're positioned, then we need to become an absolute containing block
+  // for any absolutely positioned children and register for post-reflow fixup.
+  //
+  // Note that usually if a frame type can be an absolute containing block, we
+  // always set NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN, whether it actually is or not. 
+  // However, in this case flag serves the additional purpose of indicating that
+  // the frame was registered with its table frame. This allows us to avoid the
+  // overhead of unregistering the frame in most cases.
+  if (aDisplay->IsRelativelyPositionedStyle() ||
+      aDisplay->IsAbsolutelyPositionedStyle() ||
+      aDisplay->HasTransform(aFrame)) {
+    aFrame->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+    aState.PushAbsoluteContainingBlock(aFrame, aFrame, aAbsSaveState);
+    nsTableFrame::RegisterPositionedTablePart(aFrame);
+  }
+}
+
+nsIFrame*
+nsCSSFrameConstructor::ConstructTableRowOrRowGroup(nsFrameConstructorState& aState,
+                                                   FrameConstructionItem&   aItem,
+                                                   nsIFrame*                aParentFrame,
+                                                   const nsStyleDisplay*    aDisplay,
+                                                   nsFrameItems&            aFrameItems)
+{
+  NS_PRECONDITION(aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_ROW ||
+                  aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_ROW_GROUP ||
+                  aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_FOOTER_GROUP ||
+                  aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_HEADER_GROUP,
                   "Unexpected call");
+  MOZ_ASSERT(aItem.mStyleContext->StyleDisplay() == aDisplay,
+             "Display style doesn't match style context");
   nsIContent* const content = aItem.mContent;
   nsStyleContext* const styleContext = aItem.mStyleContext;
   const uint32_t nameSpaceID = aItem.mNameSpaceID;
 
   nsIFrame* newFrame;
-  if (kNameSpaceID_MathML == nameSpaceID)
-    newFrame = NS_NewMathMLmtrFrame(mPresShell, styleContext);
-  else
-    newFrame = NS_NewTableRowFrame(mPresShell, styleContext);
+  if (aDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_ROW) {
+    if (kNameSpaceID_MathML == nameSpaceID)
+      newFrame = NS_NewMathMLmtrFrame(mPresShell, styleContext);
+    else
+      newFrame = NS_NewTableRowFrame(mPresShell, styleContext);
+  } else {
+    newFrame = NS_NewTableRowGroupFrame(mPresShell, styleContext);
+  }
 
   InitAndRestoreFrame(aState, content, aParentFrame, newFrame);
+
+  nsFrameConstructorSaveState absoluteSaveState;
+  MakeTablePartAbsoluteContainingBlockIfNeeded(aState, aDisplay,
+                                               absoluteSaveState,
+                                               newFrame);
 
   nsFrameItems childItems;
   NS_ASSERTION(aItem.mAnonChildren.IsEmpty(),
@@ -2104,6 +2143,11 @@ nsCSSFrameConstructor::ConstructTableCell(nsFrameConstructorState& aState,
   }
 
   InitAndRestoreFrame(aState, content, newFrame, cellInnerFrame);
+
+  nsFrameConstructorSaveState absoluteSaveState;
+  MakeTablePartAbsoluteContainingBlockIfNeeded(aState, aDisplay,
+                                               absoluteSaveState,
+                                               newFrame);
 
   nsFrameItems childItems;
   NS_ASSERTION(aItem.mAnonChildren.IsEmpty(),
@@ -2392,75 +2436,82 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
   else
 #endif
   if (aDocElement->IsSVG()) {
-    if (aDocElement->Tag() == nsGkAtoms::svg) {
-      // We're going to call the right function ourselves, so no need to give a
-      // function to this FrameConstructionData.
-
-      // XXXbz on the other hand, if we converted this whole function to
-      // FrameConstructionData/Item, then we'd need the right function
-      // here... but would probably be able to get away with less code in this
-      // function in general.
-      // Use a null PendingBinding, since our binding is not in fact pending.
-      static const FrameConstructionData rootSVGData = FCDATA_DECL(0, nullptr);
-      nsRefPtr<nsStyleContext> extraRef(styleContext);
-      FrameConstructionItem item(&rootSVGData, aDocElement,
-                                 aDocElement->Tag(), kNameSpaceID_SVG,
-                                 nullptr, extraRef.forget(), true, nullptr);
-
-      nsFrameItems frameItems;
-      contentFrame = ConstructOuterSVG(state, item, mDocElementContainingBlock,
-                                       styleContext->StyleDisplay(),
-                                       frameItems);
-      newFrame = frameItems.FirstChild();
-      NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
-    } else {
+    if (aDocElement->Tag() != nsGkAtoms::svg) {
       return nullptr;
     }
+    // We're going to call the right function ourselves, so no need to give a
+    // function to this FrameConstructionData.
+
+    // XXXbz on the other hand, if we converted this whole function to
+    // FrameConstructionData/Item, then we'd need the right function
+    // here... but would probably be able to get away with less code in this
+    // function in general.
+    // Use a null PendingBinding, since our binding is not in fact pending.
+    static const FrameConstructionData rootSVGData = FCDATA_DECL(0, nullptr);
+    nsRefPtr<nsStyleContext> extraRef(styleContext);
+    FrameConstructionItem item(&rootSVGData, aDocElement,
+                               aDocElement->Tag(), kNameSpaceID_SVG,
+                               nullptr, extraRef.forget(), true, nullptr);
+
+    nsFrameItems frameItems;
+    contentFrame = ConstructOuterSVG(state, item, mDocElementContainingBlock,
+                                     styleContext->StyleDisplay(),
+                                     frameItems);
+    newFrame = frameItems.FirstChild();
+    NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
+  } else if (display->mDisplay == NS_STYLE_DISPLAY_FLEX) {
+    contentFrame = NS_NewFlexContainerFrame(mPresShell, styleContext);
+    InitAndRestoreFrame(state, aDocElement, mDocElementContainingBlock,
+                        contentFrame);
+    newFrame = contentFrame;
+    processChildren = true;
+  } else if (display->mDisplay == NS_STYLE_DISPLAY_GRID) {
+    contentFrame = NS_NewGridContainerFrame(mPresShell, styleContext);
+    InitAndRestoreFrame(state, aDocElement, mDocElementContainingBlock,
+                        contentFrame);
+    newFrame = contentFrame;
+    processChildren = true;
+  } else if (display->mDisplay == NS_STYLE_DISPLAY_TABLE) {
+    // We're going to call the right function ourselves, so no need to give a
+    // function to this FrameConstructionData.
+
+    // XXXbz on the other hand, if we converted this whole function to
+    // FrameConstructionData/Item, then we'd need the right function
+    // here... but would probably be able to get away with less code in this
+    // function in general.
+    // Use a null PendingBinding, since our binding is not in fact pending.
+    static const FrameConstructionData rootTableData = FCDATA_DECL(0, nullptr);
+    nsRefPtr<nsStyleContext> extraRef(styleContext);
+    FrameConstructionItem item(&rootTableData, aDocElement,
+                               aDocElement->Tag(), kNameSpaceID_None,
+                               nullptr, extraRef.forget(), true, nullptr);
+
+    nsFrameItems frameItems;
+    // if the document is a table then just populate it.
+    contentFrame = ConstructTable(state, item, mDocElementContainingBlock,
+                                  styleContext->StyleDisplay(),
+                                  frameItems);
+    newFrame = frameItems.FirstChild();
+    NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
   } else {
-    bool docElemIsTable = (display->mDisplay == NS_STYLE_DISPLAY_TABLE);
-    if (docElemIsTable) {
-      // We're going to call the right function ourselves, so no need to give a
-      // function to this FrameConstructionData.
-
-      // XXXbz on the other hand, if we converted this whole function to
-      // FrameConstructionData/Item, then we'd need the right function
-      // here... but would probably be able to get away with less code in this
-      // function in general.
-      // Use a null PendingBinding, since our binding is not in fact pending.
-      static const FrameConstructionData rootTableData = FCDATA_DECL(0, nullptr);
-      nsRefPtr<nsStyleContext> extraRef(styleContext);
-      FrameConstructionItem item(&rootTableData, aDocElement,
-                                 aDocElement->Tag(), kNameSpaceID_None,
-                                 nullptr, extraRef.forget(), true, nullptr);
-
-      nsFrameItems frameItems;
-      // if the document is a table then just populate it.
-      contentFrame = ConstructTable(state, item, mDocElementContainingBlock,
-                                    styleContext->StyleDisplay(),
-                                    frameItems);
-      newFrame = frameItems.FirstChild();
-      NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
-    } else {
-      contentFrame = NS_NewBlockFormattingContext(mPresShell, styleContext);
-      nsFrameItems frameItems;
-      // Use a null PendingBinding, since our binding is not in fact pending.
-      ConstructBlock(state, display, aDocElement,
-                     state.GetGeometricParent(display,
-                                              mDocElementContainingBlock),
-                     mDocElementContainingBlock, styleContext,
-                     &contentFrame, frameItems,
-                     display->IsPositioned(contentFrame) ? contentFrame : nullptr,
-                     nullptr);
-      newFrame = frameItems.FirstChild();
-      NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
-    }
+    MOZ_ASSERT(display->mDisplay == NS_STYLE_DISPLAY_BLOCK,
+               "Unhandled display type for root element");
+    contentFrame = NS_NewBlockFormattingContext(mPresShell, styleContext);
+    nsFrameItems frameItems;
+    // Use a null PendingBinding, since our binding is not in fact pending.
+    ConstructBlock(state, display, aDocElement,
+                   state.GetGeometricParent(display,
+                                            mDocElementContainingBlock),
+                   mDocElementContainingBlock, styleContext,
+                   &contentFrame, frameItems,
+                   display->IsPositioned(contentFrame) ? contentFrame : nullptr,
+                   nullptr);
+    newFrame = frameItems.FirstChild();
+    NS_ASSERTION(frameItems.OnlyChild(), "multiple root element frames");
   }
 
   MOZ_ASSERT(newFrame);
   MOZ_ASSERT(contentFrame);
-
-  // set the primary frame
-  aDocElement->SetPrimaryFrame(contentFrame);
 
   NS_ASSERTION(processChildren ? !mRootElementFrame :
                  mRootElementFrame == contentFrame,
@@ -2491,6 +2542,9 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
     // Set the initial child lists
     contentFrame->SetInitialChildList(kPrincipalList, childItems);
   }
+
+  // set the primary frame
+  aDocElement->SetPrimaryFrame(contentFrame);
 
   SetInitialSingleChild(mDocElementContainingBlock, newFrame);
 
@@ -3805,10 +3859,16 @@ nsCSSFrameConstructor::CreateAnonymousFrames(nsFrameConstructorState& aState,
                    "Content must have a primary frame now");
       newFrame->AddStateBits(NS_FRAME_ANONYMOUSCONTENTCREATOR_CONTENT);
       aChildItems.AddChild(newFrame);
-    }
-    else {
-      // create the frame and attach it to our frame
-      ConstructFrame(aState, content, aParentFrame, aChildItems);
+    } else {
+      FrameConstructionItemList items;
+      {
+        // Skip flex item style-fixup during our AddFrameConstructionItems() call:
+        TreeMatchContext::AutoFlexItemStyleFixupSkipper
+          flexItemStyleFixupSkipper(aState.mTreeMatchContext);
+
+        AddFrameConstructionItems(aState, content, true, aParentFrame, items);
+      }
+      ConstructFramesFromItemList(aState, items, aParentFrame, aChildItems);
     }
   }
 
@@ -3919,15 +3979,15 @@ bool IsXULDisplayType(const nsStyleDisplay* aDisplay)
 {
   return (aDisplay->mDisplay == NS_STYLE_DISPLAY_INLINE_BOX || 
 #ifdef MOZ_XUL
-          aDisplay->mDisplay == NS_STYLE_DISPLAY_INLINE_GRID || 
+          aDisplay->mDisplay == NS_STYLE_DISPLAY_INLINE_XUL_GRID || 
           aDisplay->mDisplay == NS_STYLE_DISPLAY_INLINE_STACK ||
 #endif
           aDisplay->mDisplay == NS_STYLE_DISPLAY_BOX
 #ifdef MOZ_XUL
-          || aDisplay->mDisplay == NS_STYLE_DISPLAY_GRID ||
+          || aDisplay->mDisplay == NS_STYLE_DISPLAY_XUL_GRID ||
           aDisplay->mDisplay == NS_STYLE_DISPLAY_STACK ||
-          aDisplay->mDisplay == NS_STYLE_DISPLAY_GRID_GROUP ||
-          aDisplay->mDisplay == NS_STYLE_DISPLAY_GRID_LINE ||
+          aDisplay->mDisplay == NS_STYLE_DISPLAY_XUL_GRID_GROUP ||
+          aDisplay->mDisplay == NS_STYLE_DISPLAY_XUL_GRID_LINE ||
           aDisplay->mDisplay == NS_STYLE_DISPLAY_DECK ||
           aDisplay->mDisplay == NS_STYLE_DISPLAY_POPUP ||
           aDisplay->mDisplay == NS_STYLE_DISPLAY_GROUPBOX
@@ -4110,7 +4170,7 @@ nsCSSFrameConstructor::FindXULListBoxBodyData(Element* aElement,
                                               nsStyleContext* aStyleContext)
 {
   if (aStyleContext->StyleDisplay()->mDisplay !=
-        NS_STYLE_DISPLAY_GRID_GROUP) {
+        NS_STYLE_DISPLAY_XUL_GRID_GROUP) {
     return nullptr;
   }
 
@@ -4125,7 +4185,7 @@ nsCSSFrameConstructor::FindXULListItemData(Element* aElement,
                                            nsStyleContext* aStyleContext)
 {
   if (aStyleContext->StyleDisplay()->mDisplay !=
-        NS_STYLE_DISPLAY_GRID_LINE) {
+        NS_STYLE_DISPLAY_XUL_GRID_LINE) {
     return nullptr;
   }
 
@@ -4148,11 +4208,11 @@ nsCSSFrameConstructor::FindXULDisplayData(const nsStyleDisplay* aDisplay,
     SCROLLABLE_ABSPOS_CONTAINER_XUL_INT_CREATE(NS_STYLE_DISPLAY_BOX,
                                                NS_NewBoxFrame),
 #ifdef MOZ_XUL
-    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_INLINE_GRID, NS_NewGridBoxFrame),
-    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_GRID, NS_NewGridBoxFrame),
-    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_GRID_GROUP,
+    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_INLINE_XUL_GRID, NS_NewGridBoxFrame),
+    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_XUL_GRID, NS_NewGridBoxFrame),
+    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_XUL_GRID_GROUP,
                               NS_NewGridRowGroupFrame),
-    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_GRID_LINE,
+    SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_XUL_GRID_LINE,
                               NS_NewGridRowLeafFrame),
     SIMPLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_DECK, NS_NewDeckFrame),
     SCROLLABLE_XUL_INT_CREATE(NS_STYLE_DISPLAY_GROUPBOX, NS_NewGroupBoxFrame),
@@ -4358,6 +4418,10 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
       FCDATA_DECL(FCDATA_MAY_NEED_SCROLLFRAME, NS_NewFlexContainerFrame) },
     { NS_STYLE_DISPLAY_INLINE_FLEX,
       FCDATA_DECL(FCDATA_MAY_NEED_SCROLLFRAME, NS_NewFlexContainerFrame) },
+    { NS_STYLE_DISPLAY_GRID,
+      FCDATA_DECL(FCDATA_MAY_NEED_SCROLLFRAME, NS_NewGridContainerFrame) },
+    { NS_STYLE_DISPLAY_INLINE_GRID,
+      FCDATA_DECL(FCDATA_MAY_NEED_SCROLLFRAME, NS_NewGridContainerFrame) },
     { NS_STYLE_DISPLAY_TABLE,
       FULL_CTOR_FCDATA(0, &nsCSSFrameConstructor::ConstructTable) },
     { NS_STYLE_DISPLAY_INLINE_TABLE,
@@ -4371,20 +4435,17 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
                   FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
                   NS_NewTableCaptionFrame) },
     { NS_STYLE_DISPLAY_TABLE_ROW_GROUP,
-      FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_DISALLOW_OUT_OF_FLOW |
-                  FCDATA_SKIP_ABSPOS_PUSH |
-                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
-                  NS_NewTableRowGroupFrame) },
+      FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
+                       FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
+                       &nsCSSFrameConstructor::ConstructTableRowOrRowGroup) },
     { NS_STYLE_DISPLAY_TABLE_HEADER_GROUP,
-      FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_DISALLOW_OUT_OF_FLOW |
-                  FCDATA_SKIP_ABSPOS_PUSH |
-                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
-                  NS_NewTableRowGroupFrame) },
+      FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
+                       FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
+                       &nsCSSFrameConstructor::ConstructTableRowOrRowGroup) },
     { NS_STYLE_DISPLAY_TABLE_FOOTER_GROUP,
-      FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_DISALLOW_OUT_OF_FLOW |
-                  FCDATA_SKIP_ABSPOS_PUSH |
-                  FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
-                  NS_NewTableRowGroupFrame) },
+      FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
+                       FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
+                       &nsCSSFrameConstructor::ConstructTableRowOrRowGroup) },
     { NS_STYLE_DISPLAY_TABLE_COLUMN_GROUP,
       FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_DISALLOW_OUT_OF_FLOW |
                   FCDATA_SKIP_ABSPOS_PUSH |
@@ -4397,7 +4458,7 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay* aDisplay,
     { NS_STYLE_DISPLAY_TABLE_ROW,
       FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
                        FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRowGroup),
-                       &nsCSSFrameConstructor::ConstructTableRow) },
+                       &nsCSSFrameConstructor::ConstructTableRowOrRowGroup) },
     { NS_STYLE_DISPLAY_TABLE_CELL,
       FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART |
                        FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRow),
@@ -5039,37 +5100,6 @@ nsCSSFrameConstructor::AddPageBreakItem(nsIContent* aContent,
   aItems.AppendItem(&sPageBreakData, aContent, nsCSSAnonBoxes::pageBreak,
                     kNameSpaceID_None, nullptr, pseudoStyle.forget(), true,
                     nullptr);
-}
-
-void
-nsCSSFrameConstructor::ConstructFrame(nsFrameConstructorState& aState,
-                                      nsIContent*              aContent,
-                                      nsIFrame*                aParentFrame,
-                                      nsFrameItems&            aFrameItems)
-
-{
-  NS_PRECONDITION(aParentFrame, "no parent frame");
-  // NOTE: If we start using this code for non-anonymous content, we'll need
-  // to evaluate whether the AutoFlexItemStyleFixupSkipper (instantiated below)
-  // is appropriate for that content.
-  NS_PRECONDITION(aContent->IsRootOfNativeAnonymousSubtree(),
-                  "ConstructFrame should only be used for anonymous content");
-
-  FrameConstructionItemList items;
-  {
-    // Skip flex item style-fixup during our AddFrameConstructionItems() call:
-    TreeMatchContext::AutoFlexItemStyleFixupSkipper
-      flexItemStyleFixupSkipper(aState.mTreeMatchContext);
-
-    AddFrameConstructionItems(aState, aContent, true, aParentFrame, items);
-  }
-  items.SetTriedConstructingFrames();
-
-  for (FCItemIterator iter(items); !iter.IsDone(); iter.Next()) {
-    NS_ASSERTION(iter.item().DesiredParentType() == GetParentType(aParentFrame),
-                 "This is not going to work");
-    ConstructFramesFromItem(aState, iter, aParentFrame, aFrameItems);
-  }
 }
 
 void
@@ -8002,8 +8032,16 @@ nsCSSFrameConstructor::CreateContinuingTableFrame(nsIPresShell* aPresShell,
                                     nullptr);
       state.mCreatingExtraFrames = true;
 
+      nsStyleContext* const headerFooterStyleContext = rowGroupFrame->StyleContext();
       headerFooterFrame = static_cast<nsTableRowGroupFrame*>
-                                     (NS_NewTableRowGroupFrame(aPresShell, rowGroupFrame->StyleContext()));
+                                     (NS_NewTableRowGroupFrame(aPresShell, headerFooterStyleContext));
+
+      nsFrameConstructorSaveState absoluteSaveState;
+      MakeTablePartAbsoluteContainingBlockIfNeeded(state,
+                                                   headerFooterStyleContext->StyleDisplay(),
+                                                   absoluteSaveState,
+                                                   headerFooterFrame);
+
       nsIContent* headerFooter = rowGroupFrame->GetContent();
       headerFooterFrame->Init(headerFooter, newFrame, nullptr);
       ProcessChildren(state, headerFooter, rowGroupFrame->StyleContext(),
@@ -8080,10 +8118,16 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext* aPresContext,
   } else if (nsGkAtoms::tableRowGroupFrame == frameType) {
     newFrame = NS_NewTableRowGroupFrame(shell, styleContext);
     newFrame->Init(content, aParentFrame, aFrame);
+    if (newFrame->GetStateBits() & NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN) {
+      nsTableFrame::RegisterPositionedTablePart(newFrame);
+    }
   } else if (nsGkAtoms::tableRowFrame == frameType) {
     newFrame = NS_NewTableRowFrame(shell, styleContext);
 
     newFrame->Init(content, aParentFrame, aFrame);
+    if (newFrame->GetStateBits() & NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN) {
+      nsTableFrame::RegisterPositionedTablePart(newFrame);
+    }
 
     // Create a continuing frame for each table cell frame
     nsFrameItems  newChildList;
@@ -8108,6 +8152,9 @@ nsCSSFrameConstructor::CreateContinuingFrame(nsPresContext* aPresContext,
     newFrame = NS_NewTableCellFrame(shell, styleContext, IsBorderCollapse(aParentFrame));
 
     newFrame->Init(content, aParentFrame, aFrame);
+    if (newFrame->GetStateBits() & NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN) {
+      nsTableFrame::RegisterPositionedTablePart(newFrame);
+    }
 
     // Create a continuing area frame
     nsIFrame* blockFrame = aFrame->GetFirstPrincipalChild();
@@ -8259,13 +8306,7 @@ nsCSSFrameConstructor::ReplicateFixedFrames(nsPageContentFrame* aParentFrame)
                                         ITEM_ALLOW_XBL_BASE |
                                           ITEM_ALLOW_PAGE_BREAK,
                                         nullptr, items);
-      items.SetTriedConstructingFrames();
-      for (FCItemIterator iter(items); !iter.IsDone(); iter.Next()) {
-        NS_ASSERTION(iter.item().DesiredParentType() ==
-                       GetParentType(canvasFrame),
-                     "This is not going to work");
-        ConstructFramesFromItem(state, iter, canvasFrame, fixedPlaceholders);
-      }
+      ConstructFramesFromItemList(state, items, canvasFrame, fixedPlaceholders);
     }
   }
 
@@ -8814,15 +8855,14 @@ nsCSSFrameConstructor::sPseudoParentData[eParentTypeCount] = {
     FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART | FCDATA_SKIP_FRAMESET |
                      FCDATA_USE_CHILD_ITEMS |
                      FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRowGroup),
-                     &nsCSSFrameConstructor::ConstructTableRow),
+                     &nsCSSFrameConstructor::ConstructTableRowOrRowGroup),
     &nsCSSAnonBoxes::tableRow
   },
   { // Row group
-    FCDATA_DECL(FCDATA_IS_TABLE_PART | FCDATA_SKIP_FRAMESET |
-                FCDATA_DISALLOW_OUT_OF_FLOW | FCDATA_USE_CHILD_ITEMS |
-                FCDATA_SKIP_ABSPOS_PUSH |
-                FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
-                NS_NewTableRowGroupFrame),
+    FULL_CTOR_FCDATA(FCDATA_IS_TABLE_PART | FCDATA_SKIP_FRAMESET |
+                     FCDATA_USE_CHILD_ITEMS |
+                     FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeTable),
+                     &nsCSSFrameConstructor::ConstructTableRowOrRowGroup),
     &nsCSSAnonBoxes::tableRowGroup
   },
   { // Column group
@@ -8846,9 +8886,8 @@ nsCSSFrameConstructor::CreateNeededAnonFlexItems(
   FrameConstructionItemList& aItems,
   nsIFrame* aParentFrame)
 {
-  NS_ABORT_IF_FALSE(aParentFrame->GetType() == nsGkAtoms::flexContainerFrame,
-                    "Should only be called for items in a flex container frame");
-  if (aItems.IsEmpty()) {
+  if (aItems.IsEmpty() ||
+      aParentFrame->GetType() != nsGkAtoms::flexContainerFrame) {
     return;
   }
 
@@ -9171,22 +9210,13 @@ nsCSSFrameConstructor::ConstructFramesFromItemList(nsFrameConstructorState& aSta
                                                    nsIFrame* aParentFrame,
                                                    nsFrameItems& aFrameItems)
 {
-  aItems.SetTriedConstructingFrames();
-
   CreateNeededTablePseudos(aState, aItems, aParentFrame);
+  CreateNeededAnonFlexItems(aState, aItems, aParentFrame);
 
-  if (aParentFrame->GetType() == nsGkAtoms::flexContainerFrame) {
-    CreateNeededAnonFlexItems(aState, aItems, aParentFrame);
-  }
-
-#ifdef DEBUG
+  aItems.SetTriedConstructingFrames();
   for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
     NS_ASSERTION(iter.item().DesiredParentType() == GetParentType(aParentFrame),
                  "Needed pseudos didn't get created; expect bad things");
-  }
-#endif
-
-  for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
     ConstructFramesFromItem(aState, iter, aParentFrame, aFrameItems);
   }
 
@@ -10098,13 +10128,19 @@ nsCSSFrameConstructor::RemoveFloatingFirstLetterFrames(
   textContent->SetPrimaryFrame(newTextFrame);
 
   // Wallpaper bug 822910.
-  if (prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame) {
-    prevSibling->AddStateBits(NS_FRAME_IS_DIRTY);
+  bool offsetsNeedFixing =
+    prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame;
+  if (offsetsNeedFixing) {
+    prevSibling->AddStateBits(TEXT_OFFSETS_NEED_FIXING);
   }
 
   // Insert text frame in its place
   nsFrameList textList(newTextFrame, newTextFrame);
   InsertFrames(parentFrame, kPrincipalList, prevSibling, textList);
+
+  if (offsetsNeedFixing) {
+    prevSibling->RemoveStateBits(TEXT_OFFSETS_NEED_FIXING);
+  }
 
   return NS_OK;
 }
@@ -10149,13 +10185,19 @@ nsCSSFrameConstructor::RemoveFirstLetterFrames(nsPresContext* aPresContext,
       textContent->SetPrimaryFrame(textFrame);
 
       // Wallpaper bug 822910.
-      if (prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame) {
-        prevSibling->AddStateBits(NS_FRAME_IS_DIRTY);
+      bool offsetsNeedFixing =
+        prevSibling && prevSibling->GetType() == nsGkAtoms::textFrame;
+      if (offsetsNeedFixing) {
+        prevSibling->AddStateBits(TEXT_OFFSETS_NEED_FIXING);
       }
 
       // Insert text frame in its place
       nsFrameList textList(textFrame, textFrame);
       InsertFrames(aFrame, kPrincipalList, prevSibling, textList);
+
+      if (offsetsNeedFixing) {
+        prevSibling->RemoveStateBits(TEXT_OFFSETS_NEED_FIXING);
+      }
 
       *aStopLooking = true;
       NS_ASSERTION(!aBlockFrame->GetPrevContinuation(),

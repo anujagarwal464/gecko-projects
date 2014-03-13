@@ -69,6 +69,8 @@
                  viewstate=""/>
     <broadcaster id="bcast_loadingState"
                  loading="false"/>
+    <broadcaster id="bcast_chromeState"
+                 navbar="visible"/>
   </broadcasterset>
 
   <observerset id="observerset">
@@ -399,6 +401,8 @@ Desktop browser's sync prefs.
       <stack id="content-viewport">
         <observes element="bcast_windowState"
                   attribute="startpage"/>
+        <observes element="bcast_chromeState"
+                  attribute="navbar"/>
         <deck id="browsers"
               flex="1"
               observes="bcast_preciseInput"/>
@@ -482,8 +486,7 @@ Desktop browser's sync prefs.
                      autocompletepopup="urlbar-autocomplete"
                      completeselectedindex="true"
                      placeholder="&urlbar.emptytext;"
-                     tabscrolling="true"
-                     onclick="SelectionHelperUI.urlbarTextboxClick(this);"/>
+                     tabscrolling="true" />
 
             <toolbarbutton id="go-button"
                            class="urlbar-button"
@@ -589,7 +592,9 @@ Desktop browser's sync prefs.
             </hbox>
             <hbox align="center"
                   pack="end">
-              <radiogroup id="console-filter"
+              <checkbox id="console-follow-checkbox" label="&consoleFollowCheckbox.label;" checked="true"/>
+              <spacer flex="1"/>
+              <radiogroup id="console-filter" orient="horizontal"
                           oncommand="ConsolePanelView.changeMode();">
                 <radio id="console-filter-all"
                        value="all"
@@ -609,6 +614,10 @@ Desktop browser's sync prefs.
                       class="show-text"
                       label="&consoleClear.label;"
                       oncommand="ConsolePanelView.clearConsole();"/>
+              <button id="console-copy"
+                      class="show-text"
+                      label="&consoleCopyAll.label;"
+                      oncommand="ConsolePanelView.copyAll();"/>
             </hbox>
           </vbox>
 
@@ -1115,6 +1124,9 @@ Desktop browser's sync prefs.
       <setting pref="signon.rememberSignons"
                title="&optionsHeader.privacy.passwords.label;"
                type="bool"/>
+      <setting pref="browser.display.overlaynavbuttons"
+               title="&optionsHeader.displayOverlayButtons.label;"
+               type="bool"/>
       <settings id="prefs-reporting"
                 label="&optionsHeader.reporting.title;">
         <setting pref="app.crashreporter.autosubmit"
@@ -1381,6 +1393,4 @@ Desktop browser's sync prefs.
       </vbox>
     </box>
   </stack>
-  <!-- XXX: Expose feedback string to SettingsCharm.js -->
-  <label value="&helpFeedbackPage.label;" id="feedback-label" href="https://input.mozilla.org/feedback/metrofirefox" hidden="true"/>
 </window>

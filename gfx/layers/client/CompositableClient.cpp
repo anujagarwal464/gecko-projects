@@ -12,13 +12,9 @@
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "gfxASurface.h"                // for gfxContentType
 #ifdef XP_WIN
-#include "mozilla/layers/TextureD3D9.h"
+#include "gfxWindowsPlatform.h"         // for gfxWindowsPlatform
 #include "mozilla/layers/TextureD3D11.h"
-#include "gfxWindowsPlatform.h"
-#include "gfx2DGlue.h"
-#endif
-#ifdef MOZ_X11
-#include "mozilla/layers/TextureClientX11.h"
+#include "mozilla/layers/TextureD3D9.h"
 #endif
 
 using namespace mozilla::gfx;
@@ -26,13 +22,14 @@ using namespace mozilla::gfx;
 namespace mozilla {
 namespace layers {
 
-CompositableClient::CompositableClient(CompositableForwarder* aForwarder)
+CompositableClient::CompositableClient(CompositableForwarder* aForwarder,
+                                       TextureFlags aTextureFlags)
 : mCompositableChild(nullptr)
 , mForwarder(aForwarder)
+, mTextureFlags(aTextureFlags)
 {
   MOZ_COUNT_CTOR(CompositableClient);
 }
-
 
 CompositableClient::~CompositableClient()
 {
@@ -124,7 +121,7 @@ CompositableClient::CreateDeprecatedTextureClient(DeprecatedTextureClientType aD
       break;
     }
     if (parentBackend == LayersBackend::LAYERS_D3D9 &&
-        !GetForwarder()->ForwardsToDifferentProcess()) {
+        GetForwarder()->IsSameProcess()) {
       // We can't use a d3d9 texture for an RGBA surface because we cannot get a DC for
       // for a gfxWindowsSurface.
       // We have to wait for the compositor thread to create a d3d9 device before we
@@ -174,65 +171,18 @@ TemporaryRef<BufferTextureClient>
 CompositableClient::CreateBufferTextureClient(SurfaceFormat aFormat,
                                               TextureFlags aTextureFlags)
 {
-// XXX - Once bug 908196 is fixed, we can use gralloc textures here which will
-// improve performances of videos using SharedPlanarYCbCrImage on b2g.
-//#ifdef MOZ_WIDGET_GONK
-//  {
-//    RefPtr<BufferTextureClient> result = new GrallocTextureClientOGL(this,
-//                                                                     aFormat,
-//                                                                     aTextureFlags);
-//    return result.forget();
-//  }
-//#endif
-  if (gfxPlatform::GetPlatform()->PreferMemoryOverShmem()) {
-    RefPtr<BufferTextureClient> result = new MemoryTextureClient(this, aFormat, aTextureFlags);
-    return result.forget();
-  }
-  RefPtr<BufferTextureClient> result = new ShmemTextureClient(this, aFormat, aTextureFlags);
-  return result.forget();
+  return TextureClient::CreateBufferTextureClient(GetForwarder(), aFormat,
+                                                  aTextureFlags | mTextureFlags);
 }
 
 TemporaryRef<TextureClient>
 CompositableClient::CreateTextureClientForDrawing(SurfaceFormat aFormat,
-                                                  TextureFlags aTextureFlags)
+                                                  TextureFlags aTextureFlags,
+                                                  const IntSize& aSizeHint)
 {
-  RefPtr<TextureClient> result;
-
-#ifdef XP_WIN
-  LayersBackend parentBackend = GetForwarder()->GetCompositorBackendType();
-  if (parentBackend == LayersBackend::LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
-      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
-    result = new TextureClientD3D11(aFormat, aTextureFlags);
-  }
-  if (parentBackend == LayersBackend::LAYERS_D3D9 &&
-      !GetForwarder()->ForwardsToDifferentProcess() &&
-      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
-    if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
-      result = new DIBTextureClientD3D9(aFormat, aTextureFlags);
-    } else {
-      result = new CairoTextureClientD3D9(aFormat, aTextureFlags);
-    }
-  }
-#endif
-
-#ifdef MOZ_X11
-  LayersBackend parentBackend = GetForwarder()->GetCompositorBackendType();
-  if (parentBackend == LayersBackend::LAYERS_BASIC &&
-      gfxPlatform::GetPlatform()->ScreenReferenceSurface()->GetType() == gfxSurfaceType::Xlib &&
-      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK))
-  {
-    result = new TextureClientX11(aFormat, aTextureFlags);
-  }
-#endif
-
-  // Can't do any better than a buffer texture client.
-  if (!result) {
-    result = CreateBufferTextureClient(aFormat, aTextureFlags);
-  }
-
-  MOZ_ASSERT(!result || result->AsTextureClientDrawTarget(),
-             "Not a TextureClientDrawTarget?");
-  return result;
+  return TextureClient::CreateTextureClientForDrawing(GetForwarder(), aFormat,
+                                                      aTextureFlags | mTextureFlags,
+                                                      aSizeHint);
 }
 
 bool

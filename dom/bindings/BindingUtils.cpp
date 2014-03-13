@@ -235,7 +235,7 @@ ErrorResult::ReportJSExceptionFromJSImplementation(JSContext* aCx)
 
   JS_ReportError(aCx, "%hs", message.get());
   JS_RemoveValueRoot(aCx, &mJSException);
-  
+
   // We no longer have a useful exception but we do want to signal that an error
   // occured.
   mResult = NS_ERROR_FAILURE;
@@ -867,6 +867,12 @@ ThrowingConstructor(JSContext* cx, unsigned argc, JS::Value* vp)
   return ThrowErrorMessage(cx, MSG_ILLEGAL_CONSTRUCTOR);
 }
 
+bool
+ThrowConstructorWithoutNew(JSContext* cx, const char* name)
+{
+  return ThrowErrorMessage(cx, MSG_CONSTRUCTOR_WITHOUT_NEW, name);
+}
+
 inline const NativePropertyHooks*
 GetNativePropertyHooks(JSContext *cx, JS::Handle<JSObject*> obj,
                        DOMObjectType& type)
@@ -968,10 +974,9 @@ XrayResolveAttribute(JSContext* cx, JS::Handle<JSObject*> wrapper,
           // way to do this is wrap them up as functions ourselves.
           desc.setAttributes(attrSpec.flags & ~JSPROP_NATIVE_ACCESSORS);
           // They all have getters, so we can just make it.
-          JS::Rooted<JSObject*> global(cx, JS_GetGlobalForObject(cx, wrapper));
           JS::Rooted<JSFunction*> fun(cx,
                                       JS_NewFunctionById(cx, (JSNative)attrSpec.getter.propertyOp.op,
-                                                         0, 0, global, id));
+                                                         0, 0, wrapper, id));
           if (!fun)
             return false;
           SET_JITINFO(fun, attrSpec.getter.propertyOp.info);
@@ -981,7 +986,7 @@ XrayResolveAttribute(JSContext* cx, JS::Handle<JSObject*> wrapper,
           if (attrSpec.setter.propertyOp.op) {
             // We have a setter! Make it.
             fun = JS_NewFunctionById(cx, (JSNative)attrSpec.setter.propertyOp.op, 1, 0,
-                                     global, id);
+                                     wrapper, id);
             if (!fun)
               return false;
             SET_JITINFO(fun, attrSpec.setter.propertyOp.info);
@@ -1133,7 +1138,6 @@ ResolvePrototypeOrConstructor(JSContext* cx, JS::Handle<JSObject*> wrapper,
       return false;
     }
     desc.object().set(wrapper);
-    desc.setShortId(0);
     desc.setAttributes(attrs);
     desc.setGetter(JS_PropertyStub);
     desc.setSetter(JS_StrictPropertyStub);
@@ -1512,39 +1516,6 @@ AppendNamedPropertyIds(JSContext* cx, JS::Handle<JSObject*> proxy,
   return true;
 }
 
-JSObject*
-GetXrayExpandoChain(JSObject* obj)
-{
-  const js::Class* clasp = js::GetObjectClass(obj);
-  JS::Value v;
-  if (IsNonProxyDOMClass(clasp) || IsDOMIfaceAndProtoClass(clasp)) {
-    v = js::GetReservedSlot(obj, DOM_XRAY_EXPANDO_SLOT);
-  } else if (clasp->isProxy()) {
-    MOZ_ASSERT(js::GetProxyHandler(obj)->family() == ProxyFamily());
-    v = js::GetProxyExtra(obj, JSPROXYSLOT_XRAY_EXPANDO);
-  } else {
-    MOZ_ASSERT(JS_IsNativeFunction(obj, Constructor));
-    v = js::GetFunctionNativeReserved(obj, CONSTRUCTOR_XRAY_EXPANDO_SLOT);
-  }
-  return v.isUndefined() ? nullptr : &v.toObject();
-}
-
-void
-SetXrayExpandoChain(JSObject* obj, JSObject* chain)
-{
-  JS::Value v = chain ? JS::ObjectValue(*chain) : JSVAL_VOID;
-  const js::Class* clasp = js::GetObjectClass(obj);
-  if (IsNonProxyDOMClass(clasp) || IsDOMIfaceAndProtoClass(clasp)) {
-    js::SetReservedSlot(obj, DOM_XRAY_EXPANDO_SLOT, v);
-  } else if (clasp->isProxy()) {
-    MOZ_ASSERT(js::GetProxyHandler(obj)->family() == ProxyFamily());
-    js::SetProxyExtra(obj, JSPROXYSLOT_XRAY_EXPANDO, v);
-  } else {
-    MOZ_ASSERT(JS_IsNativeFunction(obj, Constructor));
-    js::SetFunctionNativeReserved(obj, CONSTRUCTOR_XRAY_EXPANDO_SLOT, v);
-  }
-}
-
 bool
 DictionaryBase::ParseJSON(JSContext* aCx,
                           const nsAString& aJSON,
@@ -1588,7 +1559,6 @@ NativeToString(JSContext* cx, JS::Handle<JSObject*> wrapper,
   JS::Rooted<JSPropertyDescriptor> toStringDesc(cx);
   toStringDesc.object().set(nullptr);
   toStringDesc.setAttributes(0);
-  toStringDesc.setShortId(0);
   toStringDesc.setGetter(nullptr);
   toStringDesc.setSetter(nullptr);
   toStringDesc.value().set(JS::UndefinedValue());
@@ -1608,8 +1578,8 @@ NativeToString(JSContext* cx, JS::Handle<JSObject*> wrapper,
       }
       MOZ_ASSERT(JS_ObjectIsCallable(cx, &toString.toObject()));
       JS::Rooted<JS::Value> toStringResult(cx);
-      if (JS_CallFunctionValue(cx, obj, toString, JS::EmptyValueArray,
-                               toStringResult.address())) {
+      if (JS_CallFunctionValue(cx, obj, toString, JS::HandleValueArray::empty(),
+                               &toStringResult)) {
         str = toStringResult.toString();
       } else {
         str = nullptr;
@@ -1667,7 +1637,10 @@ private:
 nsresult
 ReparentWrapper(JSContext* aCx, JS::Handle<JSObject*> aObjArg)
 {
-  // aObj is assigned to below, so needs to be re-rooted.
+  // Check if we're near the stack limit before we get anywhere near the
+  // transplanting code.
+  JS_CHECK_RECURSION(aCx, return NS_ERROR_FAILURE);
+
   JS::Rooted<JSObject*> aObj(aCx, aObjArg);
   const DOMClass* domClass = GetDOMClass(aObj);
 
@@ -1758,7 +1731,6 @@ ReparentWrapper(JSContext* aCx, JS::Handle<JSObject*> aObjArg)
 
     // Expandos from other compartments are attached to the target JS object.
     // Copy them over, and let the old ones die a natural death.
-    SetXrayExpandoChain(newobj, nullptr);
     if (!xpc::XrayUtils::CloneExpandoChain(aCx, newobj, aObj)) {
       return NS_ERROR_FAILURE;
     }
@@ -1859,11 +1831,12 @@ GlobalObject::GlobalObject(JSContext* aCx, JSObject* aObject)
 nsISupports*
 GlobalObject::GetAsSupports() const
 {
-  if (!NS_IsMainThread()) {
-    return nullptr;
+  if (mGlobalObject) {
+    return mGlobalObject;
   }
 
-  if (mGlobalObject) {
+  if (!NS_IsMainThread()) {
+    mGlobalObject = UnwrapDOMObjectToISupports(mGlobalJSObject);
     return mGlobalObject;
   }
 
@@ -2085,11 +2058,6 @@ bool
 NonVoidByteStringToJsval(JSContext *cx, const nsACString &str,
                          JS::MutableHandle<JS::Value> rval)
 {
-    if (str.IsEmpty()) {
-        rval.set(JS_GetEmptyStringValue(cx));
-        return true;
-    }
-
     // ByteStrings are not UTF-8 encoded.
     JSString* jsStr = JS_NewStringCopyN(cx, str.Data(), str.Length());
 

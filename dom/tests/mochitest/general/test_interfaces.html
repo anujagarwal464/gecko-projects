@@ -74,6 +74,7 @@ var ecmaGlobals =
     "ReferenceError",
     "RegExp",
     "Set",
+    {name: "SharedArrayBuffer", nightly: true},
     {name: "SIMD", nightly: true},
     "StopIteration",
     "String",
@@ -677,7 +678,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "MozVoicemailEvent", b2g: true, pref: "dom.voicemail.enabled"},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "MozWakeLock",
+    {name: "MozWakeLock", b2g: true, pref: "dom.wakelock.enabled"},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "MozWifiConnectionInfoEvent", b2g: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!

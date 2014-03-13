@@ -131,13 +131,22 @@ static bool
 EnumerateNativeProperties(JSContext *cx, HandleObject pobj, unsigned flags, IdSet &ht,
                           AutoIdVector *props)
 {
-    /* Collect any elements from this object. */
+    /* Collect any dense elements from this object. */
     size_t initlen = pobj->getDenseInitializedLength();
     const Value *vp = pobj->getDenseElements();
     for (size_t i = 0; i < initlen; ++i, ++vp) {
         if (!vp->isMagic(JS_ELEMENTS_HOLE)) {
             /* Dense arrays never get so large that i would not fit into an integer id. */
-            if (!Enumerate(cx, pobj, INT_TO_JSID(i), true, flags, ht, props))
+            if (!Enumerate(cx, pobj, INT_TO_JSID(i), /* enumerable = */ true, flags, ht, props))
+                return false;
+        }
+    }
+
+    /* Collect any typed array elements from this object. */
+    if (pobj->is<TypedArrayObject>()) {
+        size_t len = pobj->as<TypedArrayObject>().length();
+        for (size_t i = 0; i < len; i++) {
+            if (!Enumerate(cx, pobj, INT_TO_JSID(i), /* enumerable = */ true, flags, ht, props))
                 return false;
         }
     }
@@ -623,6 +632,7 @@ js::GetIterator(JSContext *cx, HandleObject obj, unsigned flags, MutableHandleVa
                 do {
                     if (!pobj->isNative() ||
                         !pobj->hasEmptyElements() ||
+                        pobj->is<TypedArrayObject>() ||
                         pobj->hasUncacheableProto() ||
                         pobj->getOps()->enumerate ||
                         pobj->getClass()->enumerate != JS_EnumerateStub ||
@@ -731,8 +741,11 @@ bool
 js_ThrowStopIteration(JSContext *cx)
 {
     JS_ASSERT(!JS_IsExceptionPending(cx));
+
+    // StopIteration isn't a constructor, but it's stored in GlobalObject
+    // as one, out of laziness. Hence the GetBuiltinConstructor call here.
     RootedObject ctor(cx);
-    if (js_GetClassObject(cx, JSProto_StopIteration, &ctor) && ctor)
+    if (GetBuiltinConstructor(cx, JSProto_StopIteration, &ctor))
         cx->setPendingException(ObjectValue(*ctor));
     return false;
 }
@@ -924,8 +937,8 @@ js::ValueToIterator(JSContext *cx, unsigned flags, MutableHandleValue vp)
     JS_ASSERT_IF(flags & JSITER_KEYVALUE, flags & JSITER_FOREACH);
 
     /*
-     * Make sure the more/next state machine doesn't get stuck. A value might be
-     * left in iterValue when a trace is left due to an operation time-out after
+     * Make sure the more/next state machine doesn't get stuck. A value might
+     * be left in iterValue when a trace is left due to an interrupt after
      * JSOP_MOREITER but before the value is picked up by FOR*.
      */
     cx->iterValue.setMagic(JS_NO_ITER_VALUE);
@@ -1053,7 +1066,7 @@ SuppressDeletedPropertyHelper(JSContext *cx, HandleObject obj, StringPredicate p
                         if (prop) {
                             unsigned attrs;
                             if (obj2->isNative())
-                                attrs = GetShapeAttributes(prop);
+                                attrs = GetShapeAttributes(obj2, prop);
                             else if (!JSObject::getGenericAttributes(cx, obj2, id, &attrs))
                                 return false;
 
@@ -1278,6 +1291,28 @@ ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavio
     if (!iterableObj)
         return false;
 
+    JS_ASSERT(index == NOT_ARRAY);
+
+    // Check the PIC first for a match.
+    if (iterableObj->is<ArrayObject>()) {
+        ForOfPIC::Chain *stubChain = ForOfPIC::getOrCreate(cx);
+        if (!stubChain)
+            return false;
+
+        bool optimized;
+        if (!stubChain->tryOptimizeArray(cx, iterableObj, &optimized))
+            return false;
+
+        if (optimized) {
+            // Got optimized stub.  Array is optimizable.
+            index = 0;
+            iterator = iterableObj;
+            return true;
+        }
+    }
+
+    JS_ASSERT(index == NOT_ARRAY);
+
     // The iterator is the result of calling obj[@@iterator]().
     InvokeArgs args(cx);
     if (!args.init(0))
@@ -1314,37 +1349,110 @@ ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavio
     return true;
 }
 
+inline bool
+ForOfIterator::nextFromOptimizedArray(MutableHandleValue vp, bool *done)
+{
+    JS_ASSERT(index != NOT_ARRAY);
+
+    if (!CheckForInterrupt(cx_))
+        return false;
+
+    JS_ASSERT(iterator->isNative());
+    JS_ASSERT(iterator->is<ArrayObject>());
+
+    if (index >= iterator->as<ArrayObject>().length()) {
+        vp.setUndefined();
+        *done = true;
+        return true;
+    }
+    *done = false;
+
+    // Try to get array element via direct access.
+    if (index < iterator->getDenseInitializedLength()) {
+        vp.set(iterator->getDenseElement(index));
+        if (!vp.isMagic(JS_ELEMENTS_HOLE)) {
+            ++index;
+            return true;
+        }
+    }
+
+    return JSObject::getElement(cx_, iterator, iterator, index++, vp);
+}
+
 bool
 ForOfIterator::next(MutableHandleValue vp, bool *done)
 {
     JS_ASSERT(iterator);
 
-    JSContext *cx = cx_;
-    RootedValue method(cx);
-    if (!JSObject::getProperty(cx, iterator, iterator, cx->names().next, &method))
+    if (index != NOT_ARRAY) {
+        ForOfPIC::Chain *stubChain = ForOfPIC::getOrCreate(cx_);
+        if (!stubChain)
+            return false;
+
+        if (stubChain->isArrayNextStillSane())
+            return nextFromOptimizedArray(vp, done);
+
+        // ArrayIterator.prototype.next changed, materialize a proper
+        // ArrayIterator instance and fall through to slowpath case.
+        if (!materializeArrayIterator())
+            return false;
+    }
+
+    RootedValue method(cx_);
+    if (!JSObject::getProperty(cx_, iterator, iterator, cx_->names().next, &method))
         return false;
 
-    InvokeArgs args(cx);
+    InvokeArgs args(cx_);
     if (!args.init(1))
         return false;
     args.setCallee(method);
     args.setThis(ObjectValue(*iterator));
     args[0].setUndefined();
-    if (!Invoke(cx, args))
+    if (!Invoke(cx_, args))
         return false;
 
-    RootedObject resultObj(cx, ToObject(cx, args.rval()));
+    RootedObject resultObj(cx_, ToObject(cx_, args.rval()));
     if (!resultObj)
         return false;
-    RootedValue doneVal(cx);
-    if (!JSObject::getProperty(cx, resultObj, resultObj, cx->names().done, &doneVal))
+    RootedValue doneVal(cx_);
+    if (!JSObject::getProperty(cx_, resultObj, resultObj, cx_->names().done, &doneVal))
         return false;
     *done = ToBoolean(doneVal);
     if (*done) {
         vp.setUndefined();
         return true;
     }
-    return JSObject::getProperty(cx, resultObj, resultObj, cx->names().value, vp);
+    return JSObject::getProperty(cx_, resultObj, resultObj, cx_->names().value, vp);
+}
+
+bool
+ForOfIterator::materializeArrayIterator()
+{
+    JS_ASSERT(index != NOT_ARRAY);
+
+    const char *nameString = "ArrayValuesAt";
+
+    RootedAtom name(cx_, Atomize(cx_, nameString, strlen(nameString)));
+    if (!name)
+        return false;
+
+    RootedValue val(cx_);
+    if (!cx_->global()->getSelfHostedFunction(cx_, name, name, 1, &val))
+        return false;
+
+    InvokeArgs args(cx_);
+    if (!args.init(1))
+        return false;
+    args.setCallee(val);
+    args.setThis(ObjectValue(*iterator));
+    args[0].set(Int32Value(index));
+    if (!Invoke(cx_, args))
+        return false;
+
+    index = NOT_ARRAY;
+    // Result of call to ArrayValuesAt must be an object.
+    iterator = &args.rval().toObject();
+    return true;
 }
 
 /*** Generators **********************************************************************************/
@@ -1537,7 +1645,7 @@ const Class StarGeneratorObject::class_ = {
  * if they are non-null.
  */
 JSObject *
-js_NewGenerator(JSContext *cx, const FrameRegs &stackRegs)
+js_NewGenerator(JSContext *cx, const InterpreterRegs &stackRegs)
 {
     JS_ASSERT(stackRegs.stackDepth() == 0);
     StackFrame *stackfp = stackRegs.fp();
@@ -1900,8 +2008,11 @@ GlobalObject::initIteratorClasses(JSContext *cx, Handle<GlobalObject *> global)
             return false;
         if (!DefinePropertiesAndBrand(cx, iteratorProto, nullptr, iterator_methods))
             return false;
-        if (!DefineConstructorAndPrototype(cx, global, JSProto_Iterator, ctor, iteratorProto))
+        if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_Iterator,
+                                                  ctor, iteratorProto))
+        {
             return false;
+        }
     }
 
     RootedObject proto(cx);
@@ -1953,7 +2064,6 @@ GlobalObject::initIteratorClasses(JSContext *cx, Handle<GlobalObject *> global)
         if (!LinkConstructorAndPrototype(cx, genFunction, genFunctionProto))
             return false;
 
-        AutoLockForCompilation lock(cx);
         global->setSlot(STAR_GENERATOR_OBJECT_PROTO, ObjectValue(*genObjectProto));
         global->setConstructor(JSProto_GeneratorFunction, ObjectValue(*genFunction));
         global->setPrototype(JSProto_GeneratorFunction, ObjectValue(*genFunctionProto));
@@ -1964,8 +2074,8 @@ GlobalObject::initIteratorClasses(JSContext *cx, Handle<GlobalObject *> global)
         if (!proto || !JSObject::freeze(cx, proto))
             return false;
 
-        /* This should use a non-JSProtoKey'd slot, but this is easier for now. */
-        if (!DefineConstructorAndPrototype(cx, global, JSProto_StopIteration, proto, proto))
+        // This should use a non-JSProtoKey'd slot, but this is easier for now.
+        if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_StopIteration, proto, proto))
             return false;
 
         global->setConstructor(JSProto_StopIteration, ObjectValue(*proto));

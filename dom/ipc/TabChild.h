@@ -24,7 +24,6 @@
 #include "nsFrameMessageManager.h"
 #include "nsIWebProgressListener.h"
 #include "nsDOMEventTargetHelper.h"
-#include "nsIDialogCreator.h"
 #include "nsIPresShell.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsWeakReference.h"
@@ -46,7 +45,6 @@ class RenderFrameChild;
 namespace dom {
 
 class TabChild;
-class PContentDialogChild;
 class ClonedMessageData;
 
 class TabChildGlobal : public nsDOMEventTargetHelper,
@@ -154,7 +152,6 @@ class TabChild : public PBrowserChild,
                  public nsIDOMEventListener,
                  public nsIWebProgressListener,
                  public nsSupportsWeakReference,
-                 public nsIDialogCreator,
                  public nsITabChild,
                  public nsIObserver,
                  public ipc::MessageManagerCallback,
@@ -190,7 +187,6 @@ public:
     NS_DECL_NSIWINDOWPROVIDER
     NS_DECL_NSIDOMEVENTLISTENER
     NS_DECL_NSIWEBPROGRESSLISTENER
-    NS_DECL_NSIDIALOGCREATOR
     NS_DECL_NSITABCHILD
     NS_DECL_NSIOBSERVER
     NS_DECL_NSITOOLTIPLISTENER
@@ -222,13 +218,13 @@ public:
     virtual bool RecvUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics) MOZ_OVERRIDE;
     virtual bool RecvAcknowledgeScrollUpdate(const ViewID& aScrollId,
                                              const uint32_t& aScrollGeneration) MOZ_OVERRIDE;
-    virtual bool RecvHandleDoubleTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleDoubleTap(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleSingleTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleSingleTap(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleLongTap(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleLongTap(const CSSPoint& aPoint,
                                    const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
-    virtual bool RecvHandleLongTapUp(const CSSIntPoint& aPoint,
+    virtual bool RecvHandleLongTapUp(const CSSPoint& aPoint,
                                      const mozilla::layers::ScrollableLayerGuid& aGuid) MOZ_OVERRIDE;
     virtual bool RecvNotifyTransformBegin(const ViewID& aViewId) MOZ_OVERRIDE;
     virtual bool RecvNotifyTransformEnd(const ViewID& aViewId) MOZ_OVERRIDE;
@@ -278,19 +274,9 @@ public:
                                                   const bool& flushLayout,
                                                   const nsIntSize& renderSize) MOZ_OVERRIDE;
 
-    virtual PContentDialogChild* AllocPContentDialogChild(const uint32_t&,
-                                                          const nsCString&,
-                                                          const nsCString&,
-                                                          const InfallibleTArray<int>&,
-                                                          const InfallibleTArray<nsString>&)
-                                                          MOZ_OVERRIDE;
-    virtual bool DeallocPContentDialogChild(PContentDialogChild* aDialog) MOZ_OVERRIDE;
-    static void ParamsToArrays(nsIDialogParamBlock* aParams,
-                               InfallibleTArray<int>& aIntParams,
-                               InfallibleTArray<nsString>& aStringParams);
-    static void ArraysToParams(const InfallibleTArray<int>& aIntParams,
-                               const InfallibleTArray<nsString>& aStringParams,
-                               nsIDialogParamBlock* aParams);
+    virtual PColorPickerChild*
+    AllocPColorPickerChild(const nsString& title, const nsString& initialColor) MOZ_OVERRIDE;
+    virtual bool DeallocPColorPickerChild(PColorPickerChild* actor) MOZ_OVERRIDE;
 
 #ifdef DEBUG
     virtual PContentPermissionRequestChild*
@@ -304,6 +290,11 @@ public:
                                         const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
     virtual bool
     DeallocPContentPermissionRequestChild(PContentPermissionRequestChild* actor) MOZ_OVERRIDE;
+
+    virtual PFilePickerChild*
+    AllocPFilePickerChild(const nsString& aTitle, const int16_t& aMode) MOZ_OVERRIDE;
+    virtual bool
+    DeallocPFilePickerChild(PFilePickerChild* actor) MOZ_OVERRIDE;
 
     virtual POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
             const URIParams& manifestURI,
@@ -384,6 +375,7 @@ protected:
     virtual bool DeallocPRenderFrameChild(PRenderFrameChild* aFrame) MOZ_OVERRIDE;
     virtual bool RecvDestroy() MOZ_OVERRIDE;
     virtual bool RecvSetUpdateHitRegion(const bool& aEnabled) MOZ_OVERRIDE;
+    virtual bool RecvSetIsDocShellActive(const bool& aIsActive) MOZ_OVERRIDE;
 
     nsEventStatus DispatchWidgetEvent(WidgetGUIEvent& event);
 
@@ -406,6 +398,9 @@ private:
 
     nsresult Init();
 
+    void InitializeRootMetrics();
+    bool HasValidInnerSize();
+
     // Notify others that our TabContext has been updated.  (At the moment, this
     // sets the appropriate app-id and is-browser flags on our docshell.)
     //
@@ -422,7 +417,7 @@ private:
     bool InitRenderingState();
     void DestroyWindow();
     void SetProcessNameToAppName();
-    bool ProcessUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics);
+    FrameMetrics ProcessUpdateFrame(const FrameMetrics& aFrameMetrics);
 
     // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
     void DoFakeShow();
@@ -511,6 +506,9 @@ private:
     bool mUpdateHitRegion;
     bool mContextMenuHandled;
     bool mWaitingTouchListeners;
+    void FireSingleTapEvent(LayoutDevicePoint aPoint);
+
+    bool mIgnoreKeyPressEvent;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);
 };

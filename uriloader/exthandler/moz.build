@@ -21,6 +21,7 @@ XPIDL_MODULE = 'exthandler'
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     osdir = 'win'
+    LOCAL_INCLUDES += ['win']
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     osdir = 'win'
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
@@ -55,7 +56,6 @@ EXPORTS.mozilla.dom += [
 ]
 
 UNIFIED_SOURCES += [
-    'ExternalHelperAppChild.cpp',
     'ExternalHelperAppParent.cpp',
     'nsLocalHandlerApp.cpp',
     'nsMIMEInfoImpl.cpp',
@@ -63,6 +63,7 @@ UNIFIED_SOURCES += [
 
 # These files can't be built in unified mode because they force NSPR logging.
 SOURCES += [
+    'ExternalHelperAppChild.cpp',
     'nsExternalHelperAppService.cpp',
     'nsExternalProtocolHandler.cpp',
 ]
@@ -136,3 +137,13 @@ FAIL_ON_WARNINGS = True
 include('/ipc/chromium/chromium-config.mozbuild')
 
 FINAL_LIBRARY = 'xul'
+
+LOCAL_INCLUDES += [
+    '/content/base/src',
+    '/dom/base',
+    '/dom/events',
+    '/dom/ipc',
+    '/netwerk/base/src',
+    '/netwerk/protocol/http',
+]
+

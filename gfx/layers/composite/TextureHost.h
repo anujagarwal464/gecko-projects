@@ -20,6 +20,7 @@
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsDebug.h"                    // for NS_RUNTIMEABORT
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsRegion.h"                   // for nsIntRegion
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "nscore.h"                     // for nsACString
@@ -43,6 +44,7 @@ class CompositableHost;
 class CompositableBackendSpecificData;
 class SurfaceDescriptor;
 class ISurfaceAllocator;
+class TextureHostOGL;
 class TextureSourceOGL;
 class TextureSourceD3D9;
 class TextureSourceD3D11;
@@ -81,6 +83,7 @@ public:
 class TextureSource : public RefCounted<TextureSource>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(TextureSource)
   TextureSource();
   virtual ~TextureSource();
 
@@ -272,7 +275,6 @@ class TextureHost
   void Finalize();
 
   friend class AtomicRefCountedWithFinalize<TextureHost>;
-
 public:
   TextureHost(TextureFlags aFlags);
 
@@ -395,6 +397,14 @@ public:
   static TextureHost* AsTextureHost(PTextureParent* actor);
 
   /**
+   * Return a pointer to the IPDLActor.
+   *
+   * This is to be used with IPDL messages only. Do not store the returned
+   * pointer.
+   */
+  PTextureParent* GetIPDLActor();
+
+  /**
    * Specific to B2G's Composer2D
    * XXX - more doc here
    */
@@ -417,9 +427,24 @@ public:
   virtual const char *Name() { return "TextureHost"; }
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 
+  /**
+   * Indicates whether the TextureHost implementation is backed by an
+   * in-memory buffer. The consequence of this is that locking the
+   * TextureHost does not contend with locking the texture on the client side.
+   */
+  virtual bool HasInternalBuffer() const { return false; }
+
+  /**
+   * Cast to a TextureHost for each backend.
+   */
+  virtual TextureHostOGL* AsHostOGL() { return nullptr; }
+
 protected:
+  PTextureParent* mActor;
   TextureFlags mFlags;
   RefPtr<CompositableBackendSpecificData> mCompositableBackendData;
+
+  friend class TextureParent;
 };
 
 /**
@@ -445,6 +470,8 @@ public:
 
   virtual uint8_t* GetBuffer() = 0;
 
+  virtual size_t GetBufferSize() = 0;
+
   virtual void Updated(const nsIntRegion* aRegion = nullptr) MOZ_OVERRIDE;
 
   virtual bool Lock() MOZ_OVERRIDE;
@@ -469,6 +496,8 @@ public:
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
+
+  virtual bool HasInternalBuffer() const MOZ_OVERRIDE { return true; }
 
 protected:
   bool Upload(nsIntRegion *aRegion = nullptr);
@@ -506,6 +535,8 @@ public:
 
   virtual uint8_t* GetBuffer() MOZ_OVERRIDE;
 
+  virtual size_t GetBufferSize() MOZ_OVERRIDE;
+
   virtual const char *Name() MOZ_OVERRIDE { return "ShmemTextureHost"; }
 
   virtual void OnShutdown() MOZ_OVERRIDE;
@@ -535,6 +566,8 @@ public:
   virtual void ForgetSharedData() MOZ_OVERRIDE;
 
   virtual uint8_t* GetBuffer() MOZ_OVERRIDE;
+
+  virtual size_t GetBufferSize() MOZ_OVERRIDE;
 
   virtual const char *Name() MOZ_OVERRIDE { return "MemoryTextureHost"; }
 

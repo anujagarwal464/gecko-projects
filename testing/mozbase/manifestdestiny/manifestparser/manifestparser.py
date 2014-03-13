@@ -85,7 +85,7 @@ class neq_op_token(object):
 class not_op_token(object):
     "!"
     def nud(self, parser):
-        return not parser.expression()
+        return not parser.expression(100)
 
 class and_op_token(object):
     "&&"
@@ -318,7 +318,7 @@ def read_ini(fp, variables=None, default='DEFAULT',
         fp = file(fp)
 
     # read the lines
-    for line in fp.readlines():
+    for (linenum, line) in enumerate(fp.readlines(), start=1):
 
         stripped = line.strip()
 
@@ -379,13 +379,21 @@ def read_ini(fp, variables=None, default='DEFAULT',
                 value = '%s%s%s' % (value, os.linesep, stripped)
                 current_section[key] = value
             else:
-                # something bad happen!
-                raise Exception("Not sure what you're trying to do")
+                # something bad happened!
+                if hasattr(fp, 'name'):
+                    filename = fp.name
+                else:
+                    filename = 'unknown'
+                raise Exception("Error parsing manifest file '%s', line %s" %
+                                (filename, linenum))
 
     # interpret the variables
     def interpret_variables(global_dict, local_dict):
         variables = global_dict.copy()
+        if 'skip-if' in local_dict and 'skip-if' in variables:
+            local_dict['skip-if'] = "(%s) || (%s)" % (variables['skip-if'].split('#')[0], local_dict['skip-if'].split('#')[0])
         variables.update(local_dict)
+            
         return variables
 
     sections = [(i, interpret_variables(variables, j)) for i, j in sections]

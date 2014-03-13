@@ -34,7 +34,7 @@ NS_QUERYFRAME_HEAD(nsFirstLetterFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsFirstLetterFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("Letter"), aResult);
@@ -76,7 +76,7 @@ nsFirstLetterFrame::Init(nsIContent*      aContent,
   nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
 
-NS_IMETHODIMP
+nsresult
 nsFirstLetterFrame::SetInitialChildList(ChildListID  aListID,
                                         nsFrameList& aChildList)
 {
@@ -91,7 +91,7 @@ nsFirstLetterFrame::SetInitialChildList(ChildListID  aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsFirstLetterFrame::GetChildFrameContainingOffset(int32_t inContentOffset,
                                                   bool inHint,
                                                   int32_t* outFrameContentOffset,
@@ -153,7 +153,7 @@ nsFirstLetterFrame::ComputeSize(nsRenderingContext *aRenderingContext,
       aCBSize, aAvailableWidth, aMargin, aBorder, aPadding, aFlags);
 }
 
-NS_IMETHODIMP
+nsresult
 nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
                            nsHTMLReflowMetrics&     aMetrics,
                            const nsHTMLReflowState& aReflowState,
@@ -188,21 +188,10 @@ nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
     nsHTMLReflowState rs(aPresContext, aReflowState, kid, availSize);
     nsLineLayout ll(aPresContext, nullptr, &aReflowState, nullptr);
 
-    // For unicode-bidi: plaintext, we need to get the direction of the line
-    // from the resolved paragraph level of the child, not the block frame,
-    // because the block frame could be split by hard line breaks into
-    // multiple paragraphs with different base direction
-    uint8_t direction;
-    nsIFrame* containerFrame = ll.LineContainerFrame();
-    if (containerFrame->StyleTextReset()->mUnicodeBidi &
-        NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
-      FramePropertyTable *propTable = aPresContext->PropertyTable();
-      direction = NS_PTR_TO_INT32(propTable->Get(kid, BaseLevelProperty())) & 1;
-    } else {
-      direction = containerFrame->StyleVisibility()->mDirection;
-    }
     ll.BeginLineReflow(bp.left, bp.top, availSize.width, NS_UNCONSTRAINEDSIZE,
-                       false, true, direction);
+                       false, true,
+                       ll.LineContainerFrame()->GetWritingMode(kid),
+                       aReflowState.AvailableWidth());
     rs.mLineLayout = &ll;
     ll.SetInFirstLetter(true);
     ll.SetFirstLetterStyleOK(true);

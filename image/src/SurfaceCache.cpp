@@ -15,6 +15,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/StaticPtr.h"
+#include "nsIMemoryReporter.h"
 #include "gfx2DGlue.h"
 #include "gfxASurface.h"
 #include "gfxPattern.h"  // Workaround for flaw in bug 921753 part 2.
@@ -112,6 +113,7 @@ private:
 class CachedSurface : public RefCounted<CachedSurface>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(CachedSurface)
   CachedSurface(DrawTarget*       aTarget,
                 const IntSize     aTargetSize,
                 const Cost        aCost,
@@ -157,6 +159,7 @@ private:
 class ImageSurfaceCache : public RefCounted<ImageSurfaceCache>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(ImageSurfaceCache)
   typedef nsRefPtrHashtable<nsGenericHashKey<SurfaceKey>, CachedSurface> SurfaceTable;
 
   bool IsEmpty() const { return mSurfaces.Count() == 0; }

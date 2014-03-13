@@ -34,6 +34,16 @@ nsTableRowGroupFrame::~nsTableRowGroupFrame()
 {
 }
 
+void
+nsTableRowGroupFrame::DestroyFrom(nsIFrame* aDestructRoot)
+{
+  if (GetStateBits() & NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN) {
+    nsTableFrame::UnregisterPositionedTablePart(this, aDestructRoot);
+  }
+
+  nsContainerFrame::DestroyFrom(aDestructRoot);
+}
+
 NS_QUERYFRAME_HEAD(nsTableRowGroupFrame)
   NS_QUERYFRAME_ENTRY(nsTableRowGroupFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
@@ -141,7 +151,7 @@ public:
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion *aInvalidRegion) MOZ_OVERRIDE;
   virtual void Paint(nsDisplayListBuilder* aBuilder,
-                     nsRenderingContext* aCtx);
+                     nsRenderingContext* aCtx) MOZ_OVERRIDE;
 
   NS_DISPLAY_DECL_NAME("TableRowGroupBackground", TYPE_TABLE_ROW_GROUP_BACKGROUND)
 };
@@ -362,7 +372,7 @@ nsTableRowGroupFrame::ReflowChildren(nsPresContext*         aPresContext,
 
       // XXXldb We used to only pass aDesiredSize.mFlags through for the
       // incremental reflow codepath.
-      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState.GetWritingMode(),
+      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState,
                                       aDesiredSize.mFlags);
       desiredSize.Width() = desiredSize.Height() = 0;
   
@@ -1076,7 +1086,7 @@ nsTableRowGroupFrame::SplitRowGroup(nsPresContext*           aPresContext,
                                          
         InitChildReflowState(*aPresContext, borderCollapse, rowReflowState);
         rowReflowState.mFlags.mIsTopOfPage = isTopOfPage; // set top of page
-        nsHTMLReflowMetrics rowMetrics(aReflowState.GetWritingMode());
+        nsHTMLReflowMetrics rowMetrics(aReflowState);
 
         // Get the old size before we reflow.
         nsRect oldRowRect = rowFrame->GetRect();
@@ -1270,7 +1280,7 @@ nsTableRowGroupFrame::SplitRowGroup(nsPresContext*           aPresContext,
   * This method stacks rows vertically according to HTML 4.0 rules.
   * Rows are responsible for layout of their children.
   */
-NS_METHOD
+nsresult
 nsTableRowGroupFrame::Reflow(nsPresContext*           aPresContext,
                              nsHTMLReflowMetrics&     aDesiredSize,
                              const nsHTMLReflowState& aReflowState,
@@ -1373,7 +1383,7 @@ nsTableRowGroupFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
   }
 }
 
-NS_IMETHODIMP
+nsresult
 nsTableRowGroupFrame::AppendFrames(ChildListID     aListID,
                                    nsFrameList&    aFrameList)
 {
@@ -1411,7 +1421,7 @@ nsTableRowGroupFrame::AppendFrames(ChildListID     aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsTableRowGroupFrame::InsertFrames(ChildListID     aListID,
                                    nsIFrame*       aPrevFrame,
                                    nsFrameList&    aFrameList)
@@ -1461,7 +1471,7 @@ nsTableRowGroupFrame::InsertFrames(ChildListID     aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsTableRowGroupFrame::RemoveFrame(ChildListID     aListID,
                                   nsIFrame*       aOldFrame)
 {
@@ -1585,7 +1595,7 @@ NS_NewTableRowGroupFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMPL_FRAMEARENA_HELPERS(nsTableRowGroupFrame)
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsTableRowGroupFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("TableRowGroup"), aResult);

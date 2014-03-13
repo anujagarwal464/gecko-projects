@@ -73,8 +73,14 @@ _MOZBUILD_EXTERNAL_VARIABLES := \
 
 _DEPRECATED_VARIABLES := \
   ANDROID_RESFILES \
-  MOCHITEST_FILES_PARTS \
+  MOCHITEST_A11Y_FILES \
+  MOCHITEST_BROWSER_FILES \
   MOCHITEST_BROWSER_FILES_PARTS \
+  MOCHITEST_CHROME_FILES \
+  MOCHITEST_FILES \
+  MOCHITEST_FILES_PARTS \
+  MOCHITEST_METRO_FILES \
+  MOCHITEST_ROBOCOP_FILES \
   SHORT_LIBNAME \
   $(NULL)
 
@@ -334,9 +340,9 @@ _ENABLE_PIC=1
 # Determine if module being compiled is destined
 # to be merged into libxul
 
-ifeq ($(FINAL_LIBRARY),xul)
+ifneq (,$(filter xul,$(FINAL_LIBRARY) $(LIBRARY_NAME)))
   ifdef LIBXUL_LIBRARY
-    $(error FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
+    $(error LIBRARY_NAME or FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
   endif
   LIBXUL_LIBRARY := 1
 endif
@@ -345,7 +351,9 @@ ifdef LIBXUL_LIBRARY
 ifdef IS_COMPONENT
 $(error IS_COMPONENT is set, but is not compatible with LIBXUL_LIBRARY)
 endif
+ifneq (xul,$(LIBRARY_NAME))
 FORCE_STATIC_LIB=1
+endif
 endif
 
 # If we are building this component into an extension/xulapp, it cannot be
@@ -420,8 +428,7 @@ ifdef _MSC_VER
 OS_LDFLAGS += $(DELAYLOAD_LDFLAGS)
 endif # _MSC_VER
 
-# Does the makefile specifies the internal XPCOM API linkage?
-ifneq (,$(MOZILLA_INTERNAL_API)$(LIBXUL_LIBRARY))
+ifneq (,$(LIBXUL_LIBRARY))
 DEFINES += -DMOZILLA_INTERNAL_API
 endif
 
@@ -482,7 +489,7 @@ include $(topsrcdir)/config/static-checking-config.mk
 
 CFLAGS		= $(OS_CPPFLAGS) $(OS_CFLAGS)
 CXXFLAGS	= $(OS_CPPFLAGS) $(OS_CXXFLAGS)
-LDFLAGS		= $(OS_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
+LDFLAGS		= $(OS_LDFLAGS) $(MOZBUILD_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
 
 # Allow each module to override the *default* optimization settings
 # by setting MODULE_OPTIMIZE_FLAGS if the developer has not given
@@ -588,10 +595,10 @@ OS_COMPILE_CMMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
 endif
 endif
 
-COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(MOZBUILD_CFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CXXFLAGS = $(if $(DISABLE_STL_WRAPPING),,$(STL_FLAGS)) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(MOZBUILD_CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(MOZBUILD_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(MOZBUILD_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
 ASFLAGS += $(EXTRA_ASSEMBLER_FLAGS)
 
 ifndef CROSS_COMPILE
@@ -842,7 +849,7 @@ OBJ_SUFFIX := $(_OBJ_SUFFIX)
 
 # PGO builds with GCC build objects with instrumentation in a first pass,
 # then objects optimized, without instrumentation, in a second pass. If
-# we overwrite the ojects from the first pass with those from the second,
+# we overwrite the objects from the first pass with those from the second,
 # we end up not getting instrumentation data for better optimization on
 # incremental builds. As a consequence, we use a different object suffix
 # for the first pass.
@@ -899,7 +906,7 @@ DEFINES += -DUNICODE -D_UNICODE
 LOCAL_INCLUDES += -I'$(MOZ_DIRECTX_SDK_PATH)/include'
 endif
 
-STL_FLAGS=
+DISABLE_STL_WRAPPING := 1
 # Skip most Mozilla-specific include locations.
 INCLUDES = -I. $(LOCAL_INCLUDES) -I$(DEPTH)/dist/include
 endif

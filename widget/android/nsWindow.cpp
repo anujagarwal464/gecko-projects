@@ -176,6 +176,7 @@ nsWindow::nsWindow() :
     mIMEMaskSelectionUpdate(false),
     mIMEMaskTextUpdate(false),
     mIMEMaskEventsCount(1), // Mask IME events since there's no focus yet
+    mIMERanges(new TextRangeArray()),
     mIMEUpdatingContext(false),
     mIMESelectionChanged(false)
 {
@@ -1249,8 +1250,10 @@ void
 nsWindow::DispatchGestureEvent(uint32_t msg, uint32_t direction, double delta,
                                const nsIntPoint &refPoint, uint64_t time)
 {
-    WidgetSimpleGestureEvent event(true, msg, this, direction, delta);
+    WidgetSimpleGestureEvent event(true, msg, this);
 
+    event.direction = direction;
+    event.delta = delta;
     event.modifiers = 0;
     event.time = time;
     event.refPoint = LayoutDeviceIntPoint::FromUntyped(refPoint);
@@ -1706,12 +1709,9 @@ nsWindow::OnKeyEvent(AndroidGeckoEvent *ae)
         msg = NS_KEY_UP;
         break;
     case AKEY_EVENT_ACTION_MULTIPLE:
-        {
-            WidgetTextEvent event(true, NS_TEXT_TEXT, this);
-            event.theText.Assign(ae->Characters());
-            DispatchEvent(&event);
-        }
-        return;
+        // Keys with multiple action are handled in Java,
+        // and we should never see one here
+        MOZ_CRASH("Cannot handle key with multiple action");
     default:
         ALOG("Unknown key action event!");
         return;
@@ -1834,7 +1834,10 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             // Use 'INT32_MAX / 2' here because subsequent text changes might
             // combine with this text change, and overflow might occur if
             // we just use INT32_MAX
-            NotifyIMEOfTextChange(0, INT32_MAX / 2, INT32_MAX / 2);
+            IMENotification notification(NOTIFY_IME_OF_TEXT_CHANGE);
+            notification.mTextChangeData.mOldEndOffset =
+                notification.mTextChangeData.mNewEndOffset = INT32_MAX / 2;
+            NotifyIMEOfTextChange(notification);
             FlushIMEChanges();
         }
         GeckoAppShell::NotifyIME(AndroidBridge::NOTIFY_IME_REPLY_EVENT);
@@ -1906,6 +1909,12 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                 DispatchEvent(&event);
             }
             {
+                WidgetCompositionEvent event(true, NS_COMPOSITION_UPDATE, this);
+                InitEvent(event, nullptr);
+                event.data = ae->Characters();
+                DispatchEvent(&event);
+            }
+            {
                 WidgetTextEvent event(true, NS_TEXT_TEXT, this);
                 InitEvent(event, nullptr);
                 event.theText = ae->Characters();
@@ -1955,6 +1964,13 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             selEvent.mExpandToClusterBoundary = false;
 
             DispatchEvent(&selEvent);
+
+            // Notify SelectionHandler of final caret position
+            // Required after IME hide via 'Back' button
+            AndroidGeckoEvent* broadcastEvent = AndroidGeckoEvent::MakeBroadcastEvent(
+                NS_LITERAL_CSTRING("TextSelection:UpdateCaretPos"),
+                NS_LITERAL_CSTRING(""));
+            nsAppShell::gAppShell->PostEvent(broadcastEvent);
         }
         break;
     case AndroidGeckoEvent::IME_ADD_COMPOSITION_RANGE:
@@ -1972,7 +1988,7 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                     ConvertAndroidColor(uint32_t(ae->RangeBackColor()));
             range.mRangeStyle.mUnderlineColor =
                     ConvertAndroidColor(uint32_t(ae->RangeLineColor()));
-            mIMERanges.AppendElement(range);
+            mIMERanges->AppendElement(range);
         }
         break;
     case AndroidGeckoEvent::IME_UPDATE_COMPOSITION:
@@ -1995,8 +2011,8 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             WidgetTextEvent event(true, NS_TEXT_TEXT, this);
             InitEvent(event, nullptr);
 
-            event.rangeArray = mIMERanges.Elements();
-            event.rangeCount = mIMERanges.Length();
+            event.mRanges = new TextRangeArray();
+            mIMERanges.swap(event.mRanges);
 
             {
                 WidgetSelectionEvent event(true, NS_SELECTION_SET, this);
@@ -2020,28 +2036,30 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                 InitEvent(event, nullptr);
                 DispatchEvent(&event);
             }
-
-            if (mIMEComposing &&
-                event.theText != mIMEComposingText) {
+            {
                 WidgetCompositionEvent compositionUpdate(true,
                                                          NS_COMPOSITION_UPDATE,
                                                          this);
                 InitEvent(compositionUpdate, nullptr);
                 compositionUpdate.data = event.theText;
                 DispatchEvent(&compositionUpdate);
-                if (Destroyed())
-                    return;
             }
 
 #ifdef DEBUG_ANDROID_IME
             const NS_ConvertUTF16toUTF8 theText8(event.theText);
             const char* text = theText8.get();
             ALOGIME("IME: IME_SET_TEXT: text=\"%s\", length=%u, range=%u",
-                    text, event.theText.Length(), mIMERanges.Length());
+                    text, event.theText.Length(), event.mRanges->Length());
 #endif // DEBUG_ANDROID_IME
 
             DispatchEvent(&event);
-            mIMERanges.Clear();
+
+            // Notify SelectionHandler of final caret position
+            // Required in cases of keyboards providing autoCorrections
+            AndroidGeckoEvent* broadcastEvent = AndroidGeckoEvent::MakeBroadcastEvent(
+                NS_LITERAL_CSTRING("TextSelection:UpdateCaretPos"),
+                NS_LITERAL_CSTRING(""));
+            nsAppShell::gAppShell->PostEvent(broadcastEvent);
         }
         break;
     case AndroidGeckoEvent::IME_REMOVE_COMPOSITION:
@@ -2056,7 +2074,7 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             AutoIMEMask selMask(mIMEMaskSelectionUpdate);
             AutoIMEMask textMask(mIMEMaskTextUpdate);
             RemoveIMEComposition();
-            mIMERanges.Clear();
+            mIMERanges->Clear();
         }
         break;
     }
@@ -2092,9 +2110,9 @@ nsWindow::UserActivity()
 }
 
 NS_IMETHODIMP
-nsWindow::NotifyIME(NotificationToIME aNotification)
+nsWindow::NotifyIME(const IMENotification& aIMENotification)
 {
-    switch (aNotification) {
+    switch (aIMENotification.mMessage) {
         case REQUEST_TO_COMMIT_COMPOSITION:
             //ALOGIME("IME: REQUEST_TO_COMMIT_COMPOSITION: s=%d", aState);
             RemoveIMEComposition();
@@ -2106,6 +2124,11 @@ nsWindow::NotifyIME(NotificationToIME aNotification)
             // Cancel composition on Gecko side
             if (mIMEComposing) {
                 nsRefPtr<nsWindow> kungFuDeathGrip(this);
+
+                WidgetCompositionEvent updateEvent(true, NS_COMPOSITION_UPDATE,
+                                                   this);
+                InitEvent(updateEvent, nullptr);
+                DispatchEvent(&updateEvent);
 
                 WidgetTextEvent textEvent(true, NS_TEXT_TEXT, this);
                 InitEvent(textEvent, nullptr);
@@ -2145,6 +2168,8 @@ nsWindow::NotifyIME(NotificationToIME aNotification)
             PostFlushIMEChanges();
             mIMESelectionChanged = true;
             return NS_OK;
+        case NOTIFY_IME_OF_TEXT_CHANGE:
+            return NotifyIMEOfTextChange(aIMENotification);
         default:
             return NS_ERROR_NOT_IMPLEMENTED;
     }
@@ -2271,31 +2296,36 @@ nsWindow::FlushIMEChanges()
     }
 }
 
-NS_IMETHODIMP
-nsWindow::NotifyIMEOfTextChange(uint32_t aStart,
-                                uint32_t aOldEnd,
-                                uint32_t aNewEnd)
+nsresult
+nsWindow::NotifyIMEOfTextChange(const IMENotification& aIMENotification)
 {
+    MOZ_ASSERT(aIMENotification.mMessage == NOTIFY_IME_OF_TEXT_CHANGE,
+               "NotifyIMEOfTextChange() is called with invaild notification");
+
     if (mIMEMaskTextUpdate)
         return NS_OK;
 
     ALOGIME("IME: NotifyIMEOfTextChange: s=%d, oe=%d, ne=%d",
-            aStart, aOldEnd, aNewEnd);
+            aIMENotification.mTextChangeData.mStartOffset,
+            aIMENotification.mTextChangeData.mOldEndOffset,
+            aIMENotification.mTextChangeData.mNewEndOffset);
 
     /* Make sure Java's selection is up-to-date */
     mIMESelectionChanged = false;
     NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE);
     PostFlushIMEChanges();
 
-    mIMETextChanges.AppendElement(IMEChange(aStart, aOldEnd, aNewEnd));
+    mIMETextChanges.AppendElement(IMEChange(aIMENotification));
     // Now that we added a new range we need to go back and
     // update all the ranges before that.
     // Ranges that have offsets which follow this new range
     // need to be updated to reflect new offsets
-    int32_t delta = (int32_t)(aNewEnd - aOldEnd);
+    int32_t delta = aIMENotification.mTextChangeData.AdditionalLength();
     for (int32_t i = mIMETextChanges.Length() - 2; i >= 0; i--) {
         IMEChange &previousChange = mIMETextChanges[i];
-        if (previousChange.mStart > (int32_t)aOldEnd) {
+        if (previousChange.mStart >
+                static_cast<int32_t>(
+                    aIMENotification.mTextChangeData.mOldEndOffset)) {
             previousChange.mStart += delta;
             previousChange.mOldEnd += delta;
             previousChange.mNewEnd += delta;
@@ -2349,9 +2379,9 @@ nsWindow::NotifyIMEOfTextChange(uint32_t aStart,
 nsIMEUpdatePreference
 nsWindow::GetIMEUpdatePreference()
 {
-    int8_t notifications = (nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE |
-                            nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE);
-    return nsIMEUpdatePreference(notifications);
+    return nsIMEUpdatePreference(
+        nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE |
+        nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE);
 }
 
 void

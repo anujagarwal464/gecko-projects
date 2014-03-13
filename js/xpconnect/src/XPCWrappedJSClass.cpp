@@ -53,14 +53,7 @@ bool AutoScriptEvaluate::StartEvaluating(HandleObject scope, JSErrorReporter err
     // http://bugzilla.mozilla.org/show_bug.cgi?id=88130 but presumably could
     // show up in any situation where a script calls into a wrapped js component
     // on the same context, while the context has a nonzero exception state.
-    // Because JS_SaveExceptionState/JS_RestoreExceptionState use malloc
-    // and addroot, we avoid them if possible by returning null (as opposed to
-    // a JSExceptionState with no information) when there is no pending
-    // exception.
-    if (JS_IsExceptionPending(mJSContext)) {
-        mState = JS_SaveExceptionState(mJSContext);
-        JS_ClearPendingException(mJSContext);
-    }
+    mState.construct(mJSContext);
 
     return true;
 }
@@ -69,10 +62,7 @@ AutoScriptEvaluate::~AutoScriptEvaluate()
 {
     if (!mJSContext || !mEvaluated)
         return;
-    if (mState)
-        JS_RestoreExceptionState(mJSContext, mState);
-    else
-        JS_ClearPendingException(mJSContext);
+    mState.ref().restore();
 
     JS_EndRequest(mJSContext);
 
@@ -99,9 +89,8 @@ bool xpc_IsReportableErrorCode(nsresult code)
 }
 
 // static
-nsresult
-nsXPCWrappedJSClass::GetNewOrUsed(JSContext* cx, REFNSIID aIID,
-                                  nsXPCWrappedJSClass** resultClasp)
+already_AddRefed<nsXPCWrappedJSClass>
+nsXPCWrappedJSClass::GetNewOrUsed(JSContext* cx, REFNSIID aIID)
 {
     XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
     IID2WrappedJSClassMap* map = rt->GetWrappedJSClassMap();
@@ -122,8 +111,7 @@ nsXPCWrappedJSClass::GetNewOrUsed(JSContext* cx, REFNSIID aIID,
             }
         }
     }
-    clasp.forget(resultClasp);
-    return NS_OK;
+    return clasp.forget();
 }
 
 nsXPCWrappedJSClass::nsXPCWrappedJSClass(JSContext* cx, REFNSIID aIID,
@@ -234,7 +222,7 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(JSContext* cx,
             AutoSaveContextOptions asco(cx);
             ContextOptionsRef(cx).setDontReportUncaught(true);
             RootedValue arg(cx, JS::ObjectValue(*id));
-            success = JS_CallFunctionValue(cx, jsobj, fun, arg, retval.address());
+            success = JS_CallFunctionValue(cx, jsobj, fun, arg, &retval);
         }
 
         if (!success && JS_IsExceptionPending(cx)) {
@@ -847,10 +835,8 @@ nsXPCWrappedJSClass::CheckForException(XPCCallContext & ccx,
 
                 // Finally, check to see if this is the last JS frame on the
                 // stack. If so then we always want to report it.
-                if (!reportable) {
-                    RootedScript ignored(cx);
-                    reportable = !JS_DescribeScriptedCaller(cx, &ignored, nullptr);
-                }
+                if (!reportable)
+                    reportable = !JS::DescribeScriptedCaller(cx);
 
                 // Ugly special case for GetInterface. It's "special" in the
                 // same way as QueryInterface in that a failure is not
@@ -1284,7 +1270,7 @@ pre_call_clean_up:
             AutoSaveContextOptions asco(cx);
             ContextOptionsRef(cx).setDontReportUncaught(true);
 
-            success = JS_CallFunctionValue(cx, thisObj, fval, args, rval.address());
+            success = JS_CallFunctionValue(cx, thisObj, fval, args, &rval);
         } else {
             // The property was not an object so can't be a function.
             // Let's build and 'throw' an exception.

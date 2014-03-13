@@ -107,13 +107,6 @@
 
 <!-- Firefox account strings. -->
 
-<!-- Localization note: these describe icons and graphics, and are
-     consumed by assistive devices. -->
-<!ENTITY fxaccount_checkbox_contentDescription2 'Firefox accounts checkbox graphic'>
-<!ENTITY fxaccount_icon_contentDescription2 'Firefox accounts icon'>
-<!ENTITY fxaccount_intro_contentDescription2 'Firefox accounts introduction graphics'>
-<!ENTITY fxaccount_mail_contentDescription2 'Firefox accounts envelope graphic'>
-
 <!-- Localization note: these are shown in all screens that query the
      user for an email address and password. Hide and show are button
      labels. -->
@@ -174,6 +167,7 @@
 <!ENTITY fxaccount_update_credentials_unknown_error 'Could not sign in'>
 
 <!ENTITY fxaccount_status_header 'Firefox account'>
+<!ENTITY fxaccount_status_signed_in_as 'Signed in as'>
 <!ENTITY fxaccount_status_sync '&syncBrand.shortName.label;'>
 <!ENTITY fxaccount_status_sync_enabled '&syncBrand.shortName.label;: enabled'>
 <!ENTITY fxaccount_status_needs_verification2 'Your account needs to be verified. Tap to resend verification email.'>

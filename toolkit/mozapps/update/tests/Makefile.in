@@ -52,7 +52,6 @@ chrome-shared_PATH := $(CHROMETESTROOT)/chrome
 
 _CHROME_DATA := \
   simple.mar \
-  simple_no_pib.mar \
   $(NULL)
 INSTALL_TARGETS     += chrome-data
 chrome-data_TARGET  := libs
@@ -63,12 +62,6 @@ INI_TEST_FILES = \
   TestAUSReadStrings1.ini \
   TestAUSReadStrings2.ini \
   TestAUSReadStrings3.ini \
-  $(NULL)
-
-LOCAL_INCLUDES += \
-  -I$(srcdir) \
-  -I$(topsrcdir)/toolkit/mozapps/update \
-  -I$(topsrcdir)/toolkit/mozapps/update/common \
   $(NULL)
 
 MOZ_WINCONSOLE = 1

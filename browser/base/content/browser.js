@@ -139,6 +139,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
 XPCOMUtils.defineLazyModuleGetter(this, "gBrowserNewTabPreloader",
   "resource:///modules/BrowserNewTabPreloader.jsm", "BrowserNewTabPreloader");
 
+XPCOMUtils.defineLazyModuleGetter(this, "gCustomizationTabPreloader",
+  "resource:///modules/CustomizationTabPreloader.jsm", "CustomizationTabPreloader");
+
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
@@ -757,7 +760,11 @@ var gBrowserInit = {
   delayedStartupFinished: false,
 
   onLoad: function() {
-    gMultiProcessBrowser = Services.appinfo.browserTabsRemote;
+    gMultiProcessBrowser =
+      window.QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebNavigation)
+      .QueryInterface(Ci.nsILoadContext)
+      .useRemoteTabs;
 
     var mustLoadSidebar = false;
 
@@ -1001,8 +1008,13 @@ var gBrowserInit = {
       }
       // Note: loadOneOrMoreURIs *must not* be called if window.arguments.length >= 3.
       // Such callers expect that window.arguments[0] is handled as a single URI.
-      else
+      else {
+        if (uriToLoad == "about:newtab" &&
+            Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
+          Services.telemetry.getHistogramById("NEWTAB_PAGE_SHOWN").add(true);
+        }
         loadOneOrMoreURIs(uriToLoad);
+      }
     }
 
 #ifdef MOZ_SAFE_BROWSING
@@ -1022,7 +1034,8 @@ var gBrowserInit = {
     OfflineApps.init();
     IndexedDBPromptHelper.init();
     gFormSubmitObserver.init();
-    SocialUI.init();
+    gRemoteTabsUI.init();
+    gPageStyleMenu.init();
 
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
@@ -1079,12 +1092,9 @@ var gBrowserInit = {
     if (!getBoolPref("ui.click_hold_context_menus", false))
       SetClickAndHoldHandlers();
 
-    // Bug 666804 - NetworkPrioritizer support for e10s
-    if (!gMultiProcessBrowser) {
-      let NP = {};
-      Cu.import("resource:///modules/NetworkPrioritizer.jsm", NP);
-      NP.trackBrowserWindow(window);
-    }
+    let NP = {};
+    Cu.import("resource:///modules/NetworkPrioritizer.jsm", NP);
+    NP.trackBrowserWindow(window);
 
     PlacesToolbarHelper.init();
 
@@ -1182,9 +1192,15 @@ var gBrowserInit = {
     }
 
     SessionStore.promiseInitialized.then(() => {
+      // Bail out if the window has been closed in the meantime.
+      if (window.closed) {
+        return;
+      }
+
       // Enable the Restore Last Session command if needed
       RestoreLastSessionObserver.init();
 
+      SocialUI.init();
       TabView.init();
 
       setTimeout(function () { BrowserChromeTest.markAsReady(); }, 0);
@@ -1282,6 +1298,7 @@ var gBrowserInit = {
       gPrefService.removeObserver(ctrlTab.prefName, ctrlTab);
       ctrlTab.uninit();
       TabView.uninit();
+      SocialUI.uninit();
       gBrowserThumbnails.uninit();
       FullZoom.destroy();
 
@@ -1306,7 +1323,6 @@ var gBrowserInit = {
       BrowserOffline.uninit();
       OfflineApps.uninit();
       IndexedDBPromptHelper.uninit();
-      SocialUI.uninit();
       LightweightThemeListener.uninit();
       PanelUI.uninit();
     }
@@ -2342,7 +2358,7 @@ let BrowserOnClick = {
    */
   onE10sAboutNewTab: function(aEvent, aOwnerDoc) {
     let isTopFrame = (aOwnerDoc.defaultView.parent === aOwnerDoc.defaultView);
-    if (!isTopFrame) {
+    if (!isTopFrame || aEvent.button != 0) {
       return;
     }
 
@@ -2893,7 +2909,7 @@ const BrowserSearch = {
       return;
     }
     if (placement && placement.area == CustomizableUI.AREA_NAVBAR && searchBar &&
-        searchBar.parentNode.classList.contains("overflowedItem")) {
+        searchBar.parentNode.getAttribute("overflowedItem") == "true") {
       let navBar = document.getElementById(CustomizableUI.AREA_NAVBAR);
       navBar.overflowable.show().then(() => {
         focusSearchBar();
@@ -3186,6 +3202,17 @@ function OpenBrowserWindow(options)
     extraFeatures = ",non-private";
   }
 
+  if (options && options.remote) {
+    let omtcEnabled = gPrefService.getBoolPref("layers.offmainthreadcomposition.enabled");
+    if (!omtcEnabled) {
+      alert("To use out-of-process tabs, you must set the layers.offmainthreadcomposition.enabled preference and restart. Opening a normal window instead.");
+    } else {
+      extraFeatures += ",remote";
+    }
+  } else if (options && options.remote === false) {
+    extraFeatures += ",non-remote";
+  }
+
   // if and only if the current window is a browser window and it has a document with a character
   // set, then extract the current charset menu setting from the current document and use it to
   // initialize the new browser window...
@@ -3473,15 +3500,17 @@ var XULBrowserWindow = {
     const nsIWebProgressListener = Ci.nsIWebProgressListener;
     const nsIChannel = Ci.nsIChannel;
 
+    let browser = gBrowser.selectedBrowser;
+
     if (aStateFlags & nsIWebProgressListener.STATE_START &&
         aStateFlags & nsIWebProgressListener.STATE_IS_NETWORK) {
 
       if (aRequest && aWebProgress.isTopLevel) {
         // clear out feed data
-        gBrowser.selectedBrowser.feeds = null;
+        browser.feeds = null;
 
         // clear out search-engine data
-        gBrowser.selectedBrowser.engines = null;
+        browser.engines = null;
       }
 
       this.isBusy = true;
@@ -3522,7 +3551,7 @@ var XULBrowserWindow = {
         this.setDefaultStatus(msg);
 
         // Disable menu entries for images, enable otherwise
-        if (!gMultiProcessBrowser && content.document && mimeTypeIsTextBased(content.document.contentType))
+        if (browser.documentContentType && mimeTypeIsTextBased(browser.documentContentType))
           this.isImage.removeAttribute('disabled');
         else
           this.isImage.setAttribute('disabled', 'true');
@@ -3566,8 +3595,10 @@ var XULBrowserWindow = {
       }
     }
 
+    let browser = gBrowser.selectedBrowser;
+
     // Disable menu entries for images, enable otherwise
-    if (!gMultiProcessBrowser && content.document && mimeTypeIsTextBased(content.document.contentType))
+    if (browser.documentContentType && mimeTypeIsTextBased(browser.documentContentType))
       this.isImage.removeAttribute('disabled');
     else
       this.isImage.setAttribute('disabled', 'true');
@@ -3581,7 +3612,6 @@ var XULBrowserWindow = {
     // Update urlbar only if a new page was loaded on the primary content area
     // Do not update urlbar if there was a subframe navigation
 
-    var browser = gBrowser.selectedBrowser;
     if (aWebProgress.isTopLevel) {
       if ((location == "about:blank" && (gMultiProcessBrowser || !content.opener)) ||
           location == "") {  // Second condition is for new tabs, otherwise
@@ -3594,8 +3624,7 @@ var XULBrowserWindow = {
       if (gURLBar) {
         URLBarSetURI(aLocationURI);
 
-        // Update starring UI
-        BookmarkingUI.updateStarState();
+        BookmarkingUI.onLocationChange();
         SocialUI.updateState();
       }
 
@@ -4223,15 +4252,18 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
 
   if (toolbarItem && toolbarItem.localName == "toolbarpaletteitem") {
     toolbarItem = toolbarItem.firstChild;
-  } else {
+  } else if (toolbarItem && toolbarItem.localName != "toolbar") {
     while (toolbarItem && toolbarItem.parentNode) {
       let parent = toolbarItem.parentNode;
       if ((parent.classList && parent.classList.contains("customization-target")) ||
+          parent.getAttribute("overflowfortoolbar") || // Needs to work in the overflow list as well.
           parent.localName == "toolbarpaletteitem" ||
           parent.localName == "toolbar")
         break;
       toolbarItem = parent;
     }
+  } else {
+    toolbarItem = null;
   }
 
   // Right-clicking on an empty part of the tabstrip will exit
@@ -4257,8 +4289,15 @@ function onViewToolbarCommand(aEvent) {
 }
 
 function setToolbarVisibility(toolbar, isVisible) {
-  var hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
-                        "autohide" : "collapsed";
+  let hidingAttribute;
+  if (toolbar.getAttribute("type") == "menubar") {
+    hidingAttribute = "autohide";
+#ifdef MOZ_WIDGET_GTK
+    Services.prefs.setBoolPref("ui.key.menuAccessKeyFocuses", !isVisible);
+#endif
+  } else {
+    hidingAttribute = "collapsed";
+  }
 
   toolbar.setAttribute(hidingAttribute, !isVisible);
   document.persist(toolbar.id, hidingAttribute);
@@ -4771,9 +4810,8 @@ const nodeToShortcutMap = {
   "tabview-button": "key_tabview",
 };
 const gDynamicTooltipCache = new Map();
-function UpdateDynamicShortcutTooltipText(popupTriggerNode) {
-  let label = document.getElementById("dynamic-shortcut-tooltip-label");
-  let nodeId = popupTriggerNode.id;
+function UpdateDynamicShortcutTooltipText(aTooltip) {
+  let nodeId = aTooltip.triggerNode.id;
   if (!gDynamicTooltipCache.has(nodeId) && nodeId in nodeToTooltipMap) {
     let strId = nodeToTooltipMap[nodeId];
     let args = [];
@@ -4786,8 +4824,7 @@ function UpdateDynamicShortcutTooltipText(popupTriggerNode) {
     }
     gDynamicTooltipCache.set(nodeId, gNavigatorBundle.getFormattedString(strId, args));
   }
-  let desiredLabel = gDynamicTooltipCache.get(nodeId);
-  label.setAttribute("value", desiredLabel);
+  aTooltip.setAttribute("label", gDynamicTooltipCache.get(nodeId));
 }
 
 /**
@@ -5118,55 +5155,15 @@ function handleDroppedLink(event, url, name)
   event.preventDefault();
 };
 
-function MultiplexHandler(event)
-{ try {
-    var node = event.target;
-    var name = node.getAttribute('name');
-
-    if (name == 'detectorGroup') {
-        BrowserCharsetReload();
-        SelectDetector(event, false);
-    } else if (name == 'charsetGroup') {
-        var charset = node.getAttribute('id');
-        charset = charset.substring(charset.indexOf('charset.') + 'charset.'.length);
-        BrowserSetForcedCharacterSet(charset);
-    } else if (name == 'charsetCustomize') {
-        //do nothing - please remove this else statement, once the charset prefs moves to the pref window
-    } else {
-        BrowserSetForcedCharacterSet(node.getAttribute('id'));
-    }
-    } catch(ex) { alert(ex); }
-}
-
-function SelectDetector(event, doReload)
-{
-    var uri =  event.target.getAttribute("id");
-    var prefvalue = uri.substring(uri.indexOf('chardet.') + 'chardet.'.length);
-    if ("off" == prefvalue) { // "off" is special value to turn off the detectors
-        prefvalue = "";
-    }
-
-    try {
-        var str =  Cc["@mozilla.org/supports-string;1"].
-                   createInstance(Ci.nsISupportsString);
-
-        str.data = prefvalue;
-        gPrefService.setComplexValue("intl.charset.detector", Ci.nsISupportsString, str);
-        if (doReload)
-          window.content.location.reload();
-    }
-    catch (ex) {
-        dump("Failed to set the intl.charset.detector preference.\n");
-    }
-}
-
 function BrowserSetForcedCharacterSet(aCharset)
 {
-  gBrowser.docShell.gatherCharsetMenuTelemetry();
-  gBrowser.docShell.charset = aCharset;
-  // Save the forced character-set
-  if (!PrivateBrowsingUtils.isWindowPrivate(window))
-    PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+  if (aCharset) {
+    gBrowser.docShell.gatherCharsetMenuTelemetry();
+    gBrowser.docShell.charset = aCharset;
+    // Save the forced character-set
+    if (!PrivateBrowsingUtils.isWindowPrivate(window))
+      PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+  }
   BrowserCharsetReload();
 }
 
@@ -5175,8 +5172,8 @@ function BrowserCharsetReload()
   BrowserReloadWithFlags(nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
 }
 
-function charsetMenuGetElement(parent, id) {
-  return parent.getElementsByAttribute("id", id)[0];
+function charsetMenuGetElement(parent, charset) {
+  return parent.getElementsByAttribute("charset", charset)[0];
 }
 
 function UpdateCurrentCharset(target) {
@@ -5186,54 +5183,19 @@ function UpdateCurrentCharset(target) {
 
     // Uncheck previous item
     if (gPrevCharset) {
-        var pref_item = charsetMenuGetElement(target, "charset." + gPrevCharset);
+        var pref_item = charsetMenuGetElement(target, gPrevCharset);
         if (pref_item)
           pref_item.setAttribute('checked', 'false');
     }
 
-    var menuitem = charsetMenuGetElement(target, "charset." + FoldCharset(wnd.document.characterSet));
+    var menuitem = charsetMenuGetElement(target, CharsetMenu.foldCharset(wnd.document.characterSet));
     if (menuitem) {
         menuitem.setAttribute('checked', 'true');
     }
 }
 
-function FoldCharset(charset) {
-  // For substantially similar encodings, treat two encodings as the same
-  // for the purpose of the check mark.
-  if (charset == "ISO-8859-8-I") {
-    return "windows-1255";
-  }
-
-  if (charset == "gb18030") {
-    return "gbk";
-  }
-
-  return charset;
-}
-
-function UpdateCharsetDetector(target) {
-  var prefvalue;
-
-  try {
-    prefvalue = gPrefService.getComplexValue("intl.charset.detector", Ci.nsIPrefLocalizedString).data;
-  }
-  catch (ex) {}
-
-  if (!prefvalue)
-    prefvalue = "off";
-
-  var menuitem = charsetMenuGetElement(target, "chardet." + prefvalue);
-  if (menuitem)
-    menuitem.setAttribute("checked", "true");
-}
-
-function UpdateMenus(event) {
-  UpdateCurrentCharset(event.target);
-  UpdateCharsetDetector(event.target);
-}
-
 function charsetLoadListener() {
-  var charset = FoldCharset(window.content.document.characterSet);
+  var charset = CharsetMenu.foldCharset(window.content.document.characterSet);
 
   if (charset.length > 0 && (charset != gLastBrowserCharset)) {
     gPrevCharset = gLastBrowserCharset;
@@ -5243,39 +5205,54 @@ function charsetLoadListener() {
 
 var gPageStyleMenu = {
 
-  _getAllStyleSheets: function (frameset) {
-    var styleSheetsArray = Array.slice(frameset.document.styleSheets);
-    for (let i = 0; i < frameset.frames.length; i++) {
-      let frameSheets = this._getAllStyleSheets(frameset.frames[i]);
-      styleSheetsArray = styleSheetsArray.concat(frameSheets);
+  // This maps from a <browser> element (or, more specifically, a
+  // browser's permanentKey) to a CPOW that gives synchronous access
+  // to the list of style sheets in a content window. The use of the
+  // permanentKey is to avoid issues with docshell swapping.
+  _pageStyleSyncHandlers: new WeakMap(),
+
+  init: function() {
+    let mm = window.messageManager;
+    mm.addMessageListener("PageStyle:SetSyncHandler", (msg) => {
+      this._pageStyleSyncHandlers.set(msg.target.permanentKey, msg.objects.syncHandler);
+    });
+  },
+
+  getAllStyleSheets: function () {
+    let handler = this._pageStyleSyncHandlers.get(gBrowser.selectedBrowser.permanentKey);
+    try {
+      return handler.getAllStyleSheets();
+    } catch (ex) {
+      // In case the child died or timed out.
+      return [];
     }
-    return styleSheetsArray;
+  },
+
+  _getStyleSheetInfo: function (browser) {
+    let handler = this._pageStyleSyncHandlers.get(gBrowser.selectedBrowser.permanentKey);
+    try {
+      return handler.getStyleSheetInfo();
+    } catch (ex) {
+      // In case the child died or timed out.
+      return {styleSheets: [], authorStyleDisabled: false, preferredStyleSheetSet: true};
+    }
   },
 
   fillPopup: function (menuPopup) {
+    let styleSheetInfo = this._getStyleSheetInfo(gBrowser.selectedBrowser);
     var noStyle = menuPopup.firstChild;
     var persistentOnly = noStyle.nextSibling;
     var sep = persistentOnly.nextSibling;
     while (sep.nextSibling)
       menuPopup.removeChild(sep.nextSibling);
 
-    var styleSheets = this._getAllStyleSheets(window.content);
+    let styleSheets = styleSheetInfo.styleSheets;
     var currentStyleSheets = {};
-    var styleDisabled = getMarkupDocumentViewer().authorStyleDisabled;
+    var styleDisabled = styleSheetInfo.authorStyleDisabled;
     var haveAltSheets = false;
     var altStyleSelected = false;
 
     for (let currentStyleSheet of styleSheets) {
-      if (!currentStyleSheet.title)
-        continue;
-
-      // Skip any stylesheets whose media attribute doesn't match.
-      if (currentStyleSheet.media.length > 0) {
-        let mediaQueryList = currentStyleSheet.media.mediaText;
-        if (!window.content.matchMedia(mediaQueryList).matches)
-          continue;
-      }
-
       if (!currentStyleSheet.disabled)
         altStyleSelected = true;
 
@@ -5301,51 +5278,29 @@ var gPageStyleMenu = {
 
     noStyle.setAttribute("checked", styleDisabled);
     persistentOnly.setAttribute("checked", !altStyleSelected && !styleDisabled);
-    persistentOnly.hidden = (window.content.document.preferredStyleSheetSet) ? haveAltSheets : false;
+    persistentOnly.hidden = styleSheetInfo.preferredStyleSheetSet ? haveAltSheets : false;
     sep.hidden = (noStyle.hidden && persistentOnly.hidden) || !haveAltSheets;
   },
 
-  _stylesheetInFrame: function (frame, title) {
-    return Array.some(frame.document.styleSheets,
-                      function (stylesheet) stylesheet.title == title);
-  },
-
-  _stylesheetSwitchFrame: function (frame, title) {
-    var docStyleSheets = frame.document.styleSheets;
-
-    for (let i = 0; i < docStyleSheets.length; ++i) {
-      let docStyleSheet = docStyleSheets[i];
-
-      if (docStyleSheet.title)
-        docStyleSheet.disabled = (docStyleSheet.title != title);
-      else if (docStyleSheet.disabled)
-        docStyleSheet.disabled = false;
-    }
-  },
-
-  _stylesheetSwitchAll: function (frameset, title) {
-    if (!title || this._stylesheetInFrame(frameset, title))
-      this._stylesheetSwitchFrame(frameset, title);
-
-    for (let i = 0; i < frameset.frames.length; i++)
-      this._stylesheetSwitchAll(frameset.frames[i], title);
-  },
-
-  switchStyleSheet: function (title, contentWindow) {
-    getMarkupDocumentViewer().authorStyleDisabled = false;
-    this._stylesheetSwitchAll(contentWindow || content, title);
+  switchStyleSheet: function (title) {
+    let mm = gBrowser.selectedBrowser.messageManager;
+    mm.sendAsyncMessage("PageStyle:Switch", {title: title});
   },
 
   disableStyle: function () {
-    getMarkupDocumentViewer().authorStyleDisabled = true;
+    let mm = gBrowser.selectedBrowser.messageManager;
+    mm.sendAsyncMessage("PageStyle:Disable");
   },
 };
 
 /* Legacy global page-style functions */
-var getAllStyleSheets   = gPageStyleMenu._getAllStyleSheets.bind(gPageStyleMenu);
+var getAllStyleSheets   = gPageStyleMenu.getAllStyleSheets.bind(gPageStyleMenu);
 var stylesheetFillPopup = gPageStyleMenu.fillPopup.bind(gPageStyleMenu);
 function stylesheetSwitchAll(contentWindow, title) {
-  gPageStyleMenu.switchStyleSheet(title, contentWindow);
+  // We ignore the contentWindow param. Add-ons don't appear to use
+  // it, and it's difficult to support in e10s (where it will be a
+  // CPOW).
+  gPageStyleMenu.switchStyleSheet(title);
 }
 function setStyleDisabled(disabled) {
   if (disabled)
@@ -6420,13 +6375,9 @@ var gIdentityHandler = {
 
     // Chrome URIs however get special treatment. Some chrome URIs are
     // whitelisted to provide a positive security signal to the user.
-    let chromeWhitelist = ["about:addons", "about:app-manager", "about:config",
-                           "about:crashes", "about:customizing", "about:healthreport",
-                           "about:home", "about:newaddon", "about:permissions",
-                           "about:preferences", "about:privatebrowsing",
-                           "about:sessionstore", "about:support", "about:welcomeback"];
-    let lowercaseSpec = uri.spec.toLowerCase();
-    if (chromeWhitelist.some(function(whitelistedSpec) lowercaseSpec.startsWith(whitelistedSpec))) {
+    let whitelist = /^about:(accounts|addons|app-manager|config|crashes|customizing|healthreport|home|newaddon|permissions|preferences|privatebrowsing|sessionrestore|support|welcomeback)/i;
+    let isChromeUI = uri.schemeIs("about") && whitelist.test(uri.spec);
+    if (isChromeUI) {
       this.setMode(this.IDENTITY_MODE_CHROMEUI);
     } else if (unknown) {
       this.setMode(this.IDENTITY_MODE_UNKNOWN);
@@ -6487,6 +6438,7 @@ var gIdentityHandler = {
     ];
     let options = {
       dismissed: true,
+      learnMoreURL: Services.urlFormatter.formatURLPref("app.support.baseURL") + "mixed-content",
     };
     PopupNotifications.show(gBrowser.selectedBrowser, "mixed-content-blocked",
                             messageString, "mixed-content-blocked-notification-icon",
@@ -6866,6 +6818,28 @@ let gPrivateBrowsingUI = {
   }
 };
 
+let gRemoteTabsUI = {
+  init: function() {
+    if (window.location.href != getBrowserURL()) {
+      return;
+    }
+
+    let remoteTabs = gPrefService.getBoolPref("browser.tabs.remote");
+    let autostart = gPrefService.getBoolPref("browser.tabs.remote.autostart");
+
+    let newRemoteWindow = document.getElementById("menu_newRemoteWindow");
+    let newNonRemoteWindow = document.getElementById("menu_newNonRemoteWindow");
+
+    if (!remoteTabs) {
+      newRemoteWindow.hidden = true;
+      newNonRemoteWindow.hidden = true;
+      return;
+    }
+
+    newRemoteWindow.hidden = autostart;
+    newNonRemoteWindow.hidden = !autostart;
+  }
+};
 
 /**
  * Switch to a tab that has a given URI, and focusses its browser window.
@@ -6877,9 +6851,14 @@ let gPrivateBrowsingUI = {
  * @param aOpenNew
  *        True to open a new tab and switch to it, if no existing tab is found.
  *        If no suitable window is found, a new one will be opened.
+ * @param aOpenParams
+ *        If switching to this URI results in us opening a tab, aOpenParams
+ *        will be the parameter object that gets passed to openUILinkIn. Please
+ *        see the documentation for openUILinkIn to see what parameters can be
+ *        passed via this object.
  * @return True if an existing tab was found, false otherwise
  */
-function switchToTabHavingURI(aURI, aOpenNew) {
+function switchToTabHavingURI(aURI, aOpenNew, aOpenParams) {
   // This will switch to the tab in aWindow having aURI, if present.
   function switchIfURIInWindow(aWindow) {
     // Only switch to the tab if neither the source and desination window are
@@ -6927,9 +6906,9 @@ function switchToTabHavingURI(aURI, aOpenNew) {
   // No opened tab has that url.
   if (aOpenNew) {
     if (isBrowserWindow && isTabEmpty(gBrowser.selectedTab))
-      gBrowser.selectedBrowser.loadURI(aURI.spec);
+      openUILinkIn(aURI.spec, "current", aOpenParams);
     else
-      openUILinkIn(aURI.spec, "tab");
+      openUILinkIn(aURI.spec, "tab", aOpenParams);
   }
 
   return false;
@@ -7117,7 +7096,7 @@ XPCOMUtils.defineLazyGetter(window, "gShowPageResizers", function () {
 });
 
 var MousePosTracker = {
-  _listeners: [],
+  _listeners: new Set(),
   _x: 0,
   _y: 0,
   get _windowUtils() {
@@ -7126,21 +7105,17 @@ var MousePosTracker = {
   },
 
   addListener: function (listener) {
-    if (this._listeners.indexOf(listener) >= 0)
+    if (this._listeners.has(listener))
       return;
 
     listener._hover = false;
-    this._listeners.push(listener);
+    this._listeners.add(listener);
 
     this._callListener(listener);
   },
 
   removeListener: function (listener) {
-    var index = this._listeners.indexOf(listener);
-    if (index < 0)
-      return;
-
-    this._listeners.splice(index, 1);
+    this._listeners.delete(listener);
   },
 
   handleEvent: function (event) {
@@ -7203,3 +7178,11 @@ let BrowserChromeTest = {
       this._cb = cb;
   }
 };
+
+function BrowserOpenNewTabOrWindow(event) {
+  if (event.shiftKey) {
+    OpenBrowserWindow();
+  } else {
+    BrowserOpenTab();
+  }
+}

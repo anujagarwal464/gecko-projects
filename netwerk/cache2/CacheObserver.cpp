@@ -25,6 +25,9 @@ uint32_t CacheObserver::sMemoryLimit = kDefaultMemoryLimit;
 
 static uint32_t const kDefaultUseNewCache = 0; // Don't use the new cache by default
 uint32_t CacheObserver::sUseNewCache = kDefaultUseNewCache;
+
+static bool sUseNewCacheTemp = false; // Temp trigger to not lose early adopters
+
 static int32_t const kAutoDeleteCacheVersion = -1; // Auto-delete off by default
 static int32_t sAutoDeleteCacheVersion = kAutoDeleteCacheVersion;
 
@@ -56,6 +59,7 @@ NS_IMPL_ISUPPORTS2(CacheObserver,
                    nsIObserver,
                    nsISupportsWeakReference)
 
+// static
 nsresult
 CacheObserver::Init()
 {
@@ -83,6 +87,7 @@ CacheObserver::Init()
   return NS_OK;
 }
 
+// static
 nsresult
 CacheObserver::Shutdown()
 {
@@ -102,6 +107,8 @@ CacheObserver::AttachToPreferences()
 
   mozilla::Preferences::AddUintVarCache(
     &sUseNewCache, "browser.cache.use_new_backend", kDefaultUseNewCache);
+  mozilla::Preferences::AddBoolVarCache(
+    &sUseNewCacheTemp, "browser.cache.use_new_backend_temp", false);
 
   mozilla::Preferences::AddBoolVarCache(
     &sUseDiskCache, "browser.cache.disk.enable", kDefaultUseDiskCache);
@@ -122,6 +129,10 @@ CacheObserver::AttachToPreferences()
   // http://mxr.mozilla.org/mozilla-central/source/netwerk/cache/nsCacheEntryDescriptor.cpp#367
   mozilla::Preferences::AddUintVarCache(
     &sCompressionLevel, "browser.cache.compression_level", kDefaultCompressionLevel);
+
+  mozilla::Preferences::GetComplex(
+    "browser.cache.disk.parent_directory", NS_GET_IID(nsIFile),
+    getter_AddRefs(mCacheParentDirectoryOverride));
 
   sHalfLifeExperiment = mozilla::Preferences::GetInt(
     "browser.cache.frecency_experiment", kDefaultHalfLifeExperiment);
@@ -177,7 +188,12 @@ void CacheObserver::SchduleAutoDelete()
 // static
 bool const CacheObserver::UseNewCache()
 {
-  switch (sUseNewCache) {
+  uint32_t useNewCache = sUseNewCache;
+
+  if (sUseNewCacheTemp)
+    useNewCache = 1;
+
+  switch (useNewCache) {
     case 0: // use the old cache backend
       return false;
 
@@ -186,6 +202,22 @@ bool const CacheObserver::UseNewCache()
   }
 
   return true;
+}
+
+// static
+void CacheObserver::ParentDirOverride(nsIFile** aDir)
+{
+  if (NS_WARN_IF(!aDir))
+    return;
+
+  *aDir = nullptr;
+
+  if (!sSelf)
+    return;
+  if (!sSelf->mCacheParentDirectoryOverride)
+    return;
+
+  sSelf->mCacheParentDirectoryOverride->Clone(aDir);
 }
 
 namespace { // anon

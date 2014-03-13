@@ -9,7 +9,7 @@ const promise = require("sdk/core/promise");
 const IOService = Cc["@mozilla.org/network/io-service;1"]
   .getService(Ci.nsIIOService);
 const {Spectrum} = require("devtools/shared/widgets/Spectrum");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/toolkit/event-emitter");
 const {colorUtils} = require("devtools/css-color");
 const Heritage = require("sdk/core/heritage");
 const {CSSTransformPreviewer} = require("devtools/shared/widgets/CSSTransformPreviewer");
@@ -32,7 +32,7 @@ const BORDER_RE = /^border(-(top|bottom|left|right))?$/ig;
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const SPECTRUM_FRAME = "chrome://browser/content/devtools/spectrum-frame.xhtml";
 const ESCAPE_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_ESCAPE;
-const ENTER_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_RETURN;
+const RETURN_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_RETURN;
 const POPUP_EVENTS = ["shown", "hidden", "showing", "hiding"];
 
 /**
@@ -399,12 +399,12 @@ Tooltip.prototype = {
 
   _showOnHover: function(target) {
     let res = this._targetNodeCb(target, this);
+    let show = arg => this.show(arg instanceof Ci.nsIDOMNode ? arg : target);
+
     if (res && res.then) {
-      res.then(() => {
-        this.show(target);
-      });
+      res.then(show);
     } else if (res) {
-      this.show(target);
+      show(res);
     }
   },
 
@@ -746,6 +746,40 @@ Tooltip.prototype = {
     }
 
     return def.promise;
+  },
+
+  /**
+   * Set the content of the tooltip to display a font family preview.
+   * This is based on Lea Verou's Dablet. See https://github.com/LeaVerou/dabblet
+   * for more info.
+   *
+   * @param {String} font
+   *        The font family value.
+   */
+  setFontFamilyContent: function(font) {
+    let def = promise.defer();
+
+    if (font) {
+      // Main container
+      let vbox = this.doc.createElement("vbox");
+      vbox.setAttribute("flex", "1");
+
+      // Display the font family previewer
+      let previewer = this.doc.createElement("description");
+      previewer.setAttribute("flex", "1");
+      previewer.style.fontFamily = font;
+      previewer.classList.add("devtools-tooltip-font-previewer-text");
+      previewer.textContent = "(ABCabc123&@%)";
+      vbox.appendChild(previewer);
+
+      this.content = vbox;
+
+      def.resolve();
+    } else {
+      def.reject();
+    }
+
+    return def.promise;
   }
 };
 
@@ -762,7 +796,7 @@ function SwatchBasedEditorTooltip(doc) {
   // It will also close on <escape> and <enter>
   this.tooltip = new Tooltip(doc, {
     consumeOutsideClick: true,
-    closeOnKeys: [ESCAPE_KEYCODE, ENTER_KEYCODE],
+    closeOnKeys: [ESCAPE_KEYCODE, RETURN_KEYCODE],
     noAutoFocus: false
   });
 
@@ -771,7 +805,7 @@ function SwatchBasedEditorTooltip(doc) {
   this._onTooltipKeypress = (event, code) => {
     if (code === ESCAPE_KEYCODE) {
       this.revert();
-    } else if (code === ENTER_KEYCODE) {
+    } else if (code === RETURN_KEYCODE) {
       this.commit();
     }
   };

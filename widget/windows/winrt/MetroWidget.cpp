@@ -82,6 +82,7 @@ UINT sDefaultBrowserMsgId = RegisterWindowMessageW(L"DefaultBrowserClosing");
 namespace mozilla {
 namespace widget {
 namespace winrt {
+extern ComPtr<MetroApp> sMetroApp;
 extern ComPtr<IUIABridge> gProviderRoot;
 } } }
 
@@ -253,7 +254,7 @@ MetroWidget::Create(nsIWidget *aParent,
 
   // the main widget gets created first
   gTopLevelAssigned = true;
-  MetroApp::SetBaseWidget(this);
+  sMetroApp->SetWidget(this);
   WinUtils::SetNSWindowBasePtr(mWnd, this);
 
   if (mWidgetListener) {
@@ -797,18 +798,6 @@ MetroWidget::WindowProcedure(HWND aWnd, UINT aMsg, WPARAM aWParam, LPARAM aLPara
   }
 
   switch (aMsg) {
-    case WM_PAINT:
-    {
-      HRGN rgn = CreateRectRgn(0, 0, 0, 0);
-      GetUpdateRgn(mWnd, rgn, false);
-      nsIntRegion region = WinUtils::ConvertHRGNToRegion(rgn);
-      DeleteObject(rgn);
-      if (region.IsEmpty())
-        break;
-      Paint(region);
-      break;
-    }
-
     case WM_POWERBROADCAST:
     {
       switch (aWParam)
@@ -1148,22 +1137,6 @@ MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aEvent,
   return mController->ReceiveInputEvent(aEvent, aOutTargetGuid);
 }
 
-nsEventStatus
-MetroWidget::ApzReceiveInputEvent(WidgetInputEvent* aInEvent,
-                                  ScrollableLayerGuid* aOutTargetGuid,
-                                  WidgetInputEvent* aOutEvent)
-{
-  MOZ_ASSERT(aInEvent);
-  MOZ_ASSERT(aOutEvent);
-
-  if (!mController) {
-    return nsEventStatus_eIgnore;
-  }
-  return mController->ReceiveInputEvent(aInEvent,
-                                        aOutTargetGuid,
-                                        aOutEvent);
-}
-
 LayerManager*
 MetroWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
                              LayersBackend aBackendHint,
@@ -1483,9 +1456,7 @@ MetroWidget::Activated(bool aActiveated)
 NS_IMETHODIMP
 MetroWidget::Move(double aX, double aY)
 {
-  if (mWidgetListener) {
-    mWidgetListener->WindowMoved(this, aX, aY);
-  }
+  NotifyWindowMoved(aX, aY);
   return NS_OK;
 }
 
@@ -1586,9 +1557,9 @@ MetroWidget::GetInputContext()
 }
 
 NS_IMETHODIMP
-MetroWidget::NotifyIME(NotificationToIME aNotification)
+MetroWidget::NotifyIME(const IMENotification& aIMENotification)
 {
-  switch (aNotification) {
+  switch (aIMENotification.mMessage) {
     case REQUEST_TO_COMMIT_COMPOSITION:
       nsTextStore::CommitComposition(false);
       return NS_OK;
@@ -1603,6 +1574,10 @@ MetroWidget::NotifyIME(NotificationToIME aNotification)
                                         mInputContext.mIMEState.mEnabled);
     case NOTIFY_IME_OF_SELECTION_CHANGE:
       return nsTextStore::OnSelectionChange();
+    case NOTIFY_IME_OF_TEXT_CHANGE:
+      return nsTextStore::OnTextChange(aIMENotification);
+    case NOTIFY_IME_OF_POSITION_CHANGE:
+      return nsTextStore::OnLayoutChange();
     default:
       return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -1614,14 +1589,6 @@ MetroWidget::GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState)
   NS_ENSURE_ARG_POINTER(aLEDState);
   *aLEDState = (::GetKeyState(aKeyCode) & 1) != 0;
   return NS_OK;
-}
-
-NS_IMETHODIMP
-MetroWidget::NotifyIMEOfTextChange(uint32_t aStart,
-                                   uint32_t aOldEnd,
-                                   uint32_t aNewEnd)
-{
-  return nsTextStore::OnTextChange(aStart, aOldEnd, aNewEnd);
 }
 
 nsIMEUpdatePreference
@@ -1696,7 +1663,7 @@ MetroWidget::Observe(nsISupports *subject, const char *topic, const char16_t *da
 
     ScrollableLayerGuid guid = ScrollableLayerGuid(mRootLayerTreeId, presShellId, viewId);
     APZController::sAPZC->UpdateZoomConstraints(guid,
-      ZoomConstraints(false, CSSToScreenScale(1.0f), CSSToScreenScale(1.0f)));
+      ZoomConstraints(false, false, CSSToScreenScale(1.0f), CSSToScreenScale(1.0f)));
   }
   return NS_OK;
 }

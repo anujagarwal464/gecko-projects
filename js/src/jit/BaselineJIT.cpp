@@ -108,7 +108,6 @@ EnterBaseline(JSContext *cx, EnterJitData &data)
     data.result.setInt32(data.numActualArgs);
     {
         AssertCompartmentUnchanged pcc(cx);
-        IonContext ictx(cx, nullptr);
         JitActivation activation(cx, data.constructing);
         JSAutoResolveFlags rf(cx, RESOLVE_INFER);
         AutoFlushInhibitor afi(cx->runtime()->jitRuntime());
@@ -218,7 +217,7 @@ jit::BaselineCompile(JSContext *cx, HandleScript script)
 {
     JS_ASSERT(!script->hasBaselineScript());
     JS_ASSERT(script->canBaselineCompile());
-
+    JS_ASSERT(IsBaselineEnabled(cx));
     LifoAlloc alloc(BASELINE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
 
     script->ensureNonLazyCanonicalFunction(cx);

@@ -107,8 +107,7 @@ BEGIN_TEST(test_cloneScriptWithPrincipals)
     {
         JSAutoCompartment a(cx, A);
         JS::CompileOptions options(cx);
-        options.setFileAndLine(__FILE__, 1)
-               .setPrincipals(principalsA);
+        options.setFileAndLine(__FILE__, 1);
         JS::RootedFunction fun(cx, JS_CompileFunction(cx, A, "f",
                 mozilla::ArrayLength(argnames), argnames, source,
                 strlen(source), options));
@@ -138,7 +137,7 @@ BEGIN_TEST(test_cloneScriptWithPrincipals)
 
         JS::RootedValue v(cx);
         JS::RootedValue arg(cx, JS::Int32Value(1));
-        CHECK(JS_CallFunctionValue(cx, B, JS::ObjectValue(*cloned), arg, v.address()));
+        CHECK(JS_CallFunctionValue(cx, B, clonedValue, arg, &v));
         CHECK(v.isObject());
 
         JSObject *funobj = &v.toObject();

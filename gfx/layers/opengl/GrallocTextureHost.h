@@ -30,7 +30,7 @@ public:
 
   virtual bool IsValid() const MOZ_OVERRIDE;
 
-  virtual void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
+  virtual void BindTexture(GLenum aTextureUnit, gfx::Filter aFilter) MOZ_OVERRIDE;
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
 
@@ -44,8 +44,6 @@ public:
   {
     return LOCAL_GL_CLAMP_TO_EDGE;
   }
-
-  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData) MOZ_OVERRIDE;
 
   void DeallocateDeviceData();
 
@@ -62,15 +60,20 @@ public:
 
   GLuint GetGLTexture();
 
+  void Lock();
+
 protected:
   CompositorOGL* mCompositor;
   android::sp<android::GraphicBuffer> mGraphicBuffer;
   EGLImage mEGLImage;
+  GLuint mTexture;
   gfx::SurfaceFormat mFormat;
-  bool mNeedsReset;
 };
 
 class GrallocTextureHostOGL : public TextureHost
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 17
+                            , public TextureHostOGL
+#endif
 {
   friend class GrallocBufferActor;
 public:
@@ -103,6 +106,13 @@ public:
   {
     return mTextureSource;
   }
+
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 17
+  virtual TextureHostOGL* AsHostOGL() MOZ_OVERRIDE
+  {
+    return this;
+  }
+#endif
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 

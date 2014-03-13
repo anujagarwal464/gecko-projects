@@ -8,6 +8,7 @@
 #include "gfxColor.h"                   // for gfxRGBA
 #include "gfxContext.h"                 // for gfxContext, etc
 #include "gfxPlatform.h"                // for gfxPlatform
+#include "gfxPrefs.h"                   // for gfxPrefs
 #include "gfxPoint.h"                   // for gfxIntSize, gfxPoint
 #include "gfxTeeSurface.h"              // for gfxTeeSurface
 #include "gfxUtils.h"                   // for gfxUtils
@@ -53,7 +54,7 @@ ContentClient::CreateContentClient(CompositableForwarder* aForwarder)
   // XXX We need support for gralloc with non-deprecated textures content before
   // we can use them with FirefoxOS (bug 946720). We need the same locking for
   // Windows.
-#if !defined(MOZ_WIDGET_GONK) && !defined(XP_WIN)
+#if !defined(XP_WIN)
   useDeprecatedTextures = gfxPlatform::GetPlatform()->UseDeprecatedTextures();
 #endif
 
@@ -168,14 +169,16 @@ ContentClientRemoteBuffer::CreateAndAllocateTextureClient(RefPtr<TextureClient>&
                                                           TextureFlags aFlags)
 {
   aClient = CreateTextureClientForDrawing(mSurfaceFormat,
-                                          mTextureInfo.mTextureFlags | aFlags);
+                                          mTextureInfo.mTextureFlags | aFlags,
+                                          mSize);
   if (!aClient) {
     return false;
   }
 
   if (!aClient->AsTextureClientDrawTarget()->AllocateForSurface(mSize, ALLOC_CLEAR_BUFFER)) {
     aClient = CreateTextureClientForDrawing(mSurfaceFormat,
-                mTextureInfo.mTextureFlags | TEXTURE_ALLOC_FALLBACK | aFlags);
+                mTextureInfo.mTextureFlags | TEXTURE_ALLOC_FALLBACK | aFlags,
+                mSize);
     if (!aClient) {
       return false;
     }
@@ -210,8 +213,7 @@ ContentClientRemoteBuffer::BuildTextureClients(SurfaceFormat aFormat,
 
   mSurfaceFormat = aFormat;
   mSize = gfx::IntSize(aRect.width, aRect.height);
-  mTextureInfo.mTextureFlags = (aFlags & ~TEXTURE_DEALLOCATE_CLIENT) |
-                               TEXTURE_DEALLOCATE_DEFERRED;
+  mTextureInfo.mTextureFlags = aFlags & ~TEXTURE_DEALLOCATE_CLIENT;
 
   if (!CreateAndAllocateTextureClient(mTextureClient, TEXTURE_ON_BLACK) ||
       !AddTextureClient(mTextureClient)) {
@@ -1101,7 +1103,7 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
     }
 
     if (mode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
-      if (!gfxPlatform::ComponentAlphaEnabled() ||
+      if (!gfxPrefs::ComponentAlphaEnabled() ||
           !aLayer->GetParent() ||
           !aLayer->GetParent()->SupportsComponentAlphaChildren()) {
         mode = SurfaceMode::SURFACE_SINGLE_CHANNEL_ALPHA;

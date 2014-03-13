@@ -62,16 +62,6 @@ JSObject::deleteElement(JSContext *cx, js::HandleObject obj, uint32_t index, boo
 }
 
 /* static */ inline bool
-JSObject::deleteSpecial(JSContext *cx, js::HandleObject obj, js::HandleSpecialId sid,
-                        bool *succeeded)
-{
-    JS::RootedId id(cx, SPECIALID_TO_JSID(sid));
-    js::types::MarkTypePropertyNonData(cx, obj, id);
-    js::DeleteSpecialOp op = obj->getOps()->deleteSpecial;
-    return (op ? op : js::baseops::DeleteSpecial)(cx, obj, sid, succeeded);
-}
-
-/* static */ inline bool
 JSObject::watch(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                 JS::HandleObject callable)
 {
@@ -353,6 +343,33 @@ JSObject::ensureDenseElementsPreservePackedFlag(js::ThreadSafeContext *cx, uint3
     return ensureDenseElementsNoPackedCheck(cx, index, extra);
 }
 
+inline js::Value
+JSObject::getDenseOrTypedArrayElement(uint32_t idx)
+{
+    if (is<js::TypedArrayObject>())
+        return as<js::TypedArrayObject>().getElement(idx);
+    return getDenseElement(idx);
+}
+
+inline bool
+JSObject::setDenseOrTypedArrayElementIfHasType(js::ThreadSafeContext *cx, uint32_t index,
+                                               const js::Value &val)
+{
+    if (is<js::TypedArrayObject>())
+        return as<js::TypedArrayObject>().setElement(cx, index, val);
+    return setDenseElementIfHasType(index, val);
+}
+
+inline bool
+JSObject::setDenseOrTypedArrayElementWithType(js::ExclusiveContext *cx, uint32_t index,
+                                              const js::Value &val)
+{
+    if (is<js::TypedArrayObject>())
+        return as<js::TypedArrayObject>().setElement(cx, index, val);
+    setDenseElementWithType(cx, index, val);
+    return true;
+}
+
 /* static */ inline bool
 JSObject::setSingletonType(js::ExclusiveContext *cx, js::HandleObject obj)
 {
@@ -400,9 +417,6 @@ JSObject::clearType(JSContext *cx, js::HandleObject obj)
 inline void
 JSObject::setType(js::types::TypeObject *newType)
 {
-    // Note: This is usually called for newly created objects that haven't
-    // escaped to script yet, so don't require that the compilation lock be
-    // held here.
     JS_ASSERT(newType);
     JS_ASSERT(!hasSingletonType());
     type_ = newType;
@@ -511,8 +525,13 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
 
     obj->shape_.init(shape);
     obj->type_.init(type);
-    if (extantSlots)
+    if (extantSlots) {
+#ifdef JSGC_GENERATIONAL
+        if (cx->isJSContext())
+            cx->asJSContext()->runtime()->gcNursery.notifyInitialSlots(obj, extantSlots);
+#endif
         obj->slots = extantSlots;
+    }
     obj->elements = js::emptyObjectElements;
 
     if (clasp->hasPrivate())
@@ -569,6 +588,8 @@ JSObject::finish(js::FreeOp *fop)
         js::ObjectElements *elements = getElementsHeader();
         if (MOZ_UNLIKELY(elements->isAsmJSArrayBuffer()))
             js::ArrayBufferObject::releaseAsmJSArrayBuffer(fop, this);
+        else if (MOZ_UNLIKELY(elements->isMappedArrayBuffer()))
+            js::ArrayBufferObject::releaseMappedArrayBuffer(fop, this);
         else
             fop->free_(elements);
     }
@@ -842,10 +863,17 @@ GetClassProtoKey(const js::Class *clasp)
 inline bool
 FindProto(ExclusiveContext *cx, const js::Class *clasp, MutableHandleObject proto)
 {
-    if (!js_FindClassPrototype(cx, proto, clasp))
+    if (!FindClassPrototype(cx, proto, clasp))
         return false;
-    if (!proto && !js_GetClassPrototype(cx, JSProto_Object, proto))
-        return false;
+
+    if (!proto) {
+        // We're looking for the prototype of a class that is currently being
+        // resolved; the global object's resolve hook is on the
+        // stack. js::FindClassPrototype detects this goofy case and returns
+        // true with proto null. Fall back on Object.prototype.
+        JS_ASSERT(JSCLASS_CACHED_PROTO_KEY(clasp) == JSProto_Null);
+        return GetBuiltinPrototype(cx, JSProto_Object, proto);
+    }
     return true;
 }
 
@@ -913,6 +941,17 @@ NewBuiltinClassInstance(ExclusiveContext *cx, const Class *clasp, NewObjectKind 
 {
     gc::AllocKind allocKind = gc::GetGCObjectKind(clasp);
     return NewBuiltinClassInstance(cx, clasp, allocKind, newKind);
+}
+
+template<typename T>
+inline T *
+NewBuiltinClassInstance(ExclusiveContext *cx, NewObjectKind newKind = GenericObject)
+{
+    JSObject *obj = NewBuiltinClassInstance(cx, &T::class_, newKind);
+    if (!obj)
+        return nullptr;
+
+    return &obj->as<T>();
 }
 
 // Used to optimize calls to (new Object())
@@ -983,36 +1022,6 @@ GuessArrayGCKind(size_t numSlots)
 }
 
 inline bool
-DefineConstructorAndPrototype(JSContext *cx, Handle<GlobalObject*> global,
-                              JSProtoKey key, HandleObject ctor, HandleObject proto)
-{
-    JS_ASSERT(!global->nativeEmpty()); /* reserved slots already allocated */
-    JS_ASSERT(ctor);
-    JS_ASSERT(proto);
-
-    RootedId id(cx, NameToId(ClassName(key, cx)));
-    JS_ASSERT(!global->nativeLookup(cx, id));
-
-    /* Set these first in case AddTypePropertyId looks for this class. */
-    {
-        AutoLockForCompilation lock(cx);
-        global->setConstructor(key, ObjectValue(*ctor));
-        global->setPrototype(key, ObjectValue(*proto));
-    }
-    global->setConstructorPropertySlot(key, ObjectValue(*ctor));
-
-    if (!global->addDataProperty(cx, id, GlobalObject::constructorPropertySlot(key), 0)) {
-        global->setConstructor(key, UndefinedValue());
-        global->setPrototype(key, UndefinedValue());
-        global->setConstructorPropertySlot(key, UndefinedValue());
-        return false;
-    }
-
-    types::AddTypePropertyId(cx, global, id, ObjectValue(*ctor));
-    return true;
-}
-
-inline bool
 ObjectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx)
 {
     if (MOZ_UNLIKELY(obj->is<ProxyObject>()))
@@ -1024,7 +1033,8 @@ ObjectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx)
       case ESClass_String: return obj->is<StringObject>();
       case ESClass_Boolean: return obj->is<BooleanObject>();
       case ESClass_RegExp: return obj->is<RegExpObject>();
-      case ESClass_ArrayBuffer: return obj->is<ArrayBufferObject>();
+      case ESClass_ArrayBuffer:
+        return obj->is<ArrayBufferObject>() || obj->is<SharedArrayBufferObject>();
       case ESClass_Date: return obj->is<DateObject>();
     }
     MOZ_ASSUME_UNREACHABLE("bad classValue");
@@ -1038,28 +1048,6 @@ IsObjectWithClass(const Value &v, ESClassValue classValue, JSContext *cx)
     RootedObject obj(cx, &v.toObject());
     return ObjectClassIs(obj, classValue, cx);
 }
-
-static MOZ_ALWAYS_INLINE bool
-ValueMightBeSpecial(const Value &propval)
-{
-    return propval.isObject();
-}
-
-static MOZ_ALWAYS_INLINE bool
-ValueIsSpecial(JSObject *obj, MutableHandleValue propval, MutableHandle<SpecialId> sidp,
-               JSContext *cx)
-{
-    return false;
-}
-
-JSObject *
-DefineConstructorAndPrototype(JSContext *cx, HandleObject obj, JSProtoKey key, HandleAtom atom,
-                              JSObject *protoProto, const Class *clasp,
-                              Native constructor, unsigned nargs,
-                              const JSPropertySpec *ps, const JSFunctionSpec *fs,
-                              const JSPropertySpec *static_ps, const JSFunctionSpec *static_fs,
-                              JSObject **ctorp = nullptr,
-                              gc::AllocKind ctorKind = JSFunction::FinalizeKind);
 
 static MOZ_ALWAYS_INLINE bool
 NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
@@ -1085,11 +1073,10 @@ NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
 inline bool
 DefineNativeProperty(ExclusiveContext *cx, HandleObject obj, PropertyName *name, HandleValue value,
                      PropertyOp getter, StrictPropertyOp setter, unsigned attrs,
-                     unsigned flags, int shortid, unsigned defineHow = 0)
+                     unsigned flags, unsigned defineHow = 0)
 {
     Rooted<jsid> id(cx, NameToId(name));
-    return DefineNativeProperty(cx, obj, id, value, getter, setter, attrs, flags,
-                                shortid, defineHow);
+    return DefineNativeProperty(cx, obj, id, value, getter, setter, attrs, flags, defineHow);
 }
 
 inline bool

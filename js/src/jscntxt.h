@@ -276,8 +276,9 @@ struct ThreadSafeContext : ContextFriendFields,
     }
 
     // Accessors for immutable runtime data.
-    JSAtomState &names() { return runtime_->atomState; }
-    StaticStrings &staticStrings() { return runtime_->staticStrings; }
+    JSAtomState &names() { return *runtime_->commonNames; }
+    StaticStrings &staticStrings() { return *runtime_->staticStrings; }
+    AtomSet &permanentAtoms() { return *runtime_->permanentAtoms; }
     const JS::AsmJSCacheOps &asmJSCacheOps() { return runtime_->asmJSCacheOps; }
     PropertyName *emptyString() { return runtime_->emptyString; }
     FreeOp *defaultFreeOp() { return runtime_->defaultFreeOp(); }
@@ -411,6 +412,7 @@ struct JSContext : public js::ExclusiveContext,
     js::PerThreadData &mainThread() const { return runtime()->mainThread; }
 
     friend class js::ExclusiveContext;
+    friend class JS::AutoSaveExceptionState;
 
   private:
     /* Exception state -- the exception member is a GC root by definition. */
@@ -517,7 +519,7 @@ struct JSContext : public js::ExclusiveContext,
     js::StackFrame *interpreterFrame() const {
         return mainThread().activation()->asInterpreter()->current();
     }
-    js::FrameRegs &interpreterRegs() const {
+    js::InterpreterRegs &interpreterRegs() const {
         return mainThread().activation()->asInterpreter()->regs();
     }
 
@@ -554,16 +556,6 @@ struct JSContext : public js::ExclusiveContext,
     JSGenerator *innermostGenerator() const { return innermostGenerator_; }
     void enterGenerator(JSGenerator *gen);
     void leaveGenerator(JSGenerator *gen);
-
-    void *onOutOfMemory(void *p, size_t nbytes) {
-        return runtime()->onOutOfMemory(p, nbytes, this);
-    }
-    void updateMallocCounter(size_t nbytes) {
-        runtime()->updateMallocCounter(zone(), nbytes);
-    }
-    void reportAllocationOverflow() {
-        js_ReportAllocationOverflow(this);
-    }
 
     bool isExceptionPending() {
         return throwing;
@@ -826,29 +818,36 @@ js_strdup(js::ExclusiveContext *cx, const char *s);
 # define JS_ASSERT_REQUEST_DEPTH(cx)  ((void) 0)
 #endif
 
+namespace js {
+
 /*
- * Invoke the operation callback and return false if the current execution
+ * Invoke the interrupt callback and return false if the current execution
  * is to be terminated.
  */
-extern bool
-js_InvokeOperationCallback(JSContext *cx);
+bool
+InvokeInterruptCallback(JSContext *cx);
 
-extern bool
-js_HandleExecutionInterrupt(JSContext *cx);
+bool
+HandleExecutionInterrupt(JSContext *cx);
 
 /*
- * If the operation callback flag was set, call the operation callback.
- * This macro can run the full GC. Return true if it is OK to continue and
- * false otherwise.
+ * Process any pending interrupt requests. Long-running inner loops in C++ must
+ * call this periodically to make sure they are interruptible --- that is, to
+ * make sure they do not prevent the slow script dialog from appearing.
+ *
+ * This can run a full GC or call the interrupt callback, which could do
+ * anything. In the browser, it displays the slow script dialog.
+ *
+ * If this returns true, the caller can continue; if false, the caller must
+ * break out of its loop. This happens if, for example, the user clicks "Stop
+ * script" on the slow script dialog; treat it as an uncatchable error.
  */
-static MOZ_ALWAYS_INLINE bool
-JS_CHECK_OPERATION_LIMIT(JSContext *cx)
+inline bool
+CheckForInterrupt(JSContext *cx)
 {
     JS_ASSERT_REQUEST_DEPTH(cx);
-    return !cx->runtime()->interrupt || js_InvokeOperationCallback(cx);
+    return !cx->runtime()->interrupt || InvokeInterruptCallback(cx);
 }
-
-namespace js {
 
 /************************************************************************/
 
@@ -1042,6 +1041,10 @@ bool intrinsic_NewParallelArray(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_ForkJoinGetSlice(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_InParallelSection(JSContext *cx, unsigned argc, Value *vp);
 
+bool intrinsic_ObjectIsTransparentTypedObject(JSContext *cx, unsigned argc, Value *vp);
+bool intrinsic_ObjectIsOpaqueTypedObject(JSContext *cx, unsigned argc, Value *vp);
+bool intrinsic_ObjectIsTypeDescr(JSContext *cx, unsigned argc, Value *vp);
+
 class AutoLockForExclusiveAccess
 {
 #ifdef JS_THREADSAFE
@@ -1097,68 +1100,8 @@ class AutoLockForExclusiveAccess
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-class AutoLockForCompilation
-{
-#ifdef JS_THREADSAFE
-    JSRuntime *runtime;
-
-    void init(JSRuntime *rt) {
-        runtime = rt;
-        if (runtime->numCompilationThreads) {
-            runtime->assertCanLock(CompilationLock);
-            PR_Lock(runtime->compilationLock);
-#ifdef DEBUG
-            runtime->compilationLockOwner = PR_GetCurrentThread();
-#endif
-        } else {
-#ifdef DEBUG
-            JS_ASSERT(!runtime->mainThreadHasCompilationLock);
-            runtime->mainThreadHasCompilationLock = true;
-#endif
-        }
-    }
-
-  public:
-    AutoLockForCompilation(ExclusiveContext *cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        if (cx->isJSContext())
-            init(cx->asJSContext()->runtime());
-        else
-            runtime = nullptr;
-    }
-    AutoLockForCompilation(jit::CompileCompartment *compartment MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-    ~AutoLockForCompilation() {
-        if (runtime) {
-            if (runtime->numCompilationThreads) {
-                JS_ASSERT(runtime->compilationLockOwner == PR_GetCurrentThread());
-#ifdef DEBUG
-                runtime->compilationLockOwner = nullptr;
-#endif
-                PR_Unlock(runtime->compilationLock);
-            } else {
-#ifdef DEBUG
-                JS_ASSERT(runtime->mainThreadHasCompilationLock);
-                runtime->mainThreadHasCompilationLock = false;
-#endif
-            }
-        }
-    }
-#else // JS_THREADSAFE
-  public:
-    AutoLockForCompilation(ExclusiveContext *cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    AutoLockForCompilation(jit::CompileCompartment *compartment MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    ~AutoLockForCompilation() {
-        // An empty destructor is needed to avoid warnings from clang about
-        // unused local variables of this type.
-    }
-#endif // JS_THREADSAFE
-
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
+void
+CrashAtUnhandlableOOM(const char *reason);
 
 } /* namespace js */
 

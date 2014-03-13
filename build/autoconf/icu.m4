@@ -122,8 +122,6 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
     dnl We build ICU as a static library for non-shared js builds and as a shared library for shared js builds.
     if test -z "$MOZ_SHARED_ICU"; then
         AC_DEFINE(U_STATIC_IMPLEMENTATION)
-    else
-        AC_DEFINE(U_COMBINED_IMPLEMENTATION)
     fi
     dnl Source files that use ICU should have control over which parts of the ICU
     dnl namespace they want to use.
@@ -149,6 +147,8 @@ if test -z "$BUILDING_JS" -o -n "$JS_STANDALONE"; then
         ICU_CPPFLAGS="$ICU_CPPFLAGS -DUCONFIG_NO_TRANSLITERATION"
         ICU_CPPFLAGS="$ICU_CPPFLAGS -DUCONFIG_NO_REGULAR_EXPRESSIONS"
         ICU_CPPFLAGS="$ICU_CPPFLAGS -DUCONFIG_NO_BREAK_ITERATION"
+        # make sure to not accidentally pick up system-icu headers
+        ICU_CPPFLAGS="$ICU_CPPFLAGS -I$icudir/common -I$icudir/i18n"
 
         ICU_CROSS_BUILD_OPT=""
         ICU_SRCDIR=""
@@ -168,7 +168,7 @@ if test -z "$BUILDING_JS" -o -n "$JS_STANDALONE"; then
     	    WINNT)
     		ICU_TARGET=MSYS/MSVC
     		;;
-    	    *bsd*|dragonfly*)
+            DragonFly|FreeBSD|NetBSD|OpenBSD|GNU_kFreeBSD)
     		ICU_TARGET=BSD
     		;;
     	esac

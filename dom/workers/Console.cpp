@@ -292,7 +292,7 @@ private:
     JS::Rooted<JS::Value> stackValue(cx);
     {
       JS::Rooted<JSObject*> stackObj(cx,
-        JS_NewArrayObject(cx, mStackData.Length(), nullptr));
+        JS_NewArrayObject(cx, mStackData.Length()));
       if (!stackObj) {
         return;
       }
@@ -327,7 +327,7 @@ private:
     args[2].set(stackValue);
 
     JS::Rooted<JS::Value> ret(cx);
-    JS_CallFunctionName(cx, consoleObj, "queueCall", args, ret.address());
+    JS_CallFunctionName(cx, consoleObj, "queueCall", args, &ret);
   }
 
   WorkerConsole* mConsole;
@@ -341,10 +341,10 @@ private:
   nsTArray<nsString> mStrings;
 };
 
-class TeardownRunnable : public nsRunnable
+class TeardownConsoleRunnable : public nsRunnable
 {
 public:
-  TeardownRunnable(ConsoleProxy* aProxy)
+  TeardownConsoleRunnable(ConsoleProxy* aProxy)
     : mProxy(aProxy)
   {
   }
@@ -392,7 +392,8 @@ WorkerConsole::~WorkerConsole()
   MOZ_COUNT_DTOR(WorkerConsole);
 
   if (mProxy) {
-    nsRefPtr<TeardownRunnable> runnable = new TeardownRunnable(mProxy);
+    nsRefPtr<TeardownConsoleRunnable> runnable =
+      new TeardownConsoleRunnable(mProxy);
     mProxy = nullptr;
 
     if (NS_FAILED(NS_DispatchToMainThread(runnable))) {
@@ -447,8 +448,7 @@ WorkerConsole::Method(JSContext* aCx, const char* aMethodName,
     stack.swap(caller);
   }
 
-  JS::Rooted<JSObject*> arguments(aCx,
-    JS_NewArrayObject(aCx, aData.Length(), nullptr));
+  JS::Rooted<JSObject*> arguments(aCx, JS_NewArrayObject(aCx, aData.Length()));
   if (!arguments) {
     return;
   }
@@ -492,14 +492,13 @@ WorkerConsole::Trace(JSContext* aCx)
 }
 
 void
-WorkerConsole::Dir(JSContext* aCx,
-                   const Optional<JS::Handle<JS::Value>>& aValue)
+WorkerConsole::Dir(JSContext* aCx, JS::Handle<JS::Value> aValue)
 {
   Sequence<JS::Value> data;
   SequenceRooter<JS::Value> rooter(aCx, &data);
 
-  if (aValue.WasPassed()) {
-    data.AppendElement(aValue.Value());
+  if (!aValue.isUndefined()) {
+    data.AppendElement(aValue);
   }
 
   Method(aCx, "dir", data, 1);
@@ -510,14 +509,13 @@ METHOD(GroupCollapsed, "groupCollapsed")
 METHOD(GroupEnd, "groupEnd")
 
 void
-WorkerConsole::Time(JSContext* aCx,
-                    const Optional<JS::Handle<JS::Value>>& aTimer)
+WorkerConsole::Time(JSContext* aCx, JS::Handle<JS::Value> aTimer)
 {
   Sequence<JS::Value> data;
   SequenceRooter<JS::Value> rooter(aCx, &data);
 
-  if (aTimer.WasPassed()) {
-    data.AppendElement(aTimer.Value());
+  if (!aTimer.isUndefined()) {
+    data.AppendElement(aTimer);
   }
 
   Method(aCx, "time", data, 1);
@@ -525,13 +523,13 @@ WorkerConsole::Time(JSContext* aCx,
 
 void
 WorkerConsole::TimeEnd(JSContext* aCx,
-                       const Optional<JS::Handle<JS::Value>>& aTimer)
+                       JS::Handle<JS::Value> aTimer)
 {
   Sequence<JS::Value> data;
   SequenceRooter<JS::Value> rooter(aCx, &data);
 
-  if (aTimer.WasPassed()) {
-    data.AppendElement(aTimer.Value());
+  if (!aTimer.isUndefined()) {
+    data.AppendElement(aTimer);
   }
 
   Method(aCx, "timeEnd", data, 1);

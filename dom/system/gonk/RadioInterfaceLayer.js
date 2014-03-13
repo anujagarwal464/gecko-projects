@@ -22,6 +22,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Sntp.jsm");
 Cu.import("resource://gre/modules/systemlibs.js");
 Cu.import("resource://gre/modules/Promise.jsm");
+Cu.import("resource://gre/modules/FileUtils.jsm");
 
 var RIL = {};
 Cu.import("resource://gre/modules/ril_consts.js", RIL);
@@ -51,6 +52,10 @@ let RILQUIRKS_DATA_REGISTRATION_ON_DEMAND =
 let RILQUIRKS_RADIO_OFF_WO_CARD =
   libcutils.property_get("ro.moz.ril.radio_off_wo_card", "false") == "true";
 
+// Ril quirk to enable IPv6 protocol/roaming protocol in APN settings.
+let RILQUIRKS_HAVE_IPV6 =
+  libcutils.property_get("ro.moz.ril.ipv6", "false") == "true";
+
 const RADIOINTERFACELAYER_CID =
   Components.ID("{2d831c8d-6017-435b-a80c-e5d422810cea}");
 const RADIOINTERFACE_CID =
@@ -64,6 +69,7 @@ const CDMAICCINFO_CID =
 
 const NS_XPCOM_SHUTDOWN_OBSERVER_ID      = "xpcom-shutdown";
 const kNetworkInterfaceStateChangedTopic = "network-interface-state-changed";
+const kNetworkConnStateChangedTopic      = "network-connection-state-changed";
 const kSmsReceivedObserverTopic          = "sms-received";
 const kSilentSmsReceivedObserverTopic    = "silent-sms-received";
 const kSmsSendingObserverTopic           = "sms-sending";
@@ -508,49 +514,73 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function() {
 });
 
 XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
-  return {
-    ril: null,
-    pendingMessages: [],  // For queueing "RIL:SetRadioEnabled" messages.
-    timer: null,
-    request: null,
-    deactivatingDeferred: {},
+  let _ril = null;
+  let _pendingMessages = [];  // For queueing "RIL =SetRadioEnabled" messages.
+  let _isProcessingPending = false;
+  let _timer = null;
+  let _request = null;
+  let _deactivatingDeferred = {};
+  let _initializedCardState = {};
+  let _allCardStateInitialized = !RILQUIRKS_RADIO_OFF_WO_CARD;
 
+  return {
     init: function(ril) {
-      this.ril = ril;
+      _ril = ril;
     },
 
-    receiveMessage: function(msg) {
-      if (DEBUG) debug("setRadioEnabled: receiveMessage: " + JSON.stringify(msg));
-      this.pendingMessages.push(msg);
-      if (this.pendingMessages.length === 1 && !this.isDeactivatingDataCalls()) {
-        this._processNextMessage();
+    receiveCardState: function(clientId) {
+      if (_allCardStateInitialized) {
+        return;
+      }
+
+      if (DEBUG) debug("RadioControl: receive cardState from " + clientId);
+      _initializedCardState[clientId] = true;
+      if (Object.keys(_initializedCardState).length == _ril.numRadioInterfaces) {
+        _allCardStateInitialized = true;
+        this._startProcessingPending();
       }
     },
 
+    receiveMessage: function(msg) {
+      if (DEBUG) debug("RadioControl: receiveMessage: " + JSON.stringify(msg));
+      _pendingMessages.push(msg);
+      this._startProcessingPending();
+    },
+
     isDeactivatingDataCalls: function() {
-      return this.request !== null;
+      return _request !== null;
     },
 
     finishDeactivatingDataCalls: function(clientId) {
-      if (DEBUG) debug("setRadioEnabled: finishDeactivatingDataCalls: " + clientId);
-      let deferred = this.deactivatingDeferred[clientId];
+      if (DEBUG) debug("RadioControl: finishDeactivatingDataCalls: " + clientId);
+      let deferred = _deactivatingDeferred[clientId];
       if (deferred) {
         deferred.resolve();
       }
     },
 
+    _startProcessingPending: function() {
+      if (!_isProcessingPending) {
+        if (DEBUG) debug("RadioControl: start dequeue");
+        _isProcessingPending = true;
+        this._processNextMessage();
+      }
+    },
+
     _processNextMessage: function() {
-      if (this.pendingMessages.length === 0) {
+      if (_pendingMessages.length === 0 || !_allCardStateInitialized) {
+        if (DEBUG) debug("RadioControl: stop dequeue");
+        _isProcessingPending = false;
         return;
       }
 
-      let msg = this.pendingMessages.shift();
+      let msg = _pendingMessages.shift();
       this._handleMessage(msg);
     },
 
     _getNumCards: function() {
       let numCards = 0;
-      for (let i = 0, N = this.ril.numRadioInterfaces; i < N; ++i) {
+      for (let i = 0, N = _ril.numRadioInterfaces; i < N; ++i) {
         if (this._isCardPresentAtClient(i)) {
           numCards++;
         }
@@ -559,7 +589,7 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
     },
 
     _isCardPresentAtClient: function(clientId) {
-      let cardState = this.ril.getRadioInterface(clientId).rilContext.cardState;
+      let cardState = _ril.getRadioInterface(clientId).rilContext.cardState;
       return cardState !== RIL.GECKO_CARDSTATE_UNDETECTED &&
         cardState !== RIL.GECKO_CARDSTATE_UNKNOWN;
     },
@@ -586,9 +616,9 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
     },
 
     _handleMessage: function(msg) {
-      if (DEBUG) debug("setRadioEnabled: handleMessage: " + JSON.stringify(msg));
+      if (DEBUG) debug("RadioControl: handleMessage: " + JSON.stringify(msg));
       let clientId = msg.json.clientId || 0;
-      let radioInterface = this.ril.getRadioInterface(clientId);
+      let radioInterface = _ril.getRadioInterface(clientId);
 
       if (!radioInterface.isValidStateForSetRadioEnabled()) {
         radioInterface.setRadioEnabledResponse(msg.target, msg.json.data,
@@ -613,17 +643,17 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
 
         this._processNextMessage();
       } else {
-        this.request = (function() {
+        _request = function() {
           radioInterface.receiveMessage(msg);
-        }).bind(this);
+        };
 
         // In 2G network, modem takes 35+ seconds to process deactivate data
         // call request if device has active voice call (please see bug 964974
         // for more details). Therefore we should hangup all active voice calls
         // first. And considering some DSDS architecture, toggling one radio may
         // toggle both, so we send hangUpAll to all clients.
-        for (let i = 0, N = this.ril.numRadioInterfaces; i < N; ++i) {
-          let iface = this.ril.getRadioInterface(i);
+        for (let i = 0, N = _ril.numRadioInterfaces; i < N; ++i) {
+          let iface = _ril.getRadioInterface(i);
           iface.workerMessenger.send("hangUpAll");
         }
 
@@ -631,7 +661,7 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
         // toggle both. Therefore, for safely turning off, we should first
         // explicitly deactivate all data calls from all clients.
         this._deactivateDataCalls().then(() => {
-          if (DEBUG) debug("setRadioEnabled: deactivation done");
+          if (DEBUG) debug("RadioControl: deactivation done");
           this._executeRequest();
         });
 
@@ -640,11 +670,11 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
     },
 
     _deactivateDataCalls: function() {
-      if (DEBUG) debug("setRadioEnabled: deactivating data calls...");
-      this.deactivatingDeferred = {};
+      if (DEBUG) debug("RadioControl: deactivating data calls...");
+      _deactivatingDeferred = {};
 
       let promise = Promise.resolve();
-      for (let i = 0, N = this.ril.numRadioInterfaces; i < N; ++i) {
+      for (let i = 0, N = _ril.numRadioInterfaces; i < N; ++i) {
         promise = promise.then(this._deactivateDataCallsForClient(i));
       }
 
@@ -652,35 +682,35 @@ XPCOMUtils.defineLazyGetter(this, "gRadioEnabledController", function() {
     },
 
     _deactivateDataCallsForClient: function(clientId) {
-      return (function() {
-        let deferred = this.deactivatingDeferred[clientId] = Promise.defer();
+      return function() {
+        let deferred = _deactivatingDeferred[clientId] = Promise.defer();
         let dataConnectionHandler = gDataConnectionManager.getConnectionHandler(clientId);
         dataConnectionHandler.deactivateDataCalls();
         return deferred.promise;
-      }).bind(this);
+      };
     },
 
     _createTimer: function() {
-      if (!this.timer) {
-        this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+      if (!_timer) {
+        _timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
       }
-      this.timer.initWithCallback(this._executeRequest.bind(this),
-                                  RADIO_POWER_OFF_TIMEOUT,
-                                  Ci.nsITimer.TYPE_ONE_SHOT);
+      _timer.initWithCallback(this._executeRequest.bind(this),
+                              RADIO_POWER_OFF_TIMEOUT,
+                              Ci.nsITimer.TYPE_ONE_SHOT);
     },
 
     _cancelTimer: function() {
-      if (this.timer) {
-        this.timer.cancel();
+      if (_timer) {
+        _timer.cancel();
       }
     },
 
     _executeRequest: function() {
-      if (typeof this.request === "function") {
-        if (DEBUG) debug("setRadioEnabled: executeRequest");
+      if (typeof _request === "function") {
+        if (DEBUG) debug("RadioControl: executeRequest");
         this._cancelTimer();
-        this.request();
-        this.request = null;
+        _request();
+        _request = null;
       }
       this._processNextMessage();
     },
@@ -1533,47 +1563,14 @@ DataConnectionHandler.prototype = {
 };
 
 function RadioInterfaceLayer() {
-  let options = {
-    debug: debugPref,
-    cellBroadcastDisabled: false,
-    clirMode: RIL.CLIR_DEFAULT,
-    quirks: {
-      callstateExtraUint32:
-        libcutils.property_get("ro.moz.ril.callstate_extra_int", "false") === "true",
-      v5Legacy:
-        libcutils.property_get("ro.moz.ril.v5_legacy", "true") === "true",
-      requestUseDialEmergencyCall:
-        libcutils.property_get("ro.moz.ril.dial_emergency_call", "false") === "true",
-      simAppStateExtraFields:
-        libcutils.property_get("ro.moz.ril.simstate_extra_field", "false") === "true",
-      extraUint2ndCall:
-        libcutils.property_get("ro.moz.ril.extra_int_2nd_call", "false") == "true",
-      haveQueryIccLockRetryCount:
-        libcutils.property_get("ro.moz.ril.query_icc_count", "false") == "true",
-      sendStkProfileDownload:
-        libcutils.property_get("ro.moz.ril.send_stk_profile_dl", "false") == "true",
-      dataRegistrationOnDemand:
-        libcutils.property_get("ro.moz.ril.data_reg_on_demand", "false") == "true"
-    },
-    rilEmergencyNumbers: libcutils.property_get("ril.ecclist") ||
-                         libcutils.property_get("ro.ril.ecclist")
-  };
-
-  try {
-    options.cellBroadcastDisabled =
-      Services.prefs.getBoolPref(kPrefCellBroadcastDisabled);
-  } catch(e) {}
-
-  try {
-    options.clirMode = Services.prefs.getIntPref(kPrefClirModePreference);
-  } catch(e) {}
+  let workerMessenger = new WorkerMessenger();
+  workerMessenger.init();
 
   let numIfaces = this.numRadioInterfaces;
   if (DEBUG) debug(numIfaces + " interfaces");
   this.radioInterfaces = [];
   for (let clientId = 0; clientId < numIfaces; clientId++) {
-    options.clientId = clientId;
-    this.radioInterfaces.push(new RadioInterface(options));
+    this.radioInterfaces.push(new RadioInterface(clientId, workerMessenger));
   }
 
   Services.obs.addObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
@@ -1648,25 +1645,17 @@ XPCOMUtils.defineLazyGetter(RadioInterfaceLayer.prototype,
   return 1;
 });
 
-function WorkerMessenger(radioInterface, options) {
+function WorkerMessenger() {
   // Initial owning attributes.
-  this.radioInterface = radioInterface;
+  this.radioInterfaces = [];
   this.tokenCallbackMap = {};
 
-  // Add a convenient alias to |radioInterface.debug()|.
-  this.debug = radioInterface.debug.bind(radioInterface);
-
-  if (DEBUG) this.debug("Starting RIL Worker[" + options.clientId + "]");
   this.worker = new ChromeWorker("resource://gre/modules/ril_worker.js");
   this.worker.onerror = this.onerror.bind(this);
   this.worker.onmessage = this.onmessage.bind(this);
-
-  this.send("setInitialOptions", options);
-
-  gSystemWorkerManager.registerRilWorker(options.clientId, this.worker);
 }
 WorkerMessenger.prototype = {
-  radioInterface: null,
+  radioInterfaces: null,
   worker: null,
 
   // This gets incremented each time we send out a message.
@@ -1675,9 +1664,53 @@ WorkerMessenger.prototype = {
   // Maps tokens we send out with messages to the message callback.
   tokenCallbackMap: null,
 
+  init: function() {
+    let options = {
+      debug: DEBUG,
+      cellBroadcastDisabled: false,
+      clirMode: RIL.CLIR_DEFAULT,
+      quirks: {
+        callstateExtraUint32:
+          libcutils.property_get("ro.moz.ril.callstate_extra_int", "false") === "true",
+        v5Legacy:
+          libcutils.property_get("ro.moz.ril.v5_legacy", "true") === "true",
+        requestUseDialEmergencyCall:
+          libcutils.property_get("ro.moz.ril.dial_emergency_call", "false") === "true",
+        simAppStateExtraFields:
+          libcutils.property_get("ro.moz.ril.simstate_extra_field", "false") === "true",
+        extraUint2ndCall:
+          libcutils.property_get("ro.moz.ril.extra_int_2nd_call", "false") == "true",
+        haveQueryIccLockRetryCount:
+          libcutils.property_get("ro.moz.ril.query_icc_count", "false") == "true",
+        sendStkProfileDownload:
+          libcutils.property_get("ro.moz.ril.send_stk_profile_dl", "false") == "true",
+        dataRegistrationOnDemand:
+          libcutils.property_get("ro.moz.ril.data_reg_on_demand", "false") == "true"
+      },
+      rilEmergencyNumbers: libcutils.property_get("ril.ecclist") ||
+                           libcutils.property_get("ro.ril.ecclist")
+    };
+
+    try {
+      options.cellBroadcastDisabled =
+        Services.prefs.getBoolPref(kPrefCellBroadcastDisabled);
+    } catch(e) {}
+
+    try {
+      options.clirMode = Services.prefs.getIntPref(kPrefClirModePreference);
+    } catch(e) {}
+
+    this.send(null, "setInitialOptions", options);
+  },
+
+  debug: function(aClientId, aMessage) {
+    // We use the same debug subject with RadioInterface's here.
+    dump("-*- RadioInterface[" + aClientId + "]: " + aMessage + "\n");
+  },
+
   onerror: function(event) {
     if (DEBUG) {
-      this.debug("Got an error: " + event.filename + ":" +
+      this.debug("X", "Got an error: " + event.filename + ":" +
                  event.lineno + ": " + event.message + "\n");
     }
     event.preventDefault();
@@ -1688,20 +1721,26 @@ WorkerMessenger.prototype = {
    */
   onmessage: function(event) {
     let message = event.data;
+    let clientId = message.rilMessageClientId;
+    if (clientId === null) {
+      return;
+    }
+
     if (DEBUG) {
-      this.debug("Received message from worker: " + JSON.stringify(message));
+      this.debug(clientId, "Received message from worker: " + JSON.stringify(message));
     }
 
     let token = message.rilMessageToken;
     if (token == null) {
       // That's an unsolicited message.  Pass to RadioInterface directly.
-      this.radioInterface.handleUnsolicitedWorkerMessage(message);
+      let radioInterface = this.radioInterfaces[clientId];
+      radioInterface.handleUnsolicitedWorkerMessage(message);
       return;
     }
 
     let callback = this.tokenCallbackMap[message.rilMessageToken];
     if (!callback) {
-      if (DEBUG) this.debug("Ignore orphan token: " + message.rilMessageToken);
+      if (DEBUG) this.debug(clientId, "Ignore orphan token: " + message.rilMessageToken);
       return;
     }
 
@@ -1709,12 +1748,22 @@ WorkerMessenger.prototype = {
     try {
       keep = callback(message);
     } catch(e) {
-      if (DEBUG) this.debug("callback throws an exception: " + e);
+      if (DEBUG) this.debug(clientId, "callback throws an exception: " + e);
     }
 
     if (!keep) {
       delete this.tokenCallbackMap[message.rilMessageToken];
     }
+  },
+
+  registerClient: function(aClientId, aRadioInterface) {
+    if (DEBUG) this.debug(aClientId, "Starting RIL Worker");
+
+    // Keep a reference so that we can dispatch unsolicited messages to it.
+    this.radioInterfaces[aClientId] = aRadioInterface;
+
+    this.send(null, "registerClient", { clientId: aClientId });
+    gSystemWorkerManager.registerRilWorker(aClientId, this.worker);
   },
 
   /**
@@ -1732,9 +1781,10 @@ WorkerMessenger.prototype = {
    *        value true to keep current token-callback mapping and wait for
    *        another worker reply, or false to remove the mapping.
    */
-  send: function(rilMessageType, message, callback) {
+  send: function(clientId, rilMessageType, message, callback) {
     message = message || {};
 
+    message.rilMessageClientId = clientId;
     message.rilMessageToken = this.token;
     this.token++;
 
@@ -1765,11 +1815,11 @@ WorkerMessenger.prototype = {
    *
    * @TODO: Bug 815526 - deprecate RILContentHelper.
    */
-  sendWithIPCMessage: function(msg, rilMessageType, ipcType) {
-    this.send(rilMessageType, msg.json.data, (function(reply) {
+  sendWithIPCMessage: function(clientId, msg, rilMessageType, ipcType) {
+    this.send(clientId, rilMessageType, msg.json.data, (function(reply) {
       ipcType = ipcType || msg.name;
       msg.target.sendAsyncMessage(ipcType, {
-        clientId: this.radioInterface.clientId,
+        clientId: clientId,
         data: reply
       });
       return false;
@@ -1777,9 +1827,14 @@ WorkerMessenger.prototype = {
   }
 };
 
-function RadioInterface(options) {
-  this.clientId = options.clientId;
-  this.workerMessenger = new WorkerMessenger(this, options);
+function RadioInterface(aClientId, aWorkerMessenger) {
+  this.clientId = aClientId;
+  this.workerMessenger = {
+    send: aWorkerMessenger.send.bind(aWorkerMessenger, aClientId),
+    sendWithIPCMessage:
+      aWorkerMessenger.sendWithIPCMessage.bind(aWorkerMessenger, aClientId),
+  };
+  aWorkerMessenger.registerClient(aClientId, this);
 
   this.supportedNetworkTypes = this.getSupportedNetworkTypes();
 
@@ -1847,7 +1902,7 @@ function RadioInterface(options) {
   Services.obs.addObserver(this, kSysClockChangeObserverTopic, false);
   Services.obs.addObserver(this, kScreenStateChangedTopic, false);
 
-  Services.obs.addObserver(this, kNetworkInterfaceStateChangedTopic, false);
+  Services.obs.addObserver(this, kNetworkConnStateChangedTopic, false);
   Services.prefs.addObserver(kPrefCellBroadcastDisabled, this, false);
 
   this.portAddressedSmsApps = {};
@@ -1872,7 +1927,7 @@ RadioInterface.prototype = {
                                          Ci.nsIObserver,
                                          Ci.nsISettingsServiceCallback]),
 
-  // A private WorkerMessenger instance.
+  // A private wrapped WorkerMessenger instance.
   workerMessenger: null,
 
   debug: function(s) {
@@ -1886,7 +1941,7 @@ RadioInterface.prototype = {
     Services.obs.removeObserver(this, kMozSettingsChangedObserverTopic);
     Services.obs.removeObserver(this, kSysClockChangeObserverTopic);
     Services.obs.removeObserver(this, kScreenStateChangedTopic);
-    Services.obs.removeObserver(this, kNetworkInterfaceStateChangedTopic);
+    Services.obs.removeObserver(this, kNetworkConnStateChangedTopic);
   },
 
   /**
@@ -2097,32 +2152,23 @@ RadioInterface.prototype = {
       case "cdmaCallWaiting":
         gTelephonyProvider.notifyCdmaCallWaiting(this.clientId, message.number);
         break;
-      case "callError":
-        gTelephonyProvider.notifyCallError(this.clientId, message.callIndex,
-                                           message.errorMsg);
-        break;
       case "suppSvcNotification":
         gTelephonyProvider.notifySupplementaryService(this.clientId,
                                                       message.callIndex,
                                                       message.notification);
-        break;
-      case "conferenceError":
-        gTelephonyProvider.notifyConferenceError(message.errorName,
-                                                 message.errorMsg);
         break;
       case "datacallerror":
         connHandler.handleDataCallError(message);
         break;
       case "datacallstatechange":
         message.ip = null;
-        message.netmask = null;
+        message.prefixLength = 0;
         message.broadcast = null;
         if (message.ipaddr) {
           message.ip = message.ipaddr.split("/")[0];
+          message.prefixLength = parseInt(message.ipaddr.split("/")[1], 10);
           let ip_value = netHelpers.stringToIP(message.ip);
-          let prefix_len = message.ipaddr.split("/")[1];
-          let mask_value = netHelpers.makeMask(prefix_len);
-          message.netmask = netHelpers.ipToString(mask_value);
+          let mask_value = netHelpers.makeMask(message.prefixLength);
           message.broadcast = netHelpers.ipToString((ip_value & mask_value) + ~mask_value);
         }
         connHandler.handleDataCallState(message);
@@ -2159,6 +2205,7 @@ RadioInterface.prototype = {
         break;
       case "cardstatechange":
         this.rilContext.cardState = message.cardState;
+        gRadioEnabledController.receiveCardState(this.clientId);
         gMessageManager.sendIccMessage("RIL:CardStateChanged",
                                        this.clientId, message);
         break;
@@ -2251,7 +2298,7 @@ RadioInterface.prototype = {
   getIccId: function() {
     let iccInfo = this.rilContext.iccInfo;
 
-    if (!iccInfo || !(iccInfo instanceof GsmIccInfo)) {
+    if (!iccInfo) {
       return null;
     }
 
@@ -2752,6 +2799,7 @@ RadioInterface.prototype = {
     // because the system message mechamism will rewrap the object
     // based on the content window, which needs to know the properties.
     gSystemMessenger.broadcastMessage(aName, {
+      iccId:             aDomMessage.iccId,
       type:              aDomMessage.type,
       id:                aDomMessage.id,
       threadId:          aDomMessage.threadId,
@@ -3135,7 +3183,7 @@ RadioInterface.prototype = {
         }
         this._sntp.updateOffset(offset);
         break;
-      case kNetworkInterfaceStateChangedTopic:
+      case kNetworkConnStateChangedTopic:
         let network = subject.QueryInterface(Ci.nsINetworkInterface);
         if (network.state != Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED) {
           return;
@@ -3252,6 +3300,16 @@ RadioInterface.prototype = {
           } else {
             // Or refresh the SNTP.
             this._sntp.request();
+          }
+        } else {
+          // Set a sane minimum time.
+          let buildTime = libcutils.property_get("ro.build.date.utc", "0") * 1000;
+          let file = FileUtils.File("/system/b2g/b2g");
+          if (file.lastModifiedTime > buildTime) {
+            buildTime = file.lastModifiedTime;
+          }
+          if (buildTime > Date.now()) {
+            gTimeService.set(buildTime);
           }
         }
         break;
@@ -3880,7 +3938,14 @@ RadioInterface.prototype = {
     }
 
     let notifyResult = (function notifyResult(rv, domMessage) {
-      // TODO bug 832140 handle !Components.isSuccessCode(rv)
+      if (!Components.isSuccessCode(rv)) {
+        if (DEBUG) this.debug("Error! Fail to save sending message! rv = " + rv);
+        request.notifySendMessageFailed(
+          gMobileMessageDatabaseService.translateCrErrorToMessageCallbackError(rv));
+        Services.obs.notifyObservers(domMessage, kSmsFailedObserverTopic, null);
+        return;
+      }
+
       if (!silent) {
         Services.obs.notifyObservers(domMessage, kSmsSendingObserverTopic, null);
       }
@@ -4122,9 +4187,13 @@ RadioInterface.prototype = {
   },
 
   sendWorkerMessage: function(rilMessageType, message, callback) {
-    this.workerMessenger.send(rilMessageType, message, function(response) {
-      return callback.handleResponse(response);
-    });
+    if (callback) {
+      this.workerMessenger.send(rilMessageType, message, function(response) {
+        return callback.handleResponse(response);
+      });
+    } else {
+      this.workerMessenger.send(rilMessageType, message);
+    }
   }
 };
 
@@ -4157,6 +4226,8 @@ RILNetworkInterface.prototype = {
   NETWORK_TYPE_MOBILE:      Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE,
   NETWORK_TYPE_MOBILE_MMS:  Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS,
   NETWORK_TYPE_MOBILE_SUPL: Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_SUPL,
+  NETWORK_TYPE_MOBILE_IMS:  Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_IMS,
+  NETWORK_TYPE_MOBILE_DUN:  Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_DUN,
   // The network manager should only need to add the host route for "other"
   // types, which is the same handling method as the supl type. So let the
   // definition of other types to be the same as the one of supl type.
@@ -4189,6 +4260,13 @@ RILNetworkInterface.prototype = {
     if (this.connectedTypes.indexOf("supl") != -1) {
       return this.NETWORK_TYPE_MOBILE_SUPL;
     }
+    if (this.connectedTypes.indexOf("ims") != -1) {
+      return this.NETWORK_TYPE_MOBILE_IMS;
+    }
+    if (this.connectedTypes.indexOf("dun") != -1) {
+      return this.NETWORK_TYPE_MOBILE_DUN;
+    }
+
     return this.NETWORK_TYPE_MOBILE_OTHERS;
   },
 
@@ -4196,7 +4274,7 @@ RILNetworkInterface.prototype = {
 
   ip: null,
 
-  netmask: null,
+  prefixLength: 0,
 
   broadcast: null,
 
@@ -4317,7 +4395,7 @@ RILNetworkInterface.prototype = {
       this.cid = datacall.cid;
       this.name = datacall.ifname;
       this.ip = datacall.ip;
-      this.netmask = datacall.netmask;
+      this.prefixLength = datacall.prefixLength;
       this.broadcast = datacall.broadcast;
       this.gateway = datacall.gw;
       if (datacall.dns) {
@@ -4452,12 +4530,25 @@ RILNetworkInterface.prototype = {
       }
       authType = RIL.RIL_DATACALL_AUTH_TO_GECKO.indexOf(RIL.GECKO_DATACALL_AUTH_DEFAULT);
     }
+    let pdpType = RIL.GECKO_DATACALL_PDP_TYPE_IP;
+    if (RILQUIRKS_HAVE_IPV6) {
+      pdpType = !radioInterface.rilContext.data.roaming
+              ? this.apnSetting.protocol
+              : this.apnSetting.roaming_protocol;
+      if (RIL.RIL_DATACALL_PDP_TYPES.indexOf(pdpType) < 0) {
+        if (DEBUG) {
+          this.debug("Invalid pdpType '" + pdpType + "', using '" +
+                     RIL.GECKO_DATACALL_PDP_TYPE_DEFAULT + "'");
+        }
+        pdpType = RIL.GECKO_DATACALL_PDP_TYPE_DEFAULT;
+      }
+    }
     radioInterface.setupDataCall(radioTechnology,
                                  this.apnSetting.apn,
                                  this.apnSetting.user,
                                  this.apnSetting.password,
                                  authType,
-                                 "IP");
+                                 pdpType);
     this.connecting = true;
   },
 

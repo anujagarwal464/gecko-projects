@@ -23,13 +23,18 @@
 
 namespace insanity { namespace pkix {
 
-Result CheckTimes(const CERTCertificate* cert, PRTime time);
+Result CheckIssuerIndependentProperties(
+          TrustDomain& trustDomain,
+          BackCert& cert,
+          PRTime time,
+          EndEntityOrCA endEntityOrCA,
+          KeyUsages requiredKeyUsagesIfPresent,
+          SECOidTag requiredEKUIfPresent,
+          SECOidTag requiredPolicy,
+          unsigned int subCACount,
+          /*optional out*/ TrustDomain::TrustLevel* trustLevel = nullptr);
 
-Result CheckExtensions(BackCert& certExt,
-                       EndEntityOrCA endEntityOrCA,
-                       bool isTrustAnchor,
-                       KeyUsages requiredKeyUsagesIfPresent,
-                       unsigned int depth);
+Result CheckNameConstraints(BackCert& cert);
 
 } } // namespace insanity::pkix
 

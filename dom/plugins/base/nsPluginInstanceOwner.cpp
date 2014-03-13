@@ -4,19 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef MOZ_WIDGET_QT
-#include <QWidget>
-#include <QKeyEvent>
-#if defined(MOZ_X11)
-#if defined(Q_WS_X11)
-#include <QX11Info>
-#else
-#include "gfxQtPlatform.h"
-#endif
-#endif
-#undef slots
-#endif
-
 #ifdef MOZ_X11
 #include <cairo-xlib.h>
 #include "gfxXlibSurface.h"
@@ -1695,7 +1682,8 @@ nsPluginInstanceOwner::ProcessMouseDown(nsIDOMEvent* aMouseEvent)
   return NS_OK;
 }
 
-nsresult nsPluginInstanceOwner::DispatchMouseToPlugin(nsIDOMEvent* aMouseEvent)
+nsresult nsPluginInstanceOwner::DispatchMouseToPlugin(nsIDOMEvent* aMouseEvent,
+                                                      bool aAllowPropagate)
 {
 #if !defined(XP_MACOSX)
   if (!mPluginWindow || (mPluginWindow->type == NPWindowTypeWindow))
@@ -1712,7 +1700,9 @@ nsresult nsPluginInstanceOwner::DispatchMouseToPlugin(nsIDOMEvent* aMouseEvent)
     nsEventStatus rv = ProcessEvent(*mouseEvent);
     if (nsEventStatus_eConsumeNoDefault == rv) {
       aMouseEvent->PreventDefault();
-      aMouseEvent->StopPropagation();
+      if (!aAllowPropagate) {
+        aMouseEvent->StopPropagation();
+      }
     }
     if (mouseEvent->message == NS_MOUSE_BUTTON_UP) {
       mLastMouseDownButtonType = -1;
@@ -1754,8 +1744,10 @@ nsPluginInstanceOwner::HandleEvent(nsIDOMEvent* aEvent)
     }
     return DispatchMouseToPlugin(aEvent);
   }
-  if (eventType.EqualsLiteral("mousemove") ||
-      eventType.EqualsLiteral("click") ||
+  if (eventType.EqualsLiteral("mousemove")) {
+    return DispatchMouseToPlugin(aEvent, true);
+  }
+  if (eventType.EqualsLiteral("click") ||
       eventType.EqualsLiteral("dblclick") ||
       eventType.EqualsLiteral("mouseover") ||
       eventType.EqualsLiteral("mouseout")) {
@@ -2150,46 +2142,6 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const WidgetGUIEvent& anEvent)
             }
 #endif
 
-#ifdef MOZ_WIDGET_QT
-          const WidgetKeyboardEvent& keyEvent = *anEvent.AsKeyboardEvent();
-
-          memset( &event, 0, sizeof(event) );
-          event.time = anEvent.time;
-
-          QWidget* qWidget = static_cast<QWidget*>(widget->GetNativeData(NS_NATIVE_WINDOW));
-
-          if (qWidget)
-#if defined(Q_WS_X11)
-            event.root = qWidget->x11Info().appRootWindow();
-#else
-            event.root = RootWindowOfScreen(DefaultScreenOfDisplay(gfxQtPlatform::GetXDisplay(qWidget)));
-#endif
-
-          // deduce keycode from the information in the attached QKeyEvent
-          const QKeyEvent* qtEvent = static_cast<const QKeyEvent*>(anEvent.pluginEvent);
-          if (qtEvent) {
-
-            if (qtEvent->nativeModifiers())
-              event.state = qtEvent->nativeModifiers();
-            else // fallback
-              event.state = XInputEventState(keyEvent);
-
-            if (qtEvent->nativeScanCode())
-              event.keycode = qtEvent->nativeScanCode();
-            else // fallback
-              event.keycode = XKeysymToKeycode( (widget ? static_cast<Display*>(widget->GetNativeData(NS_NATIVE_DISPLAY)) : nullptr), qtEvent->key());
-          }
-
-          switch (anEvent.message)
-            {
-            case NS_KEY_DOWN:
-              event.type = XKeyPress;
-              break;
-            case NS_KEY_UP:
-              event.type = KeyRelease;
-              break;
-           }
-#endif
           // Information that could be obtained from pluginEvent but we may not
           // want to promise to provide:
           event.subwindow = None;

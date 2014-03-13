@@ -28,7 +28,7 @@ class SurfaceDescriptor;
 class SurfaceDescriptorTiles;
 class ThebesBufferData;
 class DeprecatedTextureClient;
-class BasicTiledLayerBuffer;
+class ClientTiledLayerBuffer;
 class PTextureChild;
 
 /**
@@ -48,7 +48,7 @@ class CompositableForwarder : public ISurfaceAllocator
 public:
 
   CompositableForwarder()
-    : mMultiProcess(false)
+    : mSerial(++sSerialCounter)
   {}
 
   /**
@@ -91,8 +91,12 @@ public:
    */
   virtual void DestroyThebesBuffer(CompositableClient* aCompositable) = 0;
 
-  virtual void PaintedTiledLayerBuffer(CompositableClient* aCompositable,
-                                       const SurfaceDescriptorTiles& aTiledDescriptor) = 0;
+  /**
+   * Tell the CompositableHost on the compositor side what TiledLayerBuffer to
+   * use for the next composition.
+   */
+  virtual void UseTiledLayerBuffer(CompositableClient* aCompositable,
+                                   const SurfaceDescriptorTiles& aTiledDescriptor) = 0;
 
   /**
    * Create a TextureChild/Parent pair as as well as the TextureHost on the parent side.
@@ -209,10 +213,10 @@ public:
 
   void IdentifyTextureHost(const TextureFactoryIdentifier& aIdentifier);
 
-  /**
-   * Returns the maximum texture size supported by the compositor.
-   */
-  virtual int32_t GetMaxTextureSize() const { return mTextureFactoryIdentifier.mMaxTextureSize; }
+  virtual int32_t GetMaxTextureSize() const MOZ_OVERRIDE
+  {
+    return mTextureFactoryIdentifier.mMaxTextureSize;
+  }
 
   bool IsOnCompositorSide() const MOZ_OVERRIDE { return false; }
 
@@ -221,7 +225,7 @@ public:
    * We only don't allow changing the backend type at runtime so this value can
    * be queried once and will not change until Gecko is restarted.
    */
-  LayersBackend GetCompositorBackendType() const
+  virtual LayersBackend GetCompositorBackendType() const MOZ_OVERRIDE
   {
     return mTextureFactoryIdentifier.mParentBackend;
   }
@@ -236,20 +240,18 @@ public:
     return mTextureFactoryIdentifier.mSupportsPartialUploads;
   }
 
-  bool ForwardsToDifferentProcess() const
-  {
-    return mMultiProcess;
-  }
-
   const TextureFactoryIdentifier& GetTextureFactoryIdentifier() const
   {
     return mTextureFactoryIdentifier;
   }
 
+  int32_t GetSerial() { return mSerial; }
+
 protected:
   TextureFactoryIdentifier mTextureFactoryIdentifier;
-  bool mMultiProcess;
   nsTArray<RefPtr<TextureClient> > mTexturesToRemove;
+  const int32_t mSerial;
+  static mozilla::Atomic<int32_t> sSerialCounter;
 };
 
 } // namespace
