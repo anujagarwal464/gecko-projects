@@ -20,7 +20,7 @@ let eventHandler = function(evt) {
     return;
   }
 
-  sendAsyncMessage("permission-request", evt.detail.permissions);
+  sendAsyncMessage("permission-request", evt.detail);
 };
 
 SystemApp.addEventListener("mozChromeEvent", eventHandler);
@@ -28,4 +28,8 @@ SystemApp.addEventListener("mozChromeEvent", eventHandler);
 // need to remove ChromeEvent listener after test finished.
 addMessageListener("teardown", function() {
   SystemApp.removeEventListener("mozChromeEvent", eventHandler);
+});
+
+addMessageListener("permission-response", function(detail) {
+  SystemApp.sendCustomEvent('mozContentEvent', detail);
 });
