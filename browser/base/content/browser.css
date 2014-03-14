@@ -239,12 +239,18 @@ toolbar[customizing] > .overflow-button {
 %endif
 
 /* Rules to help integrate SDK widgets */
+toolbaritem[sdkstylewidget="true"] > toolbarbutton,
+toolbarpaletteitem > toolbaritem[sdkstylewidget="true"] > iframe,
 toolbarpaletteitem > toolbaritem[sdkstylewidget="true"] > .toolbarbutton-text {
+  display: none;
+}
+
+toolbarpaletteitem:-moz-any([place="palette"], [place="panel"]) > toolbaritem[sdkstylewidget="true"] > toolbarbutton {
   display: -moz-box;
 }
 
-toolbarpaletteitem > toolbaritem[sdkstylewidget="true"] > iframe {
-  display: none;
+toolbarpaletteitem > toolbaritem[sdkstylewidget="true"][cui-areatype="toolbar"] > .toolbarbutton-text {
+  display: -moz-box;
 }
 
 toolbarpaletteitem[removable="false"] {
@@ -1003,10 +1009,13 @@ toolbarpaletteitem[place="palette"][hidden] {
 
 @keyframes uitour-wobble {
   from {
-    transform: rotate(0deg) translateX(2px) rotate(0deg);
+    transform: rotate(0deg) translateX(3px) rotate(0deg);
+  }
+  50% {
+    transform: rotate(360deg) translateX(3px) rotate(-360deg);
   }
   to {
-    transform: rotate(360deg) translateX(2px) rotate(-360deg);
+    transform: rotate(720deg) translateX(0px) rotate(-720deg);
   }
 }
 
@@ -1048,7 +1057,9 @@ toolbarpaletteitem[place="palette"][hidden] {
 
 #UITourHighlight[active="wobble"] {
   animation-name: uitour-wobble;
-  animation-duration: 1s;
+  animation-delay: 0s;
+  animation-duration: 1.5s;
+  animation-iteration-count: 1;
 }
 #UITourHighlight[active="zoom"] {
   animation-name: uitour-zoom;
