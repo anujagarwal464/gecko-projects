@@ -1213,7 +1213,7 @@ nsDOMCameraControl::OnFacesDetected(const nsTArray<ICameraControl::Face>& aFaces
     nsRefPtr<DOMCameraDetectedFace> f;
     for (uint32_t i = 0; i < len; ++i) {
       f = new DOMCameraDetectedFace(this, aFaces[i]);
-      *faces.AppendElement() = f.forget();
+      *faces.AppendElement() = f.forget().take();
     }
   }
 
