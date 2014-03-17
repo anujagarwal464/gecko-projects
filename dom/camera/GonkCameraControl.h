@@ -117,7 +117,9 @@ protected:
   virtual already_AddRefed<RecorderProfileManager> GetRecorderProfileManagerImpl() MOZ_OVERRIDE;
   already_AddRefed<GonkRecorderProfileManager> GetGonkRecorderProfileManager();
 
-  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes, int64_t aMaxVideoLengthMs);
+  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes,
+                          int64_t aMaxVideoLengthMs);
+  nsresult SetupRecordingFlash(bool aAutoEnableLowLightTorch);
   nsresult SetupVideoMode(const nsAString& aProfile);
   nsresult SetPreviewSize(const Size& aSize);
   nsresult PausePreview();
@@ -139,6 +141,9 @@ protected:
   Size                      mLastRecorderSize;
   uint32_t                  mPreviewFps;
   bool                      mResumePreviewAfterTakingPicture;
+  bool                      mFlashSupported;
+  bool                      mLuminanceSupported;
+  bool                      mAutoFlashModeOverridden;
 
   Atomic<uint32_t>          mDeferConfigUpdate;
   GonkCameraParameters      mParams;
