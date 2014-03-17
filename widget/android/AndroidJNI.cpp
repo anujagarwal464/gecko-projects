@@ -1005,7 +1005,7 @@ Java_org_mozilla_gecko_ANRReporter_releaseNativeStack(JNIEnv* jenv, jclass)
         // Maybe profiler support is disabled?
         return;
     }
-    mozilla_sampler_stop();
+    //mozilla_sampler_stop();
 }
 
 }

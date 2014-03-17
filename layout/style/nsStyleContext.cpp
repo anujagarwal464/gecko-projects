@@ -577,7 +577,8 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther,
       const nsStyleOutline *thisVisOutline = thisVis->StyleOutline();
       const nsStyleOutline *otherVisOutline = otherVis->StyleOutline();
       bool haveColor;
-      nscolor thisColor, otherColor;
+      nscolor thisColor = 0;
+      nscolor otherColor = 0;
       if (thisVisOutline->GetOutlineInitialColor() != 
             otherVisOutline->GetOutlineInitialColor() ||
           (haveColor = thisVisOutline->GetOutlineColor(thisColor)) != 
