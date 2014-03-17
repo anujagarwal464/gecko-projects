@@ -1289,7 +1289,6 @@ nsContentSubtreeIterator::Init(nsIDOMRange* aRange)
     node = endParent;
   } else {
     lastCandidate = endParent->GetChildAt(--offset);
-    node = nullptr;
     NS_ASSERTION(lastCandidate,
                  "tree traversal trouble in nsContentSubtreeIterator::Init");
   }
