@@ -7693,7 +7693,7 @@
 !macroend
 
 !ifdef MOZ_METRO
-; Removes the CEH registration if it's set to our installation directory.
+; Removes the DEH registration if it's set to our installation directory.
 ; If it's set to some other installation directory, then it should be removed
 ; by that installation.
 !macro RemoveDEHRegistrationIfMatchingCall un
@@ -7817,3 +7817,77 @@
 !define AddMetroBrowserHandlerValues "!insertmacro AddMetroBrowserHandlerValues"
 !endif ;end MOZ_METRO
 
+; Unconditionally removes the delegate execute handler registration used to
+; launch the metro browser and misc. metro related registry values.
+!macro RemoveDEHRegistration DELEGATE_EXECUTE_HANDLER_ID \
+                             APP_USER_MODEL_ID \
+                             PROTOCOL_ACTIVATION_ID \
+                             FILE_ACTIVATION_ID
+  ; Remove HKLM entries
+  DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
+  DeleteRegKey HKLM "Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
+  DeleteRegKey HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
+  DeleteRegKey HKLM "Software\Classes\${FILE_ACTIVATION_ID}\Application"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}" "AppUserModelID"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}" "AppUserModelID"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open" "CommandId"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open" "CommandId"
+
+  ; $0 is used as an index for HKEY_USERS enumeration
+  StrCpy $0 0
+
+loop:
+  EnumRegKey $1 HKU "" $0
+  StrCmp $1 "" done
+
+  ; remove the app user model id root registration. We don't need this
+  ; here anymore, we just use it for tray registrationdown in widget,
+  ; which we read out of the mozilla keys.
+  DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}"
+
+  ; remove metro browser splash image data
+  DeleteRegKey HKU "$1\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\DefaultBrowser_NOPUBLISHERID\SplashScreen\DefaultBrowser_NOPUBLISHERID!${APP_USER_MODEL_ID}"
+
+  ; misc. Metro keys
+  DeleteRegKey HKU "$1\Software\Mozilla\Firefox\Metro"
+  DeleteRegValue HKU "$1\Software\Mozilla\Firefox" "CEHDump"
+  DeleteRegValue HKU "$1\Software\Mozilla\Firefox" "MetroD3DAvailable"
+  DeleteRegValue HKU "$1\Software\Mozilla\Firefox" "MetroLastAHE"
+
+  ; Remove Application Association Toasts
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxHTML_.htm"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxHTML_.html"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxHTML_.xht"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxHTML_.xhtml"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxHTML_.shtml"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxURL_ftp"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxURL_http"
+  DeleteRegValue HKU "$1\Software\Microsoft\Windows\CurrentVersion\ApplicationAssociationToasts" "FirefoxURL_https"
+
+  ; Remove delegate execute handler clsid registration
+  DeleteRegKey HKU "$1\Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
+
+  ; Remove protocol and file delegate execute handler id assoc
+  DeleteRegValue HKU "$1\Software\Classes\${PROTOCOL_ACTIVATION_ID}" "AppUserModelID"
+  DeleteRegValue HKU "$1\Software\Classes\${FILE_ACTIVATION_ID}" "AppUserModelID"
+
+  ; Remove delegate execute application registry keys
+  DeleteRegKey HKU "$1\Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
+  DeleteRegKey HKU "$1\Software\Classes\${FILE_ACTIVATION_ID}\Application"
+
+  ; Remove misc. shell open info
+  DeleteRegValue HKU "$1\Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open" "CommandId"
+  DeleteRegValue HKU "$1\Software\Classes\${FILE_ACTIVATION_ID}\shell\open" "CommandId"
+  DeleteRegValue HKU "$1\Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+  DeleteRegValue HKU "$1\Software\Classes\${FILE_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+
+  IntOp $0 $0 + 1
+  Goto loop
+done:
+  ClearErrors
+
+!macroend
+!define RemoveDEHRegistration "!insertmacro RemoveDEHRegistration"
+!define un.RemoveDEHRegistration "!insertmacro RemoveDEHRegistration"
