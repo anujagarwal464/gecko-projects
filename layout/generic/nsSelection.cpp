@@ -5644,7 +5644,6 @@ Selection::Modify(const nsAString& aAlter, const nsAString& aDirection,
   // The uint32_t casts below prevent an enum mismatch warning.
   nsSelectionAmount amount;
   uint32_t keycode;
-  amount = eSelectLine;
   if (aGranularity.LowerCaseEqualsLiteral("character")) {
     amount = eSelectCluster;
     keycode = forward ? (uint32_t) nsIDOMKeyEvent::DOM_VK_RIGHT :
