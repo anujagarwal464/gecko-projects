@@ -42,7 +42,6 @@ nsAndroidHistory::RegisterVisitedCallback(nsIURI *aURI, Link *aContent)
   if (!aContent || !aURI)
     return NS_OK;
 
-/*
   // Silently return if URI is something we would never add to DB.
   bool canAdd;
   nsresult rv = CanAddURI(aURI, &canAdd);
@@ -66,7 +65,6 @@ nsAndroidHistory::RegisterVisitedCallback(nsIURI *aURI, Link *aContent)
   if (AndroidBridge::HasEnv()) {
     GeckoAppShell::CheckURIVisited(uriString);
   }
-*/
 
   return NS_OK;
 }
