@@ -16,7 +16,7 @@ config = {
         "--xre-path=../hostutils/xre",
         "--utility-path=../hostutils/bin",
         "--app=%(app_name)s",
-        "--ignore-window-size", "--bootstrap",
+        "--ignore-window-size",
         "--http-port=%(http_port)s", "--ssl-port=%(ssl_port)s",
         "--symbols-path=%(symbols_path)s",
         "reftest/tests/layout/reftests/reftest.list"
