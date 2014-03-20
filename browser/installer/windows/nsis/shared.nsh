@@ -870,7 +870,6 @@ FunctionEnd
   DeleteRegKey HKLM "Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
   DeleteRegKey HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
   DeleteRegKey HKLM "Software\Classes\${FILE_ACTIVATION_ID}\Application"
-  DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
   DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
   DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
   DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}" "AppUserModelID"
