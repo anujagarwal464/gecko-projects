@@ -877,7 +877,14 @@ FunctionEnd
     ; remove the app user model id root registration. We don't need this
     ; here anymore, we just use it for tray registrationdown in widget,
     ; which we read out of the mozilla keys.
-    DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}"
+    ${If} "${APP_USER_MODEL_ID}" != ""
+      ; The removal of this key intermittently fails, so do the best we can in cleanup
+      DeleteRegValue HKU "$1\Software\Classes\${APP_USER_MODEL_ID}\.exe\shell\open\command" "DelegateExecute"
+      DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}\.exe\shell\open"
+      DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}\.exe\shell"
+      DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}\.exe"
+      DeleteRegKey HKU "$1\Software\Classes\${APP_USER_MODEL_ID}"
+    ${EndIf}
 
     ; remove metro browser splash image data
     DeleteRegKey HKU "$1\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\DefaultBrowser_NOPUBLISHERID\SplashScreen\DefaultBrowser_NOPUBLISHERID!${APP_USER_MODEL_ID}"
@@ -911,8 +918,16 @@ FunctionEnd
   ${Loop}
   ${UnmountRegistryIntoHKU}
 
+  ; The removal of this key intermittently fails, so do the best we can in cleanup
+  ${If} "${APP_USER_MODEL_ID}" != ""
+    DeleteRegValue HKLM "Software\Classes\${APP_USER_MODEL_ID}\.exe\shell\open\command" "DelegateExecute"
+    DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}\.exe\shell\open"
+    DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}\.exe\shell"
+    DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}\.exe"
+    DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
+  ${EndIf}
+
   ; Remove HKLM entries
-  DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
   DeleteRegKey HKLM "Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
   DeleteRegKey HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
   DeleteRegKey HKLM "Software\Classes\${FILE_ACTIVATION_ID}\Application"
