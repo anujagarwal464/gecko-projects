@@ -865,6 +865,18 @@ FunctionEnd
   ${AcquireSERestoreName}
   ${MountRegistryIntoHKU}
 
+  ; Remove HKLM entries
+  DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
+  DeleteRegKey HKLM "Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
+  DeleteRegKey HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
+  DeleteRegKey HKLM "Software\Classes\${FILE_ACTIVATION_ID}\Application"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}" "AppUserModelID"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}" "AppUserModelID"
+  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open" "CommandId"
+  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open" "CommandId"
+
   ; $0 is used as an index for HKEY_USERS enumeration
   StrCpy $0 0
 
@@ -910,19 +922,6 @@ FunctionEnd
     IntOp $0 $0 + 1
   ${Loop}
   ${UnmountRegistryIntoHKU}
-
-  ; Remove HKLM entries
-  DeleteRegKey HKLM "Software\Classes\${APP_USER_MODEL_ID}"
-  DeleteRegKey HKLM "Software\Classes\CLSID\${DELEGATE_EXECUTE_HANDLER_ID}"
-  DeleteRegKey HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\Application"
-  DeleteRegKey HKLM "Software\Classes\${FILE_ACTIVATION_ID}\Application"
-  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
-  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open\command" "DelegateExecute"
-  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}" "AppUserModelID"
-  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}" "AppUserModelID"
-  DeleteRegValue HKLM "Software\Classes\${PROTOCOL_ACTIVATION_ID}\shell\open" "CommandId"
-  DeleteRegValue HKLM "Software\Classes\${FILE_ACTIVATION_ID}\shell\open" "CommandId"
-
   ClearErrors
 !macroend
 
