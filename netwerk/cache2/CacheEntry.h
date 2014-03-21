@@ -68,6 +68,7 @@ public:
   nsCString const &GetEnhanceID() const { return mEnhanceID; }
   nsIURI* GetURI() const { return mURI; }
   bool UsingDisk() const;
+  bool Persistent() const;
   bool SetUsingDisk(bool aUsingDisk);
   bool IsReferenced() const;
   bool IsFileDoomed();
@@ -217,9 +218,20 @@ private:
   void OnHandleClosed(CacheEntryHandle const* aHandle);
 
 private:
+  friend class CacheEntryHandle;
+  // Increments the number of handlers keeping this entry.
+  void AddHandlerRef() { ++mHandlersCount; }
+  // Decrements the number of handlers keeping this entry.
+  // When it reaches 0 and this is a disk entry, its data is purged.
+  void ReleaseHandlerRef();
+  // Current number of handlers keeping this entry.
+  uint32_t HandlersCount() const { return mHandlersCount; }
+
+private:
   friend class CacheOutputCloseListener;
   void OnOutputClosed();
 
+private:
   // Schedules a background operation on the management thread.
   // When executed on the management thread directly, the operation(s)
   // is (are) executed immediately.
@@ -236,7 +248,6 @@ private:
   mozilla::Mutex mLock;
 
   // Reflects the number of existing handles for this entry
-  friend class CacheEntryHandle;
   ::mozilla::ThreadSafeAutoRefCnt mHandlersCount;
 
   nsTArray<Callback> mCallbacks;

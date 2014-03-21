@@ -57,27 +57,59 @@ typedef nsClassHashtable<nsCStringHashKey, CacheEntryTable>
  */
 static GlobalEntryTables* sGlobalEntryTables;
 
-CacheMemoryConsumer::CacheMemoryConsumer()
+CacheMemoryConsumer::CacheMemoryConsumer(uint32_t aFlags)
 : mReportedMemoryConsumption(0)
+, mFlags(aFlags)
 {
 }
 
 void
 CacheMemoryConsumer::DoMemoryReport(uint32_t aCurrentSize)
 {
-  if (CacheStorageService::Self())
+  if (!(mFlags & DONT_REPORT) && CacheStorageService::Self()) {
     CacheStorageService::Self()->OnMemoryConsumptionChange(this, aCurrentSize);
+  }
 }
 
-NS_IMPL_ISUPPORTS2(CacheStorageService, nsICacheStorageService, nsIMemoryReporter)
+CacheStorageService::MemoryPool::MemoryPool(EType aType)
+: mType(aType)
+, mMemorySize(0)
+{
+}
+
+CacheStorageService::MemoryPool::~MemoryPool()
+{
+  if (mMemorySize != 0) {
+    NS_ERROR("Network cache reported memory consumption is not at 0, probably leaking?");
+  }
+}
+
+uint32_t const
+CacheStorageService::MemoryPool::Limit() const
+{
+  switch (mType) {
+  case DISK:
+    return CacheObserver::MetadataMemoryLimit();
+  case MEMORY:
+    return CacheObserver::MemoryCacheCapacity();
+  }
+
+  MOZ_CRASH("Bad pool type");
+  return 0;
+}
+
+NS_IMPL_ISUPPORTS3(CacheStorageService,
+                   nsICacheStorageService,
+                   nsIMemoryReporter,
+                   nsITimerCallback)
 
 CacheStorageService* CacheStorageService::sSelf = nullptr;
 
 CacheStorageService::CacheStorageService()
 : mLock("CacheStorageService")
 , mShutdown(false)
-, mMemorySize(0)
-, mPurging(false)
+, mDiskPool(MemoryPool::DISK)
+, mMemoryPool(MemoryPool::MEMORY)
 {
   CacheFileIOManager::Init();
 
@@ -93,9 +125,6 @@ CacheStorageService::~CacheStorageService()
 {
   LOG(("CacheStorageService::~CacheStorageService"));
   sSelf = nullptr;
-
-  if (mMemorySize != 0)
-    NS_ERROR("Network cache reported memory consumption is not at 0, probably leaking?");
 }
 
 void CacheStorageService::Shutdown()
@@ -123,8 +152,10 @@ void CacheStorageService::ShutdownBackground()
 {
   MOZ_ASSERT(IsOnManagementThread());
 
-  mFrecencyArray.Clear();
-  mExpirationArray.Clear();
+  Pool(false).mFrecencyArray.Clear();
+  Pool(false).mExpirationArray.Clear();
+  Pool(true).mFrecencyArray.Clear();
+  Pool(true).mExpirationArray.Clear();
 }
 
 // Internal management methods
@@ -607,8 +638,9 @@ CacheStorageService::RegisterEntry(CacheEntry* aEntry)
 
   LOG(("CacheStorageService::RegisterEntry [entry=%p]", aEntry));
 
-  mFrecencyArray.InsertElementSorted(aEntry, FrecencyComparator());
-  mExpirationArray.InsertElementSorted(aEntry, ExpirationComparator());
+  MemoryPool& pool = Pool(aEntry->Persistent());
+  pool.mFrecencyArray.InsertElementSorted(aEntry, FrecencyComparator());
+  pool.mExpirationArray.InsertElementSorted(aEntry, ExpirationComparator());
 
   aEntry->SetRegistered(true);
 }
@@ -623,13 +655,38 @@ CacheStorageService::UnregisterEntry(CacheEntry* aEntry)
 
   LOG(("CacheStorageService::UnregisterEntry [entry=%p]", aEntry));
 
-  mozilla::DebugOnly<bool> removedFrecency = mFrecencyArray.RemoveElement(aEntry);
-  mozilla::DebugOnly<bool> removedExpiration = mExpirationArray.RemoveElement(aEntry);
+  MemoryPool& pool = Pool(aEntry->Persistent());
+  mozilla::DebugOnly<bool> removedFrecency = pool.mFrecencyArray.RemoveElement(aEntry);
+  mozilla::DebugOnly<bool> removedExpiration = pool.mExpirationArray.RemoveElement(aEntry);
 
   MOZ_ASSERT(mShutdown || (removedFrecency && removedExpiration));
 
   // Note: aEntry->CanRegister() since now returns false
   aEntry->SetRegistered(false);
+}
+
+namespace { // anon
+
+class PurgeEntryDataRunnable : public nsRunnable
+{
+public:
+  PurgeEntryDataRunnable(CacheEntry* aEntry) : mEntry(aEntry) { }
+  NS_IMETHOD Run()
+  {
+    mEntry->Purge(CacheEntry::PURGE_DATA_ONLY_DISK_BACKED);
+    return NS_OK;
+  }
+private:
+  nsRefPtr<CacheEntry> mEntry;
+};
+
+} // anon
+
+void
+CacheStorageService::PurgeEntryData(CacheEntry* aEntry)
+{
+  nsRefPtr<PurgeEntryDataRunnable> e = new PurgeEntryDataRunnable(aEntry);
+  Dispatch(e);
 }
 
 static bool
@@ -775,31 +832,49 @@ CacheStorageService::OnMemoryConsumptionChange(CacheMemoryConsumer* aConsumer,
   // Exchange saved size with current one.
   aConsumer->mReportedMemoryConsumption = aCurrentMemoryConsumption;
 
-  mMemorySize -= savedMemorySize;
+  bool usingDisk = !(aConsumer->mFlags & CacheMemoryConsumer::MEMORY_ONLY);
+  bool overLimit = Pool(usingDisk).OnMemoryConsumptionChange(
+    savedMemorySize, aCurrentMemoryConsumption);
+
+  if (!overLimit)
+    return;
+
+  if (mPurgeTimer)
+    return;
+
+  mPurgeTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+  if (mPurgeTimer)
+    mPurgeTimer->InitWithCallback(this, 1000, nsITimer::TYPE_ONE_SHOT);
+}
+
+bool
+CacheStorageService::MemoryPool::OnMemoryConsumptionChange(uint32_t aSavedMemorySize,
+                                                           uint32_t aCurrentMemoryConsumption)
+{
+  mMemorySize -= aSavedMemorySize;
   mMemorySize += aCurrentMemoryConsumption;
 
-  LOG(("  mMemorySize=%u (+%u,-%u)", uint32_t(mMemorySize), aCurrentMemoryConsumption, savedMemorySize));
+  LOG(("  mMemorySize=%u (+%u,-%u)", uint32_t(mMemorySize), aCurrentMemoryConsumption, aSavedMemorySize));
 
   // Bypass purging when memory has not grew up significantly
-  if (aCurrentMemoryConsumption <= savedMemorySize)
-    return;
+  if (aCurrentMemoryConsumption <= aSavedMemorySize)
+    return false;
 
-  if (mPurging) {
-    LOG(("  already purging"));
-    return;
+  return mMemorySize > Limit();
+}
+
+NS_IMETHODIMP
+CacheStorageService::Notify(nsITimer* aTimer)
+{
+  if (aTimer == mPurgeTimer) {
+    mPurgeTimer = nullptr;
+
+    nsCOMPtr<nsIRunnable> event =
+      NS_NewRunnableMethod(this, &CacheStorageService::PurgeOverMemoryLimit);
+    Dispatch(event);
   }
 
-  if (mMemorySize <= CacheObserver::MemoryLimit())
-    return;
-
-  // Throw the oldest data or whole entries away when over certain limits
-  mPurging = true;
-
-  // Must always dipatch, since this can be called under e.g. a CacheFile's lock.
-  nsCOMPtr<nsIRunnable> event =
-    NS_NewRunnableMethod(this, &CacheStorageService::PurgeOverMemoryLimit);
-
-  Dispatch(event);
+  return NS_OK;
 }
 
 void
@@ -809,18 +884,32 @@ CacheStorageService::PurgeOverMemoryLimit()
 
   LOG(("CacheStorageService::PurgeOverMemoryLimit"));
 
-#ifdef PR_LOG
+  Pool(true).PurgeOverMemoryLimit();
+  Pool(false).PurgeOverMemoryLimit();
+}
+
+void
+CacheStorageService::MemoryPool::PurgeOverMemoryLimit()
+{
+#ifdef PR_LOGGING
   TimeStamp start(TimeStamp::Now());
 #endif
 
-  uint32_t const memoryLimit = CacheObserver::MemoryLimit();
-
+  uint32_t const memoryLimit = Limit();
   if (mMemorySize > memoryLimit) {
     LOG(("  memory data consumption over the limit, abandon expired entries"));
     PurgeExpired();
   }
 
   bool frecencyNeedsSort = true;
+
+  // No longer makes sense since:
+  // Memory entries are never purged partially, only as a whole when the memory
+  // cache limit is overreached.
+  // Disk entries throw the data away ASAP so that only metadata are kept.
+  // TODO when this concept of two separate pools is found working, the code should
+  // clean up.
+#if 0
   if (mMemorySize > memoryLimit) {
     LOG(("  memory data consumption over the limit, abandon disk backed data"));
     PurgeByFrecency(frecencyNeedsSort, CacheEntry::PURGE_DATA_ONLY_DISK_BACKED);
@@ -830,6 +919,7 @@ CacheStorageService::PurgeOverMemoryLimit()
     LOG(("  metadata consumtion over the limit, abandon disk backed entries"));
     PurgeByFrecency(frecencyNeedsSort, CacheEntry::PURGE_WHOLE_ONLY_DISK_BACKED);
   }
+#endif
 
   if (mMemorySize > memoryLimit) {
     LOG(("  memory data consumption over the limit, abandon any entry"));
@@ -837,21 +927,17 @@ CacheStorageService::PurgeOverMemoryLimit()
   }
 
   LOG(("  purging took %1.2fms", (TimeStamp::Now() - start).ToMilliseconds()));
-
-  // When we exit because of yield, leave the flag so this event is not reposted
-  // from OnMemoryConsumptionChange unnecessarily until we are dequeued again.
-  mPurging = CacheIOThread::YieldAndRerun();
 }
 
 void
-CacheStorageService::PurgeExpired()
+CacheStorageService::MemoryPool::PurgeExpired()
 {
   MOZ_ASSERT(IsOnManagementThread());
 
   mExpirationArray.Sort(ExpirationComparator());
   uint32_t now = NowInSeconds();
 
-  uint32_t const memoryLimit = CacheObserver::MemoryLimit();
+  uint32_t const memoryLimit = Limit();
 
   for (uint32_t i = 0; mMemorySize > memoryLimit && i < mExpirationArray.Length();) {
     if (CacheIOThread::YieldAndRerun())
@@ -874,7 +960,7 @@ CacheStorageService::PurgeExpired()
 }
 
 void
-CacheStorageService::PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat)
+CacheStorageService::MemoryPool::PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat)
 {
   MOZ_ASSERT(IsOnManagementThread());
 
@@ -883,7 +969,7 @@ CacheStorageService::PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat)
     aFrecencyNeedsSort = false;
   }
 
-  uint32_t const memoryLimit = CacheObserver::MemoryLimit();
+  uint32_t const memoryLimit = Limit();
 
   for (uint32_t i = 0; mMemorySize > memoryLimit && i < mFrecencyArray.Length();) {
     if (CacheIOThread::YieldAndRerun())
@@ -903,9 +989,9 @@ CacheStorageService::PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat)
 }
 
 void
-CacheStorageService::PurgeAll(uint32_t aWhat)
+CacheStorageService::MemoryPool::PurgeAll(uint32_t aWhat)
 {
-  LOG(("CacheStorageService::PurgeAll aWhat=%d", aWhat));
+  LOG(("CacheStorageService::MemoryPool::PurgeAll aWhat=%d", aWhat));
   MOZ_ASSERT(IsOnManagementThread());
 
   for (uint32_t i = 0; i < mFrecencyArray.Length();) {
@@ -1264,9 +1350,10 @@ CacheStorageService::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) con
 
   size_t n = 0;
   // The elemets are referenced by sGlobalEntryTables and are reported from there
-  n += mFrecencyArray.SizeOfExcludingThis(mallocSizeOf);
-  // The elemets are referenced by sGlobalEntryTables and are reported from there
-  n += mExpirationArray.SizeOfExcludingThis(mallocSizeOf);
+  n += Pool(true).mFrecencyArray.SizeOfExcludingThis(mallocSizeOf);
+  n += Pool(true).mExpirationArray.SizeOfExcludingThis(mallocSizeOf);
+  n += Pool(false).mFrecencyArray.SizeOfExcludingThis(mallocSizeOf);
+  n += Pool(false).mExpirationArray.SizeOfExcludingThis(mallocSizeOf);
   // Entries reported manually in CacheStorageService::CollectReports callback
   if (sGlobalEntryTables) {
     n += sGlobalEntryTables->SizeOfIncludingThis(nullptr, mallocSizeOf);
