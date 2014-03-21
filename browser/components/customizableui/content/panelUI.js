@@ -47,6 +47,8 @@ const PanelUI = {
 
     this.menuButton.addEventListener("mousedown", this);
     this.menuButton.addEventListener("keypress", this);
+    this._overlayScrollListenerBoundFn = this._overlayScrollListener.bind(this);
+    window.matchMedia("(-moz-overlay-scrollbars)").addListener(this._overlayScrollListenerBoundFn);
     this._initialized = true;
   },
 
@@ -77,6 +79,8 @@ const PanelUI = {
     this.helpView.removeEventListener("ViewShowing", this._onHelpViewShow);
     this.menuButton.removeEventListener("mousedown", this);
     this.menuButton.removeEventListener("keypress", this);
+    window.matchMedia("(-moz-overlay-scrollbars)").removeListener(this._overlayScrollListenerBoundFn);
+    this._overlayScrollListenerBoundFn = null;
   },
 
   /**
@@ -154,6 +158,10 @@ const PanelUI = {
 
       this.panel.addEventListener("popupshown", function onPopupShown() {
         this.removeEventListener("popupshown", onPopupShown);
+        // As an optimization for the customize mode transition, we preload
+        // about:customizing in the background once the menu panel is first
+        // shown.
+        gCustomizationTabPreloader.ensurePreloading();
         deferred.resolve();
       });
     });
@@ -323,6 +331,7 @@ const PanelUI = {
                                  viewNode.querySelector(".panel-subview-footer"));
 
       let multiView = document.createElement("panelmultiview");
+      multiView.setAttribute("nosubviews", "true");
       tempPanel.appendChild(multiView);
       multiView.setAttribute("mainViewIsSubView", "true");
       multiView.setMainView(viewNode);
@@ -439,6 +448,12 @@ const PanelUI = {
     quitButton.setAttribute("tooltiptext", tooltipString);
 #endif
   },
+
+  _overlayScrollListenerBoundFn: null,
+  _overlayScrollListener: function(aMQL) {
+    ScrollbarSampler.resetSystemScrollbarWidth();
+    this._scrollWidth = null;
+  },
 };
 
 /**
@@ -446,6 +461,7 @@ const PanelUI = {
  * @return  the selected locale or "en-US" if none is selected
  */
 function getLocale() {
+  const PREF_SELECTED_LOCALE = "general.useragent.locale";
   try {
     let locale = Services.prefs.getComplexValue(PREF_SELECTED_LOCALE,
                                                 Ci.nsIPrefLocalizedString);

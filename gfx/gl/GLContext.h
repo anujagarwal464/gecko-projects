@@ -57,7 +57,6 @@ namespace android {
 
 namespace mozilla {
     namespace gfx {
-        class SharedSurface;
         class SourceSurface;
         class DataSourceSurface;
         struct SurfaceCaps;
@@ -71,6 +70,7 @@ namespace mozilla {
         class GLBlitHelper;
         class GLBlitTextureImageHelper;
         class GLReadTexImageHelper;
+        class SharedSurface_GL;
     }
 
     namespace layers {
@@ -87,9 +87,11 @@ MOZ_BEGIN_ENUM_CLASS(GLFeature)
     depth_texture,
     draw_buffers,
     draw_instanced,
+    draw_range_elements,
     element_index_uint,
     ES2_compatibility,
     ES3_compatibility,
+    frag_color_float,
     frag_depth,
     framebuffer_blit,
     framebuffer_multisample,
@@ -102,6 +104,8 @@ MOZ_BEGIN_ENUM_CLASS(GLFeature)
     occlusion_query2,
     packed_depth_stencil,
     query_objects,
+    renderbuffer_color_float,
+    renderbuffer_color_half_float,
     robustness,
     sRGB,
     standard_derivatives,
@@ -131,6 +135,7 @@ MOZ_BEGIN_ENUM_CLASS(GLVendor)
     Imagination,
     Nouveau,
     Vivante,
+    VMware,
     Other
 MOZ_END_ENUM_CLASS(GLVendor)
 
@@ -143,6 +148,7 @@ MOZ_BEGIN_ENUM_CLASS(GLRenderer)
     SGX540,
     Tegra,
     AndroidEmulator,
+    GalliumLlvmpipe,
     Other
 MOZ_END_ENUM_CLASS(GLRenderer)
 
@@ -363,6 +369,9 @@ public:
         OES_texture_half_float,
         OES_texture_half_float_linear,
         NV_half_float,
+        EXT_color_buffer_float,
+        EXT_color_buffer_half_float,
+        ARB_color_buffer_float,
         EXT_unpack_subimage,
         OES_standard_derivatives,
         EXT_texture_filter_anisotropic,
@@ -410,6 +419,8 @@ public:
         KHR_debug,
         ARB_half_float_pixel,
         EXT_frag_depth,
+        OES_compressed_ETC1_RGB8_texture,
+        EXT_draw_range_elements,
         Extensions_Max,
         Extensions_End
     };
@@ -1936,39 +1947,39 @@ public:
 
 
 private:
-    GLuint GLAPIENTRY raw_fCreateProgram() {
+    GLuint raw_fCreateProgram() {
         BEFORE_GL_CALL;
         GLuint ret = mSymbols.fCreateProgram();
         AFTER_GL_CALL;
         return ret;
     }
 
-    GLuint GLAPIENTRY raw_fCreateShader(GLenum t) {
+    GLuint raw_fCreateShader(GLenum t) {
         BEFORE_GL_CALL;
         GLuint ret = mSymbols.fCreateShader(t);
         AFTER_GL_CALL;
         return ret;
     }
 
-    void GLAPIENTRY raw_fGenBuffers(GLsizei n, GLuint* names) {
+    void raw_fGenBuffers(GLsizei n, GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fGenBuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fGenFramebuffers(GLsizei n, GLuint* names) {
+    void raw_fGenFramebuffers(GLsizei n, GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fGenFramebuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fGenRenderbuffers(GLsizei n, GLuint* names) {
+    void raw_fGenRenderbuffers(GLsizei n, GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fGenRenderbuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fGenTextures(GLsizei n, GLuint* names) {
+    void raw_fGenTextures(GLsizei n, GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fGenTextures(n, names);
         AFTER_GL_CALL;
@@ -2008,37 +2019,37 @@ public:
     }
 
 private:
-    void GLAPIENTRY raw_fDeleteProgram(GLuint program) {
+    void raw_fDeleteProgram(GLuint program) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteProgram(program);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fDeleteShader(GLuint shader) {
+    void raw_fDeleteShader(GLuint shader) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteShader(shader);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fDeleteBuffers(GLsizei n, const GLuint* names) {
+    void raw_fDeleteBuffers(GLsizei n, const GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteBuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fDeleteFramebuffers(GLsizei n, const GLuint* names) {
+    void raw_fDeleteFramebuffers(GLsizei n, const GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteFramebuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fDeleteRenderbuffers(GLsizei n, const GLuint* names) {
+    void raw_fDeleteRenderbuffers(GLsizei n, const GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteRenderbuffers(n, names);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY raw_fDeleteTextures(GLsizei n, const GLuint* names) {
+    void raw_fDeleteTextures(GLsizei n, const GLuint* names) {
         BEFORE_GL_CALL;
         mSymbols.fDeleteTextures(n, names);
         AFTER_GL_CALL;
@@ -2088,7 +2099,7 @@ public:
         TRACKING_CONTEXT(DeletedTextures(this, n, names));
     }
 
-    GLenum GLAPIENTRY fGetGraphicsResetStatus() {
+    GLenum fGetGraphicsResetStatus() {
         MOZ_ASSERT(mHasRobustness);
 
         BEFORE_GL_CALL;
@@ -2102,7 +2113,7 @@ public:
 // -----------------------------------------------------------------------------
 // Extension ARB_sync (GL)
 public:
-    GLsync GLAPIENTRY fFenceSync(GLenum condition, GLbitfield flags) {
+    GLsync fFenceSync(GLenum condition, GLbitfield flags) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fFenceSync);
         GLsync ret = mSymbols.fFenceSync(condition, flags);
@@ -2110,7 +2121,7 @@ public:
         return ret;
     }
 
-    realGLboolean GLAPIENTRY fIsSync(GLsync sync) {
+    realGLboolean fIsSync(GLsync sync) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fIsSync);
         realGLboolean ret = mSymbols.fIsSync(sync);
@@ -2118,14 +2129,14 @@ public:
         return ret;
     }
 
-    void GLAPIENTRY fDeleteSync(GLsync sync) {
+    void fDeleteSync(GLsync sync) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fDeleteSync);
         mSymbols.fDeleteSync(sync);
         AFTER_GL_CALL;
     }
 
-    GLenum GLAPIENTRY fClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
+    GLenum fClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fClientWaitSync);
         GLenum ret = mSymbols.fClientWaitSync(sync, flags, timeout);
@@ -2133,21 +2144,21 @@ public:
         return ret;
     }
 
-    void GLAPIENTRY fWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
+    void fWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fWaitSync);
         mSymbols.fWaitSync(sync, flags, timeout);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY fGetInteger64v(GLenum pname, GLint64 *params) {
+    void fGetInteger64v(GLenum pname, GLint64 *params) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fGetInteger64v);
         mSymbols.fGetInteger64v(pname, params);
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY fGetSynciv(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *values) {
+    void fGetSynciv(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *values) {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fGetSynciv);
         mSymbols.fGetSynciv(sync, pname, bufSize, length, values);
@@ -2202,23 +2213,54 @@ public:
     void fDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei primcount)
     {
         BeforeGLDrawCall();
-        BEFORE_GL_CALL;
-        ASSERT_SYMBOL_PRESENT(fDrawArraysInstanced);
-        mSymbols.fDrawArraysInstanced(mode, first, count, primcount);
-        AFTER_GL_CALL;
+        raw_fDrawArraysInstanced(mode, first, count, primcount);
         AfterGLDrawCall();
     }
 
     void fDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const GLvoid* indices, GLsizei primcount)
     {
         BeforeGLDrawCall();
+        raw_fDrawElementsInstanced(mode, count, type, indices, primcount);
+        AfterGLDrawCall();
+    }
+
+private:
+    void raw_fDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei primcount)
+    {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fDrawArraysInstanced);
+        mSymbols.fDrawArraysInstanced(mode, first, count, primcount);
+        AFTER_GL_CALL;
+    }
+
+    void raw_fDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const GLvoid* indices, GLsizei primcount)
+    {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fDrawElementsInstanced);
         mSymbols.fDrawElementsInstanced(mode, count, type, indices, primcount);
         AFTER_GL_CALL;
+    }
+
+// -----------------------------------------------------------------------------
+// Feature draw_range_elements
+public:
+    void fDrawRangeElements(GLenum mode, GLuint start, GLuint end,
+                            GLsizei count, GLenum type, const GLvoid* indices)
+    {
+        BeforeGLDrawCall();
+        raw_fDrawRangeElements(mode, start, end, count, type, indices);
         AfterGLDrawCall();
     }
 
+private:
+    void raw_fDrawRangeElements(GLenum mode, GLuint start, GLuint end,
+                                GLsizei count, GLenum type, const GLvoid* indices)
+    {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fDrawRangeElements);
+        mSymbols.fDrawRangeElements(mode, start, end, count, type, indices);
+        AFTER_GL_CALL;
+    }
 
 // -----------------------------------------------------------------------------
 // Package XXX_framebuffer_blit
@@ -2402,7 +2444,7 @@ public:
 // -----------------------------------------------------------------------------
 // Package XXX_vertex_array_object
 public:
-    void GLAPIENTRY fBindVertexArray(GLuint array)
+    void fBindVertexArray(GLuint array)
     {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fBindVertexArray);
@@ -2410,7 +2452,7 @@ public:
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY fDeleteVertexArrays(GLsizei n, const GLuint *arrays)
+    void fDeleteVertexArrays(GLsizei n, const GLuint *arrays)
     {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fDeleteVertexArrays);
@@ -2418,7 +2460,7 @@ public:
         AFTER_GL_CALL;
     }
 
-    void GLAPIENTRY fGenVertexArrays(GLsizei n, GLuint *arrays)
+    void fGenVertexArrays(GLsizei n, GLuint *arrays)
     {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fGenVertexArrays);
@@ -2426,7 +2468,7 @@ public:
         AFTER_GL_CALL;
     }
 
-    realGLboolean GLAPIENTRY fIsVertexArray(GLuint array)
+    realGLboolean fIsVertexArray(GLuint array)
     {
         BEFORE_GL_CALL;
         ASSERT_SYMBOL_PRESENT(fIsVertexArray);
@@ -2695,7 +2737,6 @@ protected:
     ScopedDeletePtr<GLReadTexImageHelper> mReadTexImageHelper;
 
 public:
-
     GLBlitHelper* BlitHelper();
     GLBlitTextureImageHelper* BlitTextureImageHelper();
     GLReadTexImageHelper* ReadTexImageHelper();
@@ -2816,20 +2857,20 @@ protected:
 
     void DestroyScreenBuffer();
 
-    SharedSurface* mLockedSurface;
+    SharedSurface_GL* mLockedSurface;
 
 public:
-    void LockSurface(SharedSurface* surf) {
+    void LockSurface(SharedSurface_GL* surf) {
         MOZ_ASSERT(!mLockedSurface);
         mLockedSurface = surf;
     }
 
-    void UnlockSurface(SharedSurface* surf) {
+    void UnlockSurface(SharedSurface_GL* surf) {
         MOZ_ASSERT(mLockedSurface == surf);
         mLockedSurface = nullptr;
     }
 
-    SharedSurface* GetLockedSurface() const {
+    SharedSurface_GL* GetLockedSurface() const {
         return mLockedSurface;
     }
 
@@ -2842,7 +2883,7 @@ public:
     }
 
     bool PublishFrame();
-    SharedSurface* RequestFrame();
+    SharedSurface_GL* RequestFrame();
 
     /* Clear to transparent black, with 0 depth and stencil,
      * while preserving current ClearColor etc. values.

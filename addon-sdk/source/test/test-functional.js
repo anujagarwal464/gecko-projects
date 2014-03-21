@@ -6,7 +6,8 @@
 const { setTimeout } = require('sdk/timers');
 const utils = require('sdk/lang/functional');
 const { invoke, defer, partial, compose, memoize, once, is, isnt,
-        delay, wrap, curry, chainable, field, query, isInstance, debounce } = utils;
+  delay, wrap, curry, chainable, field, query, isInstance, debounce, throttle
+} = utils;
 const { LoaderWithHookedConsole } = require('sdk/test/loader');
 
 exports['test forwardApply'] = function(assert) {
@@ -435,4 +436,28 @@ exports["test debounce"] = (assert, done) => {
     }, 150);
   }, 200);
 };
+
+exports["test throttle"] = (assert, done) => {
+  let called = 0;
+  let attempt = 0;
+  let atleast100ms = false;
+  let throttledFn = throttle(() => {
+    called++;
+    if (called === 2) {
+      assert.equal(attempt, 10, "called twice, but attempted 10 times");
+      fn();
+    }
+    if (called === 3) {
+      assert.ok(atleast100ms, "atleast 100ms have passed");
+      assert.equal(attempt, 11, "called third, waits for delay to happen");
+      done();
+    }
+  }, 200);
+  let fn = () => ++attempt && throttledFn();
+
+  setTimeout(() => atleast100ms = true, 100);
+
+  new Array(11).join(0).split("").forEach(fn);
+};
+
 require('test').run(exports);

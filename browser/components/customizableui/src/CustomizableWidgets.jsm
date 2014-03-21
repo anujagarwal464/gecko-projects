@@ -68,16 +68,29 @@ function setAttributes(aNode, aAttrs) {
 
 function updateCombinedWidgetStyle(aNode, aArea, aModifyCloseMenu) {
   let inPanel = (aArea == CustomizableUI.AREA_PANEL);
-  let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
+  let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1 toolbarbutton-combined";
   let attrs = {class: cls};
   if (aModifyCloseMenu) {
     attrs.closemenu = inPanel ? "none" : null;
   }
+  attrs["cui-areatype"] = aArea ? CustomizableUI.getAreaType(aArea) : null;
   for (let i = 0, l = aNode.childNodes.length; i < l; ++i) {
     if (aNode.childNodes[i].localName == "separator")
       continue;
     setAttributes(aNode.childNodes[i], attrs);
   }
+}
+
+function addShortcut(aNode, aDocument, aItem) {
+  let shortcutId = aNode.getAttribute("key");
+  if (!shortcutId) {
+    return;
+  }
+  let shortcut = aDocument.getElementById(shortcutId);
+  if (!shortcut) {
+    return;
+  }
+  aItem.setAttribute("shortcut", ShortcutUtils.prettifyShortcut(shortcut));
 }
 
 const CustomizableWidgets = [{
@@ -291,6 +304,7 @@ const CustomizableWidgets = [{
         } else if (node.localName == "menuitem") {
           item = doc.createElementNS(kNSXUL, "toolbarbutton");
           item.setAttribute("class", "subviewbutton");
+          addShortcut(node, doc, item);
         } else {
           continue;
         }
@@ -308,6 +322,76 @@ const CustomizableWidgets = [{
       let doc = aEvent.target.ownerDocument;
       let win = doc.defaultView;
       let items = doc.getElementById("PanelUI-developerItems");
+      let parent = items.parentNode;
+      // We'll take the container out of the document before cleaning it out
+      // to avoid reflowing each time we remove something.
+      parent.removeChild(items);
+
+      while (items.firstChild) {
+        items.firstChild.remove();
+      }
+
+      parent.appendChild(items);
+    }
+  }, {
+    id: "sidebar-button",
+    type: "view",
+    viewId: "PanelUI-sidebar",
+    onViewShowing: function(aEvent) {
+      // Largely duplicated from the developer-button above with a couple minor
+      // alterations.
+      // Populate the subview with whatever menuitems are in the
+      // sidebar menu. We skip menu elements, because the menu panel has no way
+      // of dealing with those right now.
+      let doc = aEvent.target.ownerDocument;
+      let win = doc.defaultView;
+
+      let items = doc.getElementById("PanelUI-sidebarItems");
+      let menu = doc.getElementById("viewSidebarMenu");
+
+      // First clear any existing menuitems then populate. Social sidebar
+      // options may not have been added yet, so we do that here. Add it to the
+      // standard menu first, then copy all sidebar options to the panel.
+      win.SocialSidebar.clearProviderMenus();
+      let providerMenuSeps = menu.getElementsByClassName("social-provider-menu");
+      if (providerMenuSeps.length > 0)
+        win.SocialSidebar.populateProviderMenu(providerMenuSeps[0]);
+
+      let attrs = ["oncommand", "onclick", "label", "key", "disabled",
+                   "command", "observes", "hidden", "class", "origin",
+                   "image", "checked"];
+
+      let fragment = doc.createDocumentFragment();
+      let itemsToDisplay = [...menu.children];
+      for (let node of itemsToDisplay) {
+        if (node.hidden)
+          continue;
+
+        let item;
+        if (node.localName == "menuseparator") {
+          item = doc.createElementNS(kNSXUL, "menuseparator");
+        } else if (node.localName == "menuitem") {
+          item = doc.createElementNS(kNSXUL, "toolbarbutton");
+        } else {
+          continue;
+        }
+        for (let attr of attrs) {
+          let attrVal = node.getAttribute(attr);
+          if (attrVal)
+            item.setAttribute(attr, attrVal);
+        }
+        if (node.localName == "menuitem") {
+          item.classList.add("subviewbutton");
+          addShortcut(node, doc, item);
+        }
+        fragment.appendChild(item);
+      }
+
+      items.appendChild(fragment);
+    },
+    onViewHiding: function(aEvent) {
+      let doc = aEvent.target.ownerDocument;
+      let items = doc.getElementById("PanelUI-sidebarItems");
       let parent = items.parentNode;
       // We'll take the container out of the document before cleaning it out
       // to avoid reflowing each time we remove something.
@@ -363,32 +447,21 @@ const CustomizableWidgets = [{
       let areaType = CustomizableUI.getAreaType(this.currentArea);
       let inPanel = areaType == CustomizableUI.TYPE_MENU_PANEL;
       let inToolbar = areaType == CustomizableUI.TYPE_TOOLBAR;
-      let closeMenu = inPanel ? "none" : null;
-      let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
-
-      if (!this.currentArea)
-        cls = null;
 
       let buttons = [{
         id: "zoom-out-button",
-        closemenu: closeMenu,
         command: "cmd_fullZoomReduce",
-        class: cls,
         label: true,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_fullZoomReduce",
       }, {
         id: "zoom-reset-button",
-        closemenu: closeMenu,
         command: "cmd_fullZoomReset",
-        class: cls,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_fullZoomReset",
       }, {
         id: "zoom-in-button",
-        closemenu: closeMenu,
         command: "cmd_fullZoomEnlarge",
-        class: cls,
         label: true,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_fullZoomEnlarge",
@@ -416,6 +489,11 @@ const CustomizableWidgets = [{
       let zoomResetButton = node.childNodes[2];
       let window = aDocument.defaultView;
       function updateZoomResetButton() {
+        let updateDisplay = true;
+        // Label should always show 100% in customize mode, so don't update:
+        if (aDocument.documentElement.hasAttribute("customizing")) {
+          updateDisplay = false;
+        }
         //XXXgijs in some tests we get called very early, and there's no docShell on the
         // tabbrowser. This breaks the zoom toolkit code (see bug 897410). Don't let that happen:
         let zoomFactor = 100;
@@ -423,7 +501,7 @@ const CustomizableWidgets = [{
           zoomFactor = Math.floor(window.ZoomManager.zoom * 100);
         } catch (e) {}
         zoomResetButton.setAttribute("label", CustomizableUI.getLocalizedProperty(
-          buttons[1], "label", [zoomFactor]
+          buttons[1], "label", [updateDisplay ? zoomFactor : 100]
         ));
       };
 
@@ -442,6 +520,7 @@ const CustomizableWidgets = [{
         }
         updateZoomResetButton();
       }
+      updateCombinedWidgetStyle(node, this.currentArea, true);
 
       let listener = {
         onWidgetAdded: function(aWidgetId, aArea, aPosition) {
@@ -508,6 +587,18 @@ const CustomizableWidgets = [{
           container.removeEventListener("TabSelect", updateZoomResetButton);
         }.bind(this),
 
+        onCustomizeStart: function(aWindow) {
+          if (aWindow.document == aDocument) {
+            updateZoomResetButton();
+          }
+        },
+
+        onCustomizeEnd: function(aWindow) {
+          if (aWindow.document == aDocument) {
+            updateZoomResetButton();
+          }
+        },
+
         onWidgetDrag: function(aWidgetId, aArea) {
           if (aWidgetId != this.id)
             return;
@@ -524,30 +615,21 @@ const CustomizableWidgets = [{
     type: "custom",
     defaultArea: CustomizableUI.AREA_PANEL,
     onBuild: function(aDocument) {
-      let inPanel = (this.currentArea == CustomizableUI.AREA_PANEL);
-      let cls = inPanel ? "panel-combined-button" : "toolbarbutton-1";
-
-      if (!this.currentArea)
-        cls = null;
-
       let buttons = [{
         id: "cut-button",
         command: "cmd_cut",
-        class: cls,
         label: true,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_cut",
       }, {
         id: "copy-button",
         command: "cmd_copy",
-        class: cls,
         label: true,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_copy",
       }, {
         id: "paste-button",
         command: "cmd_paste",
-        class: cls,
         label: true,
         tooltiptext: "tooltiptext2",
         shortcutId: "key_paste",
@@ -570,6 +652,8 @@ const CustomizableWidgets = [{
         setAttributes(btnNode, aButton);
         node.appendChild(btnNode);
       });
+
+      updateCombinedWidgetStyle(node, this.currentArea);
 
       let listener = {
         onWidgetAdded: function(aWidgetId, aArea, aPosition) {
@@ -681,6 +765,7 @@ const CustomizableWidgets = [{
         elem.section = aSection;
         elem.value = item.value;
         elem.setAttribute("class", "subviewbutton");
+        addShortcut(item, doc, elem);
         containerElem.appendChild(elem);
       }
     },

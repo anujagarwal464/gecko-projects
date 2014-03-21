@@ -341,6 +341,8 @@ public:
   // of our audio.
   virtual void SetAudioCaptured(bool aCaptured);
 
+  virtual void NotifyWaitingForResourcesStatusChanged() MOZ_OVERRIDE;
+
   void SetPlaybackRate(double aPlaybackRate);
   void SetPreservesPitch(bool aPreservesPitch);
 
@@ -1023,7 +1025,7 @@ protected:
   // is synchronised on a monitor. The lifetime of this object is
   // after mPlayState is LOADING and before mPlayState is SHUTDOWN. It
   // is safe to access it during this period.
-  nsCOMPtr<MediaDecoderStateMachine> mDecoderStateMachine;
+  nsRefPtr<MediaDecoderStateMachine> mDecoderStateMachine;
 
   // Media data resource.
   nsRefPtr<MediaResource> mResource;

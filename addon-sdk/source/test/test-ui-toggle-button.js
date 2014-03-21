@@ -1020,19 +1020,42 @@ exports['test button click do not messing up states'] = function(assert) {
   loader.unload();
 }
 
-// If the module doesn't support the app we're being run in, require() will
-// throw.  In that case, remove all tests above from exports, and add one dummy
-// test that passes.
-try {
-  require('sdk/ui/button/toggle');
-}
-catch (err) {
-  if (!/^Unsupported Application/.test(err.message))
-    throw err;
+exports['test buttons can have anchored panels'] = function(assert, done) {
+  let loader = Loader(module);
+  let { ToggleButton } = loader.require('sdk/ui');
+  let { Panel } = loader.require('sdk/panel');
+  let { identify } = loader.require('sdk/ui/id');
+  let { getActiveView } = loader.require('sdk/view/core');
 
-  module.exports = {
-    'test Unsupported Application': assert => assert.pass(err.message)
-  }
+  let button = ToggleButton({
+    id: 'my-button-22',
+    label: 'my button',
+    icon: './icon.png',
+    onChange: ({checked}) => checked && panel.show({position: button})
+  });
+
+  let panel = Panel();
+
+  panel.once('show', () => {
+    let { document } = getMostRecentBrowserWindow();
+    let buttonNode = document.getElementById(identify(button));
+    let panelNode = getActiveView(panel);
+
+    assert.ok(button.state('window').checked,
+      'button is checked');
+
+    assert.equal(panelNode.getAttribute('type'), 'arrow',
+      'the panel is a arrow type');
+
+    assert.strictEqual(buttonNode, panelNode.anchorNode,
+      'the panel is anchored properly to the button');
+
+    loader.unload();
+
+    done();
+  });
+
+  button.click();
 }
 
 require('sdk/test').run(exports);

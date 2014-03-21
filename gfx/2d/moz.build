@@ -88,10 +88,16 @@ if CONFIG['INTEL_ARCHITECTURE']:
             'ImageScalingSSE2.cpp',
         ]
         DEFINES['USE_SSE2'] = True
+        # The file uses SSE2 intrinsics, so it needs special compile flags on some
+        # compilers.
+        SOURCES['BlurSSE2.cpp'].flags += CONFIG['SSE2_FLAGS']
+        SOURCES['FilterProcessingSSE2.cpp'].flags += CONFIG['SSE2_FLAGS']
+        SOURCES['ImageScalingSSE2.cpp'].flags += CONFIG['SSE2_FLAGS']
 
 UNIFIED_SOURCES += [
     'Blur.cpp',
     'DataSourceSurface.cpp',
+    'DataSurfaceHelpers.cpp',
     'DrawEventRecorder.cpp',
     'DrawTargetCairo.cpp',
     'DrawTargetDual.cpp',

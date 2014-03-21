@@ -254,14 +254,14 @@ nsTableRowGroupFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 }
 
 int
-nsTableRowGroupFrame::GetSkipSides(const nsHTMLReflowState* aReflowState) const
+nsTableRowGroupFrame::GetLogicalSkipSides(const nsHTMLReflowState* aReflowState) const
 {
   int skip = 0;
   if (nullptr != GetPrevInFlow()) {
-    skip |= 1 << NS_SIDE_TOP;
+    skip |= LOGICAL_SIDE_B_START;
   }
   if (nullptr != GetNextInFlow()) {
-    skip |= 1 << NS_SIDE_BOTTOM;
+    skip |= LOGICAL_SIDE_B_END;
   }
   return skip;
 }
@@ -372,7 +372,7 @@ nsTableRowGroupFrame::ReflowChildren(nsPresContext*         aPresContext,
 
       // XXXldb We used to only pass aDesiredSize.mFlags through for the
       // incremental reflow codepath.
-      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState.GetWritingMode(),
+      nsHTMLReflowMetrics desiredSize(aReflowState.reflowState,
                                       aDesiredSize.mFlags);
       desiredSize.Width() = desiredSize.Height() = 0;
   
@@ -1086,7 +1086,7 @@ nsTableRowGroupFrame::SplitRowGroup(nsPresContext*           aPresContext,
                                          
         InitChildReflowState(*aPresContext, borderCollapse, rowReflowState);
         rowReflowState.mFlags.mIsTopOfPage = isTopOfPage; // set top of page
-        nsHTMLReflowMetrics rowMetrics(aReflowState.GetWritingMode());
+        nsHTMLReflowMetrics rowMetrics(aReflowState);
 
         // Get the old size before we reflow.
         nsRect oldRowRect = rowFrame->GetRect();

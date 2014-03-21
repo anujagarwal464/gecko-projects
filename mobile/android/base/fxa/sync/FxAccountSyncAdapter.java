@@ -65,8 +65,9 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
   // Tracks the last seen storage hostname for backoff purposes.
   private static final String PREF_BACKOFF_STORAGE_HOST = "backoffStorageHost";
 
-  // Used to do cheap in-memory rate limiting.
-  private static final int MINIMUM_SYNC_DELAY_MILLIS = 5000;
+  // Used to do cheap in-memory rate limiting. Don't sync again if we
+  // successfully synced within this duration.
+  private static final int MINIMUM_SYNC_DELAY_MILLIS = 15 * 1000;        // 15 seconds.
   private volatile long lastSyncRealtimeMillis = 0L;
 
   protected final ExecutorService executor;
@@ -190,6 +191,15 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       setSyncResultSoftError();
       latch.countDown();
     }
+
+    /**
+     * Simply don't sync, without setting any error flags.
+     * This is the appropriate behavior when a routine backoff has not yet
+     * been met.
+     */
+    public void rejectSync() {
+      latch.countDown();
+    }
   }
 
   protected static class SessionCallback implements BaseGlobalSessionCallback {
@@ -298,6 +308,11 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       private boolean didReceiveBackoff = false;
 
       @Override
+      public String getUserAgent() {
+        return FxAccountConstants.USER_AGENT;
+      }
+
+      @Override
       public void handleSuccess(final TokenServerToken token) {
         FxAccountConstants.pii(LOG_TAG, "Got token! uid is " + token.uid + " and endpoint is " + token.endpoint + ".");
 
@@ -347,9 +362,9 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
           // skew adjustment that the HawkAuthHeaderProvider uses to adjust its
           // timestamps. Eventually we might want this to adapt within the scope of a
           // global session.
-          final SkewHandler tokenServerSkewHandler = SkewHandler.getSkewHandlerForHostname(storageHostname);
-          final long tokenServerSkew = tokenServerSkewHandler.getSkewInSeconds();
-          final AuthHeaderProvider authHeaderProvider = new HawkAuthHeaderProvider(token.id, token.key.getBytes("UTF-8"), false, tokenServerSkew);
+          final SkewHandler storageServerSkewHandler = SkewHandler.getSkewHandlerForHostname(storageHostname);
+          final long storageServerSkew = storageServerSkewHandler.getSkewInSeconds();
+          final AuthHeaderProvider authHeaderProvider = new HawkAuthHeaderProvider(token.id, token.key.getBytes("UTF-8"), false, storageServerSkew);
 
           final Context context = getContext();
           final SyncConfiguration syncConfig = new SyncConfiguration(token.uid, authHeaderProvider, sharedPrefs, syncKeyBundle);
@@ -406,6 +421,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
     Logger.setThreadLogTag(FxAccountConstants.GLOBAL_LOG_TAG);
     Logger.resetLogging();
 
+    // This applies even to forced syncs, but only on success.
     if (this.lastSyncRealtimeMillis > 0L &&
         (this.lastSyncRealtimeMillis + MINIMUM_SYNC_DELAY_MILLIS) > SystemClock.elapsedRealtime()) {
       Logger.info(LOG_TAG, "Not syncing FxAccount " + Utils.obfuscateEmail(account.name) +
@@ -439,18 +455,34 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
       // This will be the same chunk of SharedPreferences that we pass through to GlobalSession/SyncConfiguration.
       final SharedPreferences sharedPrefs = fxAccount.getSyncPrefs();
 
-      // Check for a backoff right here.
-      final BackoffHandler schedulerBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "scheduler");
-      if (!shouldPerformSync(schedulerBackoffHandler, "scheduler", extras)) {
-        Logger.info(LOG_TAG, "Not syncing (scheduler).");
-        syncDelegate.postponeSync(schedulerBackoffHandler.delayMilliseconds());
+      final BackoffHandler backgroundBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "background");
+      final BackoffHandler rateLimitBackoffHandler = new PrefsBackoffHandler(sharedPrefs, "rate");
+
+      // If this sync was triggered by user action, this will be true.
+      final boolean isImmediate = (extras != null) &&
+                                  (extras.getBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD, false) ||
+                                   extras.getBoolean(ContentResolver.SYNC_EXTRAS_FORCE, false));
+
+      // If it's not an immediate sync, it must be either periodic or tickled.
+      // Check our background rate limiter.
+      if (!isImmediate) {
+        if (!shouldPerformSync(backgroundBackoffHandler, "background", extras)) {
+          syncDelegate.rejectSync();
+          return;
+        }
+      }
+
+      // Regardless, let's make sure we're not syncing too often.
+      if (!shouldPerformSync(rateLimitBackoffHandler, "rate", extras)) {
+        syncDelegate.postponeSync(rateLimitBackoffHandler.delayMilliseconds());
         return;
       }
 
       final SchedulePolicy schedulePolicy = new FxAccountSchedulePolicy(context, fxAccount);
 
-      // Set a small scheduled 'backoff' to rate-limit the next sync.
-      schedulePolicy.configureBackoffMillisBeforeSyncing(schedulerBackoffHandler);
+      // Set a small scheduled 'backoff' to rate-limit the next sync,
+      // and extend the background delay even further into the future.
+      schedulePolicy.configureBackoffMillisBeforeSyncing(rateLimitBackoffHandler, backgroundBackoffHandler);
 
       final String audience = fxAccount.getAudience();
       final String authServerEndpoint = fxAccount.getAccountServerURI();
@@ -503,11 +535,7 @@ public class FxAccountSyncAdapter extends AbstractThreadedSyncAdapter {
             }
 
             final Married married = (Married) state;
-            SkewHandler skewHandler = SkewHandler.getSkewHandlerFromEndpointString(tokenServerEndpoint);
-            final long now = System.currentTimeMillis();
-            final long issuedAtMillis = now + skewHandler.getSkewInMillis();
-            final long assertionDurationMillis = this.getAssertionDurationInMilliseconds();
-            final String assertion = married.generateAssertion(audience, JSONWebTokenUtils.DEFAULT_ASSERTION_ISSUER, issuedAtMillis, assertionDurationMillis);
+            final String assertion = married.generateAssertion(audience, JSONWebTokenUtils.DEFAULT_ASSERTION_ISSUER);
 
             /*
              * At this point we're in the correct state to sync, and we're ready to fetch

@@ -27,6 +27,9 @@ public class BrowserContract {
     public static final String HOME_AUTHORITY = AppConstants.ANDROID_PACKAGE_NAME + ".db.home";
     public static final Uri HOME_AUTHORITY_URI = Uri.parse("content://" + HOME_AUTHORITY);
 
+    public static final String PROFILES_AUTHORITY = AppConstants.ANDROID_PACKAGE_NAME + ".profiles";
+    public static final Uri PROFILES_AUTHORITY_URI = Uri.parse("content://" + PROFILES_AUTHORITY);
+
     public static final String READING_LIST_AUTHORITY = AppConstants.ANDROID_PACKAGE_NAME + ".db.readinglist";
     public static final Uri READING_LIST_AUTHORITY_URI = Uri.parse("content://" + READING_LIST_AUTHORITY);
 
@@ -123,6 +126,12 @@ public class BrowserContract {
 
         public static final String URL = "url";
         public static final String DATA = "data";
+    }
+
+    public static final class Profiles {
+        private Profiles() {}
+        public static final String NAME = "name";
+        public static final String PATH = "path";
     }
 
     @RobocopTarget
@@ -372,12 +381,12 @@ public class BrowserContract {
         }
 
         static final String TABLE_BOOKMARKS_JOIN_IMAGES = Bookmarks.TABLE_NAME + " LEFT OUTER JOIN " +
-                Obsolete.TABLE_IMAGES + " ON " + DBUtils.qualifyColumn(Bookmarks.TABLE_NAME, Bookmarks.URL) + " = " +
-                DBUtils.qualifyColumn(Obsolete.TABLE_IMAGES, Obsolete.Images.URL);
+                Obsolete.TABLE_IMAGES + " ON " + Bookmarks.TABLE_NAME + "." + Bookmarks.URL + " = " +
+                Obsolete.TABLE_IMAGES + "." + Obsolete.Images.URL;
 
         static final String TABLE_HISTORY_JOIN_IMAGES = History.TABLE_NAME + " LEFT OUTER JOIN " +
-                Obsolete.TABLE_IMAGES + " ON " + DBUtils.qualifyColumn(Bookmarks.TABLE_NAME, History.URL) + " = " +
-                DBUtils.qualifyColumn(Obsolete.TABLE_IMAGES, Obsolete.Images.URL);
+                Obsolete.TABLE_IMAGES + " ON " + Bookmarks.TABLE_NAME + "." + History.URL + " = " +
+                Obsolete.TABLE_IMAGES + "." + Obsolete.Images.URL;
 
         static final String FAVICON_DB = "favicon_urls.db";
     }
@@ -395,6 +404,9 @@ public class BrowserContract {
         public static final String LENGTH = "length";
         public static final String DEFAULT_SORT_ORDER = _ID + " DESC";
         public static final String[] DEFAULT_PROJECTION = new String[] { _ID, URL, TITLE, EXCERPT, LENGTH };
+
+        // Minimum fields required to create a reading list item.
+        public static final String[] REQUIRED_FIELDS = { Bookmarks.URL, Bookmarks.TITLE };
 
         public static final String TABLE_NAME = "reading_list";
     }

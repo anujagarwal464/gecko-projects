@@ -940,8 +940,7 @@ IonBuilder::inlineMathFRound(CallInfo &callInfo)
     if (returned->empty()) {
         // As there's only one possible returned type, just add it to the observed
         // returned typeset
-        if (!returned->addType(types::Type::DoubleType(), alloc_->lifoAlloc()))
-            return InliningStatus_Error;
+        returned->addType(types::Type::DoubleType(), alloc_->lifoAlloc());
     } else {
         MIRType returnType = getInlineReturnType();
         if (!IsNumberType(returnType))
@@ -975,9 +974,9 @@ IonBuilder::inlineMathMinMax(CallInfo &callInfo, bool max)
         if (!IsNumberType(argType))
             return InliningStatus_NotInlined;
 
-        // We would need to inform TI if we happen to return a double.
+        // When one of the arguments is double, do a double MMinMax.
         if (returnType == MIRType_Int32 && IsFloatingPointType(argType))
-            return InliningStatus_NotInlined;
+            returnType = MIRType_Double;
     }
 
     callInfo.setImplicitlyUsedUnchecked();
@@ -1284,10 +1283,11 @@ IonBuilder::inlineUnsafePutElements(CallInfo &callInfo)
         }
 
         // We can only inline setelem on dense arrays that do not need type
-        // barriers and on typed arrays.
+        // barriers and on typed arrays and on typed object arrays.
         ScalarTypeDescr::Type arrayType;
         if ((!isDenseNative || writeNeedsBarrier) &&
-            !ElementAccessIsTypedArray(obj, id, &arrayType))
+            !ElementAccessIsTypedArray(obj, id, &arrayType) &&
+            !elementAccessIsTypedObjectArrayOfScalarType(obj, id, &arrayType))
         {
             return InliningStatus_NotInlined;
         }
@@ -1321,10 +1321,45 @@ IonBuilder::inlineUnsafePutElements(CallInfo &callInfo)
             continue;
         }
 
+        if (elementAccessIsTypedObjectArrayOfScalarType(obj, id, &arrayType)) {
+            if (!inlineUnsafeSetTypedObjectArrayElement(callInfo, base, arrayType))
+                return InliningStatus_Error;
+            continue;
+        }
+
         MOZ_ASSUME_UNREACHABLE("Element access not dense array nor typed array");
     }
 
     return InliningStatus_Inlined;
+}
+
+bool
+IonBuilder::elementAccessIsTypedObjectArrayOfScalarType(MDefinition* obj, MDefinition* id,
+                                                        ScalarTypeDescr::Type *arrayType)
+{
+    if (obj->type() != MIRType_Object) // lookupTypeDescrSet() tests for TypedObject
+        return false;
+
+    if (id->type() != MIRType_Int32 && id->type() != MIRType_Double)
+        return false;
+
+    TypeDescrSet objDescrs;
+    if (!lookupTypeDescrSet(obj, &objDescrs))
+        return false;
+
+    if (!objDescrs.allOfArrayKind())
+        return false;
+
+    TypeDescrSet elemDescrs;
+    if (!objDescrs.arrayElementType(*this, &elemDescrs))
+        return false;
+
+    if (elemDescrs.empty() || elemDescrs.kind() != TypeDescr::Scalar)
+        return false;
+
+    JS_ASSERT(TypeDescr::isSized(elemDescrs.kind()));
+
+    return elemDescrs.scalarType(arrayType);
 }
 
 bool
@@ -1363,6 +1398,26 @@ IonBuilder::inlineUnsafeSetTypedArrayElement(CallInfo &callInfo,
     MDefinition *elem = callInfo.getArg(base + 2);
 
     if (!jsop_setelem_typed(arrayType, SetElem_Unsafe, obj, id, elem))
+        return false;
+
+    return true;
+}
+
+bool
+IonBuilder::inlineUnsafeSetTypedObjectArrayElement(CallInfo &callInfo,
+                                                   uint32_t base,
+                                                   ScalarTypeDescr::Type arrayType)
+{
+    // Note: we do not check the conditions that are asserted as true
+    // in intrinsic_UnsafePutElements():
+    // - arr is a typed array
+    // - idx < length
+
+    MDefinition *obj = callInfo.getArg(base + 0);
+    MDefinition *id = callInfo.getArg(base + 1);
+    MDefinition *elem = callInfo.getArg(base + 2);
+
+    if (!jsop_setelem_typed_object(arrayType, SetElem_Unsafe, true, obj, id, elem))
         return false;
 
     return true;
@@ -1407,7 +1462,11 @@ IonBuilder::inlineForkJoinGetSlice(CallInfo &callInfo)
     // self-hosted function which must be used in a particular fashion.
     MOZ_ASSERT(callInfo.argc() == 1 && !callInfo.constructing());
     MOZ_ASSERT(callInfo.getArg(0)->type() == MIRType_Int32);
-    MOZ_ASSERT(getInlineReturnType() == MIRType_Int32);
+
+    // Test this, as we might have not executed the native despite knowing the
+    // target here.
+    if (getInlineReturnType() != MIRType_Int32)
+        return InliningStatus_NotInlined;
 
     callInfo.setImplicitlyUsedUnchecked();
 
