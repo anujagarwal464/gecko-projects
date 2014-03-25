@@ -211,7 +211,7 @@ CacheFile::Init(const nsACString &aKey,
   if (mMemoryOnly) {
     MOZ_ASSERT(!aCallback);
 
-    mMetadata = new CacheFileMetadata(true, mKey);
+    mMetadata = new CacheFileMetadata(mKey);
     mReady = true;
     mDataSize = mMetadata->Offset();
     return NS_OK;
@@ -223,7 +223,7 @@ CacheFile::Init(const nsACString &aKey,
       flags = CacheFileIOManager::CREATE_NEW;
 
       // make sure we can use this entry immediately
-      mMetadata = new CacheFileMetadata(false, mKey);
+      mMetadata = new CacheFileMetadata(mKey);
       mReady = true;
       mDataSize = mMetadata->Offset();
     }
@@ -240,7 +240,7 @@ CacheFile::Init(const nsACString &aKey,
         flags = CacheFileIOManager::CREATE_NEW;
 
         // make sure we can use this entry immediately
-        mMetadata = new CacheFileMetadata(false, mKey);
+        mMetadata = new CacheFileMetadata(mKey);
         mReady = true;
         mDataSize = mMetadata->Offset();
 
@@ -280,7 +280,7 @@ CacheFile::Init(const nsACString &aKey,
              "initializing entry as memory-only. [this=%p]", this));
 
         mMemoryOnly = true;
-        mMetadata = new CacheFileMetadata(true, mKey);
+        mMetadata = new CacheFileMetadata(mKey);
         mReady = true;
         mDataSize = mMetadata->Offset();
 
@@ -477,7 +477,7 @@ CacheFile::OnFileOpened(CacheFileHandle *aHandle, nsresult aResult)
              this));
 
         mMemoryOnly = true;
-        mMetadata = new CacheFileMetadata(true, mKey);
+        mMetadata = new CacheFileMetadata(mKey);
         mReady = true;
         mDataSize = mMetadata->Offset();
 

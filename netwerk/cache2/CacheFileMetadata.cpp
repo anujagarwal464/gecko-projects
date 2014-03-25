@@ -27,8 +27,7 @@ namespace net {
 NS_IMPL_ISUPPORTS1(CacheFileMetadata, CacheFileIOListener)
 
 CacheFileMetadata::CacheFileMetadata(CacheFileHandle *aHandle, const nsACString &aKey)
-  : CacheMemoryConsumer(NORMAL)
-  , mHandle(aHandle)
+  : mHandle(aHandle)
   , mHashArray(nullptr)
   , mHashArraySize(0)
   , mHashCount(0)
@@ -55,9 +54,30 @@ CacheFileMetadata::CacheFileMetadata(CacheFileHandle *aHandle, const nsACString 
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 }
 
-CacheFileMetadata::CacheFileMetadata(bool aMemoryOnly, const nsACString &aKey)
-  : CacheMemoryConsumer(aMemoryOnly ? MEMORY_ONLY : NORMAL)
-  , mHandle(nullptr)
+CacheFileMetadata::~CacheFileMetadata()
+{
+  LOG(("CacheFileMetadata::~CacheFileMetadata() [this=%p]", this));
+
+  MOZ_COUNT_DTOR(CacheFileMetadata);
+  MOZ_ASSERT(!mListener);
+
+  if (mHashArray) {
+    free(mHashArray);
+    mHashArray = nullptr;
+    mHashArraySize = 0;
+  }
+
+  if (mBuf) {
+    free(mBuf);
+    mBuf = nullptr;
+    mBufSize = 0;
+  }
+
+  DoMemoryReport(MemoryUsage());
+}
+
+CacheFileMetadata::CacheFileMetadata(const nsACString &aKey)
+  : mHandle(nullptr)
   , mHashArray(nullptr)
   , mHashArraySize(0)
   , mHashCount(0)
@@ -87,8 +107,7 @@ CacheFileMetadata::CacheFileMetadata(bool aMemoryOnly, const nsACString &aKey)
 }
 
 CacheFileMetadata::CacheFileMetadata()
-  : CacheMemoryConsumer(DONT_REPORT /* This is a helper class */)
-  , mHandle(nullptr)
+  : mHandle(nullptr)
   , mHashArray(nullptr)
   , mHashArraySize(0)
   , mHashCount(0)
@@ -106,26 +125,6 @@ CacheFileMetadata::CacheFileMetadata()
 
   MOZ_COUNT_CTOR(CacheFileMetadata);
   memset(&mMetaHdr, 0, sizeof(CacheFileMetadataHeader));
-}
-
-CacheFileMetadata::~CacheFileMetadata()
-{
-  LOG(("CacheFileMetadata::~CacheFileMetadata() [this=%p]", this));
-
-  MOZ_COUNT_DTOR(CacheFileMetadata);
-  MOZ_ASSERT(!mListener);
-
-  if (mHashArray) {
-    free(mHashArray);
-    mHashArray = nullptr;
-    mHashArraySize = 0;
-  }
-
-  if (mBuf) {
-    free(mBuf);
-    mBuf = nullptr;
-    mBufSize = 0;
-  }
 }
 
 void

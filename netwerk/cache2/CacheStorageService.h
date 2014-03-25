@@ -8,7 +8,6 @@
 #include "nsICacheStorageService.h"
 #include "nsIMemoryReporter.h"
 
-#include "nsITimer.h"
 #include "nsClassHashtable.h"
 #include "nsString.h"
 #include "nsThreadUtils.h"
@@ -38,40 +37,19 @@ class CacheMemoryConsumer
 {
 private:
   friend class CacheStorageService;
-  uint32_t mReportedMemoryConsumption : 30;
-  uint32_t mFlags : 2;
-
-private:
-  CacheMemoryConsumer() MOZ_DELETE;
-
+  uint32_t mReportedMemoryConsumption;
 protected:
-  // Using enum instead of static consts here since it doesn't build on linux
-  enum
-  {
-    NORMAL = 0,
-    // This consumer is belonging to a memory-only cache entry, used to decide
-    // which of the two disk and memory pools count this consumption at.
-    MEMORY_ONLY = 1 << 0,
-    // Prevent reports of this consumer at all, used for disk data chunks since
-    // we throw them away ASAP and don't want to wipe the whole pool out during
-    // their short life.
-    DONT_REPORT = 1 << 1
-  };
-
-  CacheMemoryConsumer(uint32_t aFlags);
-  ~CacheMemoryConsumer() { DoMemoryReport(0); }
+  CacheMemoryConsumer();
   void DoMemoryReport(uint32_t aCurrentSize);
 };
 
 class CacheStorageService : public nsICacheStorageService
                           , public nsIMemoryReporter
-                          , public nsITimerCallback
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSICACHESTORAGESERVICE
   NS_DECL_NSIMEMORYREPORTER
-  NS_DECL_NSITIMERCALLBACK
 
   CacheStorageService();
 
@@ -117,12 +95,6 @@ private:
    * then released.
    */
   void UnregisterEntry(CacheEntry* aEntry);
-
-  /**
-   * Schedule purge of an entry.  This may be called under the given
-   * CacheEntry's lock.
-   */
-  void PurgeEntryData(CacheEntry* aEntry);
 
   /**
    * Removes the entry from the related entry hash table, if still present.
@@ -196,6 +168,31 @@ private:
   void PurgeOverMemoryLimit();
 
 private:
+  class PurgeFromMemoryRunnable : public nsRunnable
+  {
+  public:
+    PurgeFromMemoryRunnable(CacheStorageService* aService, uint32_t aWhat)
+      : mService(aService), mWhat(aWhat) { }
+
+  private:
+    virtual ~PurgeFromMemoryRunnable() { }
+
+    NS_IMETHOD Run() {
+      mService->PurgeAll(mWhat);
+      return NS_OK;
+    }
+
+    nsRefPtr<CacheStorageService> mService;
+    uint32_t mWhat;
+  };
+
+  /**
+   * Purges entries from memory based on the frecency ordered array.
+   */
+  void PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat);
+  void PurgeExpired();
+  void PurgeAll(uint32_t aWhat);
+
   nsresult DoomStorageEntries(nsCSubstring const& aContextKey,
                               bool aDiskStorage,
                               nsICacheEntryDoomCallback* aCallback);
@@ -214,70 +211,10 @@ private:
   bool mShutdown;
 
   // Accessible only on the service thread
-  class MemoryPool
-  {
-  public:
-    enum EType
-    {
-      DISK,
-      MEMORY,
-    } mType;
-
-    MemoryPool(EType aType);
-    ~MemoryPool();
-
-    nsTArray<nsRefPtr<CacheEntry> > mFrecencyArray;
-    nsTArray<nsRefPtr<CacheEntry> > mExpirationArray;
-    mozilla::Atomic<uint32_t> mMemorySize;
-
-    bool OnMemoryConsumptionChange(uint32_t aSavedMemorySize,
-                                   uint32_t aCurrentMemoryConsumption);
-    /**
-     * Purges entries from memory based on the frecency ordered array.
-     */
-    void PurgeOverMemoryLimit();
-    void PurgeExpired();
-    void PurgeByFrecency(bool &aFrecencyNeedsSort, uint32_t aWhat);
-    void PurgeAll(uint32_t aWhat);
-
-  private:
-    uint32_t const Limit() const;
-    MemoryPool() MOZ_DELETE;
-  };
-
-  MemoryPool mDiskPool;
-  MemoryPool mMemoryPool;
-  MemoryPool& Pool(bool aUsingDisk)
-  {
-    return aUsingDisk ? mDiskPool : mMemoryPool;
-  }
-  MemoryPool const& Pool(bool aUsingDisk) const
-  {
-    return aUsingDisk ? mDiskPool : mMemoryPool;
-  }
-
-  nsCOMPtr<nsITimer> mPurgeTimer;
-
-  class PurgeFromMemoryRunnable : public nsRunnable
-  {
-  public:
-    PurgeFromMemoryRunnable(CacheStorageService* aService, uint32_t aWhat)
-      : mService(aService), mWhat(aWhat) { }
-
-  private:
-    virtual ~PurgeFromMemoryRunnable() { }
-
-    NS_IMETHOD Run()
-    {
-      // TODO not all falgs apply to both pools
-      mService->Pool(true).PurgeAll(mWhat);
-      mService->Pool(false).PurgeAll(mWhat);
-      return NS_OK;
-    }
-
-    nsRefPtr<CacheStorageService> mService;
-    uint32_t mWhat;
-  };
+  nsTArray<nsRefPtr<CacheEntry> > mFrecencyArray;
+  nsTArray<nsRefPtr<CacheEntry> > mExpirationArray;
+  mozilla::Atomic<uint32_t> mMemorySize;
+  bool mPurging;
 };
 
 template<class T>

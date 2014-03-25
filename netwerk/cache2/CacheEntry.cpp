@@ -49,7 +49,7 @@ CacheEntryHandle::CacheEntryHandle(CacheEntry* aEntry)
   MOZ_COUNT_CTOR(CacheEntryHandle);
 
 #ifdef DEBUG
-  if (!mEntry->HandlersCount()) {
+  if (!mEntry->mHandlersCount) {
     // CacheEntry.mHandlersCount must go from zero to one only under
     // the service lock. Can access CacheStorageService::Self() w/o a check
     // since CacheEntry hrefs it.
@@ -57,14 +57,14 @@ CacheEntryHandle::CacheEntryHandle(CacheEntry* aEntry)
   }
 #endif
 
-  mEntry->AddHandlerRef();
+  ++mEntry->mHandlersCount;
 
   LOG(("New CacheEntryHandle %p for entry %p", this, aEntry));
 }
 
 CacheEntryHandle::~CacheEntryHandle()
 {
-  mEntry->ReleaseHandlerRef();
+  --mEntry->mHandlersCount;
   mEntry->OnHandleClosed(this);
 
   MOZ_COUNT_DTOR(CacheEntryHandle);
@@ -87,8 +87,8 @@ CacheEntry::Callback::Callback(CacheEntry* aEntry,
 
   // The counter may go from zero to non-null only under the service lock
   // but here we expect it to be already positive.
-  MOZ_ASSERT(mEntry->HandlersCount());
-  mEntry->AddHandlerRef();
+  MOZ_ASSERT(mEntry->mHandlersCount);
+  ++mEntry->mHandlersCount;
 }
 
 CacheEntry::Callback::Callback(CacheEntry::Callback const &aThat)
@@ -104,13 +104,13 @@ CacheEntry::Callback::Callback(CacheEntry::Callback const &aThat)
 
   // The counter may go from zero to non-null only under the service lock
   // but here we expect it to be already positive.
-  MOZ_ASSERT(mEntry->HandlersCount());
-  mEntry->AddHandlerRef();
+  MOZ_ASSERT(mEntry->mHandlersCount);
+  ++mEntry->mHandlersCount;
 }
 
 CacheEntry::Callback::~Callback()
 {
-  mEntry->ReleaseHandlerRef();
+  --mEntry->mHandlersCount;
   MOZ_COUNT_DTOR(CacheEntry::Callback);
 }
 
@@ -121,9 +121,9 @@ void CacheEntry::Callback::ExchangeEntry(CacheEntry* aEntry)
 
   // The counter may go from zero to non-null only under the service lock
   // but here we expect it to be already positive.
-  MOZ_ASSERT(aEntry->HandlersCount());
-  aEntry->AddHandlerRef();
-  mEntry->ReleaseHandlerRef();
+  MOZ_ASSERT(aEntry->mHandlersCount);
+  ++aEntry->mHandlersCount;
+  --mEntry->mHandlersCount;
   mEntry = aEntry;
 }
 
@@ -807,11 +807,6 @@ bool CacheEntry::UsingDisk() const
 {
   CacheStorageService::Self()->Lock().AssertCurrentThreadOwns();
 
-  return Persistent();
-}
-
-bool CacheEntry::Persistent() const
-{
   return mUseDisk;
 }
 
@@ -830,13 +825,6 @@ bool CacheEntry::SetUsingDisk(bool aUsingDisk)
   bool changed = mUseDisk != aUsingDisk;
   mUseDisk = aUsingDisk;
   return changed;
-}
-
-void CacheEntry::ReleaseHandlerRef()
-{
-  if (--mHandlersCount == 0 && mUseDisk) {
-    CacheStorageService::Self()->PurgeEntryData(this);
-  }
 }
 
 bool CacheEntry::IsReferenced() const
