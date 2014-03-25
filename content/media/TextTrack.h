@@ -84,10 +84,7 @@ public:
   {
     aType = mType;
   }
-  void GetId(nsAString& aId) const
-  {
-    aId = mId;
-  }
+  void GetId(nsAString& aId) const;
 
   TextTrackMode Mode() const
   {
@@ -104,6 +101,7 @@ public:
   }
 
   TextTrackCueList* GetActiveCues();
+  void UpdateActiveCueList();
   void GetActiveCueArray(nsTArray<nsRefPtr<TextTrackCue> >& aCues);
 
   TextTrackReadyState ReadyState() const;
@@ -126,8 +124,6 @@ public:
   }
 
 private:
-  void UpdateActiveCueList();
-
   nsCOMPtr<nsISupports> mParent;
   nsRefPtr<TextTrackList> mTextTrackList;
 
@@ -135,7 +131,6 @@ private:
   nsString mLabel;
   nsString mLanguage;
   nsString mType;
-  nsString mId;
   TextTrackMode mMode;
 
   nsRefPtr<TextTrackCueList> mCueList;

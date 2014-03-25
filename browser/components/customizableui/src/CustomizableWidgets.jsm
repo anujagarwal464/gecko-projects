@@ -300,6 +300,11 @@ const CustomizableWidgets = [{
 
         let item;
         if (node.localName == "menuseparator") {
+          // Don't insert duplicate or leading separators. This can happen if there are
+          // menus (which we don't copy) above the separator.
+          if (!fragment.lastChild || fragment.lastChild.localName == "menuseparator") {
+            continue;
+          }
           item = doc.createElementNS(kNSXUL, "menuseparator");
         } else if (node.localName == "menuitem") {
           item = doc.createElementNS(kNSXUL, "toolbarbutton");
@@ -765,7 +770,6 @@ const CustomizableWidgets = [{
         elem.section = aSection;
         elem.value = item.value;
         elem.setAttribute("class", "subviewbutton");
-        addShortcut(item, doc, elem);
         containerElem.appendChild(elem);
       }
     },
