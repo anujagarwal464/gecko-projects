@@ -1067,7 +1067,8 @@ FragmentOrElement::RemoveChildAt(uint32_t aIndex, bool aNotify)
 void
 FragmentOrElement::GetTextContentInternal(nsAString& aTextContent)
 {
-  nsContentUtils::GetNodeTextContent(this, true, aTextContent);
+  if(!nsContentUtils::GetNodeTextContent(this, true, aTextContent))
+    NS_RUNTIMEABORT("OOM");
 }
 
 void
@@ -1927,6 +1928,16 @@ FragmentOrElement::AppendTextTo(nsAString& aResult)
   NS_NOTREACHED("called FragmentOrElement::TextLength");
 }
 
+bool
+FragmentOrElement::AppendTextTo(nsAString& aResult, const mozilla::fallible_t&)
+{
+  // We can remove this assertion if it turns out to be useful to be able
+  // to depend on this appending nothing.
+  NS_NOTREACHED("called FragmentOrElement::TextLength");
+
+  return false;
+}
+
 uint32_t
 FragmentOrElement::GetChildCount() const
 {
@@ -2350,20 +2361,21 @@ StartElement(Element* aContent, StringBuilder& aBuilder)
       continue;
     }
     
+    aBuilder.Append(" ");
+
     if (MOZ_LIKELY(attNs == kNameSpaceID_None) ||
         (attNs == kNameSpaceID_XMLNS &&
          attName == nsGkAtoms::xmlns)) {
-      aBuilder.Append(" ");
+      // Nothing else required
     } else if (attNs == kNameSpaceID_XML) {
-      aBuilder.Append(" xml:");
+      aBuilder.Append("xml:");
     } else if (attNs == kNameSpaceID_XMLNS) {
-      aBuilder.Append(" xmlns:");
+      aBuilder.Append("xmlns:");
     } else if (attNs == kNameSpaceID_XLink) {
-      aBuilder.Append(" xlink:");
+      aBuilder.Append("xlink:");
     } else {
       nsIAtom* prefix = name->GetPrefix();
       if (prefix) {
-        aBuilder.Append(" ");
         aBuilder.Append(prefix);
         aBuilder.Append(":");
       }
