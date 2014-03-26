@@ -60,6 +60,13 @@ function run_test() {
     Services.prefs.clearUserPref("browser.safebrowsing.malware.enabled");
   });
 
+  // Set download_block_table explicitly.
+  Services.prefs.setCharPref("urlclassifier.downloadBlockTable",
+                             "goog-badbinurl-shavar");
+  do_register_cleanup(function() {
+    Services.prefs.clearUserPref("urlclassifier.downloadBlockTable");
+  });
+
   gHttpServ = new HttpServer();
   gHttpServ.registerDirectory("/", do_get_cwd());
   gHttpServ.registerPathHandler("/download", function(request, response) {

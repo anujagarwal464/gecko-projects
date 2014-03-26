@@ -91,7 +91,7 @@ function autoComplete({ ed, cm }) {
   let cur = ed.getCursor();
   completer.complete(cm.getRange({line: 0, ch: 0}, cur), cur)
     .then(suggestions => {
-    if (!suggestions || !suggestions.length || !suggestions[0].preLabel) {
+    if (!suggestions || !suggestions.length || suggestions[0].preLabel == null) {
       private.suggestionInsertedOnce = false;
       popup.hidePopup();
       ed.emit("after-suggest");
@@ -188,7 +188,21 @@ function onEditorKeypress({ ed, Editor }, event) {
 function getPopup({ ed }) {
   return privates.get(ed).popup;
 }
+
+/**
+ * Returns contextual information about the token covered by the caret if the
+ * implementation of completer supports it.
+ */
+function getInfoAt({ ed }, caret) {
+  let completer = privates.get(ed).completer;
+  if (completer && completer.getInfoAt)
+    return completer.getInfoAt(ed.getText(), caret);
+
+  return null;
+}
+
 // Export functions
 
 module.exports.setupAutoCompletion = setupAutoCompletion;
 module.exports.getAutocompletionPopup = getPopup;
+module.exports.getInfoAt = getInfoAt;

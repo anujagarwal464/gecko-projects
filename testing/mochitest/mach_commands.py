@@ -57,12 +57,6 @@ If you do not have a non-debug gaia profile, you can build one:
 The profile should be generated in a directory called 'profile'.
 '''.lstrip()
 
-MARIONETTE_DISABLED = '''
-The %s command requires a marionette enabled build.
-
-Add 'ENABLE_MARIONETTE=1' to your mozconfig file and re-build the application.
-Your currently active mozconfig is %s.
-'''.lstrip()
 
 class UnexpectedFilter(logging.Filter):
     def filter(self, record):
@@ -143,13 +137,6 @@ class MochitestRunner(MozbuildObject):
                 test_path_dir = True;
             options.testPath = test_path
 
-        # filter test directiories or all tests according to the manifest
-        if not test_path or test_path_dir:
-            if conditions.is_b2g_desktop(self):
-                options.testManifest = 'b2g-desktop.json'
-            else:
-                options.testManifest = 'b2g.json'
-
         for k, v in kwargs.iteritems():
             setattr(options, k, v)
         options.noWindow = no_window
@@ -160,10 +147,6 @@ class MochitestRunner(MozbuildObject):
 
         options.consoleLevel = 'INFO'
         if conditions.is_b2g_desktop(self):
-            if self.substs.get('ENABLE_MARIONETTE') != '1':
-                print(MARIONETTE_DISABLED % ('mochitest-b2g-desktop',
-                                             self.mozconfig['path']))
-                return 1
 
             options.profile = options.profile or os.environ.get('GAIA_PROFILE')
             if not options.profile:
@@ -320,7 +303,6 @@ class MochitestRunner(MozbuildObject):
         options.dumpAboutMemoryAfterTest = dump_about_memory_after_test
         options.dumpDMDAfterTest = dump_dmd_after_test
         options.dumpOutputDirectory = dump_output_directory
-        mozinfo.update({"e10s": e10s}) # for test manifest parsing.
 
         options.failureFile = failure_file_path
         if install_extension != None:

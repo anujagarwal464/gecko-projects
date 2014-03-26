@@ -45,7 +45,6 @@
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsError.h"
-#include "nsEventDispatcher.h"
 #include "nsISHistory.h"
 #include "nsISHistoryInternal.h"
 #include "nsIDOMHTMLDocument.h"
@@ -2004,16 +2003,14 @@ nsFrameLoader::SetClampScrollPosition(bool aClamp)
   // When turning clamping on, make sure the current position is clamped.
   if (aClamp) {
     nsIFrame* frame = GetPrimaryFrameOfOwningContent();
-    if (frame) {
-      nsSubDocumentFrame* subdocFrame = do_QueryFrame(frame);
-      if (subdocFrame) {
-        nsIFrame* subdocRootFrame = subdocFrame->GetSubdocumentRootFrame();
-        if (subdocRootFrame) {
-          nsIScrollableFrame* subdocRootScrollFrame = subdocRootFrame->PresContext()->PresShell()->
-            GetRootScrollFrameAsScrollable();
-          if (subdocRootScrollFrame) {
-            subdocRootScrollFrame->ScrollTo(subdocRootScrollFrame->GetScrollPosition(), nsIScrollableFrame::INSTANT);
-          }
+    nsSubDocumentFrame* subdocFrame = do_QueryFrame(frame);
+    if (subdocFrame) {
+      nsIFrame* subdocRootFrame = subdocFrame->GetSubdocumentRootFrame();
+      if (subdocRootFrame) {
+        nsIScrollableFrame* subdocRootScrollFrame = subdocRootFrame->PresContext()->PresShell()->
+          GetRootScrollFrameAsScrollable();
+        if (subdocRootScrollFrame) {
+          subdocRootScrollFrame->ScrollTo(subdocRootScrollFrame->GetScrollPosition(), nsIScrollableFrame::INSTANT);
         }
       }
     }

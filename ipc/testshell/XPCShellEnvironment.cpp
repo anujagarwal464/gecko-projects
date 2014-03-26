@@ -165,8 +165,7 @@ Load(JSContext *cx,
         JS::CompileOptions options(cx);
         options.setUTF8(true)
                .setFileAndLine(filename.ptr(), 1);
-        JS::RootedObject rootedObj(cx, obj);
-        JSScript *script = JS::Compile(cx, rootedObj, options, file);
+        JS::Rooted<JSScript*> script(cx, JS::Compile(cx, obj, options, file));
         fclose(file);
         if (!script)
             return false;
@@ -185,18 +184,20 @@ Version(JSContext *cx,
         unsigned argc,
         JS::Value *vp)
 {
-    JS::Value *argv = JS_ARGV(cx, vp);
-    JS_SET_RVAL(cx, vp, INT_TO_JSVAL(JS_GetVersion(cx)));
-    if (argc > 0 && JSVAL_IS_INT(argv[0]))
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    args.rval().setInt32(JS_GetVersion(cx));
+    if (args.get(0).isInt32())
         JS_SetVersionForCompartment(js::GetContextCompartment(cx),
-                                    JSVersion(JSVAL_TO_INT(argv[0])));
+                                    JSVersion(args[0].toInt32()));
     return true;
 }
 
 static bool
 BuildDate(JSContext *cx, unsigned argc, JS::Value *vp)
 {
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
     fprintf(stdout, "built on %s at %s\n", __DATE__, __TIME__);
+    args.rval().setUndefined();
     return true;
 }
 
@@ -237,12 +238,14 @@ GC(JSContext *cx,
    unsigned argc,
    JS::Value *vp)
 {
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+
     JSRuntime *rt = JS_GetRuntime(cx);
     JS_GC(rt);
 #ifdef JS_GCMETER
     js_DumpGCStats(rt, stdout);
 #endif
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
+    args.rval().setUndefined();
     return true;
 }
 
@@ -298,7 +301,6 @@ XPCShellEnvironment::ProcessFile(JSContext *cx,
 {
     XPCShellEnvironment* env = this;
 
-    JSScript *script;
     JS::Rooted<JS::Value> result(cx);
     int lineno, startline;
     bool ok, hitEOF;
@@ -333,7 +335,7 @@ XPCShellEnvironment::ProcessFile(JSContext *cx,
         JS::CompileOptions options(cx);
         options.setUTF8(true)
                .setFileAndLine(filename, 1);
-        JSScript* script = JS::Compile(cx, obj, options, file);
+        JS::Rooted<JSScript*> script(cx, JS::Compile(cx, obj, options, file));
         if (script)
             (void)JS_ExecuteScript(cx, obj, script, result.address());
 
@@ -370,7 +372,8 @@ XPCShellEnvironment::ProcessFile(JSContext *cx,
         JS_ClearPendingException(cx);
         JS::CompileOptions options(cx);
         options.setFileAndLine("typein", startline);
-        script = JS_CompileScript(cx, obj, buffer, strlen(buffer), options);
+        JS::Rooted<JSScript*> script(cx,
+                                     JS_CompileScript(cx, obj, buffer, strlen(buffer), options));
         if (script) {
             JSErrorReporter older;
 
@@ -578,8 +581,8 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
 
   JS::CompileOptions options(cx);
   options.setFileAndLine("typein", 0);
-  JSScript* script = JS_CompileUCScript(cx, global, aString.get(),
-                                        aString.Length(), options);
+  JS::Rooted<JSScript*> script(cx, JS_CompileUCScript(cx, global, aString.get(),
+                                                      aString.Length(), options));
   if (!script) {
      return false;
   }

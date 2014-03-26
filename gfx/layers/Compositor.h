@@ -121,6 +121,7 @@ struct Effect;
 struct EffectChain;
 class Image;
 class ISurfaceAllocator;
+class Layer;
 class NewTextureSource;
 class DataTextureSource;
 class CompositingRenderTarget;
@@ -359,6 +360,8 @@ public:
    */
   virtual void EndFrame() = 0;
 
+  virtual void SetFBAcquireFence(Layer* aLayer) {}
+
   /**
    * Post-rendering stuff if the rendering is done outside of this Compositor
    * e.g., by Composer2D.
@@ -394,16 +397,22 @@ public:
     mDiagnosticTypes = aDiagnostics;
   }
 
+  DiagnosticTypes GetDiagnosticTypes() const
+  {
+    return mDiagnosticTypes;
+  }
+
   void DrawDiagnostics(DiagnosticFlags aFlags,
                        const gfx::Rect& visibleRect,
                        const gfx::Rect& aClipRect,
-                       const gfx::Matrix4x4& transform);
+                       const gfx::Matrix4x4& transform,
+                       uint32_t aFlashCounter = DIAGNOSTIC_FLASH_COUNTER_MAX);
 
   void DrawDiagnostics(DiagnosticFlags aFlags,
                        const nsIntRegion& visibleRegion,
                        const gfx::Rect& aClipRect,
-                       const gfx::Matrix4x4& transform);
-
+                       const gfx::Matrix4x4& transform,
+                       uint32_t aFlashCounter = DIAGNOSTIC_FLASH_COUNTER_MAX);
 
 #ifdef MOZ_DUMP_PAINTING
   virtual const char* Name() const = 0;
@@ -510,7 +519,8 @@ protected:
   void DrawDiagnosticsInternal(DiagnosticFlags aFlags,
                                const gfx::Rect& aVisibleRect,
                                const gfx::Rect& aClipRect,
-                               const gfx::Matrix4x4& transform);
+                               const gfx::Matrix4x4& transform,
+                               uint32_t aFlashCounter);
 
   bool ShouldDrawDiagnostics(DiagnosticFlags);
 

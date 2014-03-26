@@ -13,6 +13,7 @@ include protocol PCompositor;
 include protocol PCrashReporter;
 include protocol PExternalHelperApp;
 include protocol PDeviceStorageRequest;
+include protocol PFileDescriptorSet;
 include protocol PFMRadio;
 include protocol PFileSystemRequest;
 include protocol PHal;
@@ -206,10 +207,25 @@ struct FileSystemGetFileOrDirectoryParams
   nsString realPath;
 };
 
+union FileSystemPathOrFileValue
+{
+  nsString;
+  PBlob;
+};
+
+struct FileSystemRemoveParams
+{
+  nsString filesystem;
+  nsString directory;
+  FileSystemPathOrFileValue target;
+  bool recursive;
+};
+
 union FileSystemParams
 {
   FileSystemCreateDirectoryParams;
   FileSystemGetFileOrDirectoryParams;
+  FileSystemRemoveParams;
 };
 
 union PrefValue {
@@ -243,6 +259,7 @@ intr protocol PContent
     manages PDeviceStorageRequest;
     manages PFileSystemRequest;
     manages PExternalHelperApp;
+    manages PFileDescriptorSet;
     manages PFMRadio;
     manages PHal;
     manages PIndexedDB;
@@ -284,6 +301,8 @@ both:
     async PBlob(BlobConstructorParams params);
 
     async PJavaScript();
+
+    PFileDescriptorSet(FileDescriptor fd);
 
 child:
     /**

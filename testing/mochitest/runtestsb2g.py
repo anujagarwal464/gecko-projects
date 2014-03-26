@@ -65,6 +65,10 @@ class B2GMochitest(MochitestUtilsMixin):
             test_url += "?" + "&".join(self.urlOpts)
         self.test_script_args.append(test_url)
 
+    def buildTestPath(self, options):
+        # Skip over the manifest building that happens on desktop.
+        return self.buildTestURL(options)
+
     def build_profile(self, options):
         # preferences
         prefs = {}
@@ -367,6 +371,8 @@ def run_desktop_mochitests(parser, options):
 
     if options.desktop and not options.profile:
         raise Exception("must specify --profile when specifying --desktop")
+
+    options.browserArgs += ['-marionette']
 
     sys.exit(mochitest.runTests(options, onLaunch=mochitest.startTests))
 

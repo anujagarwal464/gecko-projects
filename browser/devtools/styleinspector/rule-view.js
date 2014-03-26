@@ -1122,7 +1122,7 @@ CssRuleView.prototype = {
     // Test for css transform
     if (property && property.name === "transform") {
       this.previewTooltip.setCssTransformContent(property.value, this.pageStyle,
-        this._viewedElement).then(def.resolve);
+        this._viewedElement).then(def.resolve, def.reject);
       hasTooltip = true;
     }
 
@@ -1163,11 +1163,11 @@ CssRuleView.prototype = {
       hasTooltip = true;
     }
 
-    if (hasTooltip) {
+    if (!hasTooltip) {
+      def.reject();
+    } else if (this.colorPicker.tooltip.isShown()) {
       this.colorPicker.revert();
       this.colorPicker.hide();
-    } else {
-      def.reject();
     }
 
     return def.promise;
@@ -1384,9 +1384,13 @@ CssRuleView.prototype = {
 
     this._elementStyle = new ElementStyle(aElement, this.store, this.pageStyle);
     return this._populate().then(() => {
-      this._elementStyle.onChanged = () => {
-        this._changed();
-      };
+      // A new node may already be selected, in which this._elementStyle will
+      // be null.
+      if (this._elementStyle) {
+        this._elementStyle.onChanged = () => {
+          this._changed();
+        };
+      }
     }).then(null, console.error);
   },
 

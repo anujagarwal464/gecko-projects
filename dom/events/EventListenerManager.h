@@ -16,8 +16,6 @@
 #include "nsIJSEventListener.h"
 #include "nsTObserverArray.h"
 
-class ELMCreationDetector;
-class nsEventTargetChainItem;
 class nsIDOMEvent;
 class nsIEventListenerInfo;
 class nsIScriptContext;
@@ -29,6 +27,7 @@ template<class T> class nsCOMArray;
 
 namespace mozilla {
 
+class ELMCreationDetector;
 class EventListenerManager;
 
 namespace dom {
@@ -448,8 +447,7 @@ protected:
    * aScopeGlobal must be non-null.  Otherwise, aContext and aScopeGlobal are
    * allowed to be null.
    */
-  Listener* SetEventHandlerInternal(JS::Handle<JSObject*> aScopeGlobal,
-                                    nsIAtom* aName,
+  Listener* SetEventHandlerInternal(nsIAtom* aName,
                                     const nsAString& aTypeString,
                                     const nsEventHandler& aHandler,
                                     bool aPermitUntrustedEvents);
@@ -560,7 +558,7 @@ protected:
   dom::EventTarget* mTarget;  // WEAK
   nsCOMPtr<nsIAtom> mNoListenerForEventAtom;
 
-  friend class ::ELMCreationDetector;
+  friend class ELMCreationDetector;
   static uint32_t sMainThreadCreatedCount;
 };
 

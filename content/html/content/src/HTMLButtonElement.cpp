@@ -23,11 +23,11 @@
 #include "nsIDOMEvent.h"
 #include "nsIDocument.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
 #include "nsUnicharUtils.h"
 #include "nsLayoutUtils.h"
-#include "nsEventDispatcher.h"
 #include "nsPresState.h"
 #include "nsError.h"
 #include "nsFocusManager.h"
@@ -179,15 +179,12 @@ bool
 HTMLButtonElement::IsDisabledForEvents(uint32_t aMessage)
 {
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
-  nsIFrame* formFrame = nullptr;
-  if (formControlFrame) {
-    formFrame = do_QueryFrame(formControlFrame);
-  }
+  nsIFrame* formFrame = do_QueryFrame(formControlFrame);
   return IsElementDisabledForEvents(aMessage, formFrame);
 }
 
 nsresult
-HTMLButtonElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+HTMLButtonElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = false;
   if (IsDisabledForEvents(aVisitor.mEvent->message)) {
@@ -219,7 +216,7 @@ HTMLButtonElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-HTMLButtonElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+HTMLButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
   nsresult rv = NS_OK;
   if (!aVisitor.mPresContext) {
@@ -278,9 +275,9 @@ HTMLButtonElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                                    NS_MOUSE_CLICK, nullptr,
                                    WidgetMouseEvent::eReal);
             event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD;
-            nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this),
-                                        aVisitor.mPresContext, &event, nullptr,
-                                        &status);
+            EventDispatcher::Dispatch(static_cast<nsIContent*>(this),
+                                      aVisitor.mPresContext, &event, nullptr,
+                                      &status);
             aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
           }
         }

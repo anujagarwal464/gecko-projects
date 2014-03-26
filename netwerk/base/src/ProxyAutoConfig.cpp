@@ -426,6 +426,8 @@ bool PACDnsResolve(JSContext *cx, unsigned int argc, JS::Value *vp)
 static
 bool PACMyIpAddress(JSContext *cx, unsigned int argc, JS::Value *vp)
 {
+  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+
   if (NS_IsMainThread()) {
     NS_WARNING("DNS Resolution From PAC on Main Thread. How did that happen?");
     return false;
@@ -436,7 +438,7 @@ bool PACMyIpAddress(JSContext *cx, unsigned int argc, JS::Value *vp)
     return false;
   }
 
-  return sRunning->MyIPAddress(vp);
+  return sRunning->MyIPAddress(args);
 }
 
 // proxyAlert(msg) javascript implementation
@@ -613,8 +615,9 @@ ProxyAutoConfig::SetupJS()
   if (!mJSRuntime)
     return NS_ERROR_FAILURE;
 
-  JSAutoRequest ar(mJSRuntime->Context());
-  JSAutoCompartment ac(mJSRuntime->Context(), mJSRuntime->Global());
+  JSContext* cx = mJSRuntime->Context();
+  JSAutoRequest ar(cx);
+  JSAutoCompartment ac(cx, mJSRuntime->Global());
 
   // check if this is a data: uri so that we don't spam the js console with
   // huge meaningless strings. this is not on the main thread, so it can't
@@ -622,14 +625,12 @@ ProxyAutoConfig::SetupJS()
   bool isDataURI = nsDependentCSubstring(mPACURI, 0, 5).LowerCaseEqualsASCII("data:", 5);
 
   sRunning = this;
-  JS::Rooted<JSObject *> global(mJSRuntime->Context(), mJSRuntime->Global());
-  JS::CompileOptions options(mJSRuntime->Context());
+  JS::Rooted<JSObject*> global(cx, mJSRuntime->Global());
+  JS::CompileOptions options(cx);
   options.setFileAndLine(mPACURI.get(), 1);
-  JSScript *script = JS_CompileScript(mJSRuntime->Context(), global,
-                                      mPACScript.get(), mPACScript.Length(),
-                                      options);
-  if (!script ||
-      !JS_ExecuteScript(mJSRuntime->Context(), mJSRuntime->Global(), script, nullptr)) {
+  JS::Rooted<JSScript*> script(cx, JS_CompileScript(cx, global, mPACScript.get(),
+                                                    mPACScript.Length(), options));
+  if (!script || !JS_ExecuteScript(cx, global, script, nullptr)) {
     nsString alertMessage(NS_LITERAL_STRING("PAC file failed to install from "));
     if (isDataURI) {
       alertMessage += NS_LITERAL_STRING("data: URI");
@@ -777,7 +778,7 @@ ProxyAutoConfig::SrcAddress(const NetAddr *remoteAddress, nsCString &localAddres
 bool
 ProxyAutoConfig::MyIPAddressTryHost(const nsCString &hostName,
                                     unsigned int timeout,
-                                    JS::Value *vp)
+                                    const JS::CallArgs &aArgs)
 {
   NetAddr remoteAddress;
   nsAutoCString localDottedDecimal;
@@ -787,14 +788,14 @@ ProxyAutoConfig::MyIPAddressTryHost(const nsCString &hostName,
       SrcAddress(&remoteAddress, localDottedDecimal)) {
     JSString *dottedDecimalString =
       JS_NewStringCopyZ(cx, localDottedDecimal.get());
-    JS_SET_RVAL(cx, vp, STRING_TO_JSVAL(dottedDecimalString));
+    aArgs.rval().setString(dottedDecimalString);
     return true;
   }
   return false;
 }
 
 bool
-ProxyAutoConfig::MyIPAddress(JS::Value *vp)
+ProxyAutoConfig::MyIPAddress(const JS::CallArgs &aArgs)
 {
   nsAutoCString remoteDottedDecimal;
   nsAutoCString localDottedDecimal;
@@ -803,7 +804,7 @@ ProxyAutoConfig::MyIPAddress(JS::Value *vp)
   // first, lookup the local address of a socket connected
   // to the host of uri being resolved by the pac file. This is
   // v6 safe.. but is the last step like that
-  if (MyIPAddressTryHost(mRunningHost, kTimeout, vp))
+  if (MyIPAddressTryHost(mRunningHost, kTimeout, aArgs))
     return true;
 
   // next, look for a route to a public internet address that doesn't need DNS.
@@ -811,7 +812,7 @@ ProxyAutoConfig::MyIPAddress(JS::Value *vp)
   // remains operable (as we don't contact it) as long as the address stays
   // in commonly routed IP address space.
   remoteDottedDecimal.AssignLiteral("8.8.8.8");
-  if (MyIPAddressTryHost(remoteDottedDecimal, 0, vp))
+  if (MyIPAddressTryHost(remoteDottedDecimal, 0, aArgs))
     return true;
   
   // next, use the old algorithm based on the local hostname
@@ -821,26 +822,26 @@ ProxyAutoConfig::MyIPAddress(JS::Value *vp)
       PACResolveToString(hostName, localDottedDecimal, kTimeout)) {
     JSString *dottedDecimalString =
       JS_NewStringCopyZ(cx, localDottedDecimal.get());
-    JS_SET_RVAL(cx, vp, STRING_TO_JSVAL(dottedDecimalString));
+    aArgs.rval().setString(dottedDecimalString);
     return true;
   }
 
   // next try a couple RFC 1918 variants.. maybe there is a
   // local route
   remoteDottedDecimal.AssignLiteral("192.168.0.1");
-  if (MyIPAddressTryHost(remoteDottedDecimal, 0, vp))
+  if (MyIPAddressTryHost(remoteDottedDecimal, 0, aArgs))
     return true;
 
   // more RFC 1918
   remoteDottedDecimal.AssignLiteral("10.0.0.1");
-  if (MyIPAddressTryHost(remoteDottedDecimal, 0, vp))
+  if (MyIPAddressTryHost(remoteDottedDecimal, 0, aArgs))
     return true;
 
   // who knows? let's fallback to localhost
   localDottedDecimal.AssignLiteral("127.0.0.1");
   JSString *dottedDecimalString =
     JS_NewStringCopyZ(cx, localDottedDecimal.get());
-  JS_SET_RVAL(cx, vp, STRING_TO_JSVAL(dottedDecimalString));
+  aArgs.rval().setString(dottedDecimalString);
   return true;
 }
 

@@ -1020,6 +1020,9 @@ gfxFT2FontList::AddFaceToList(const nsCString& aEntryName, uint32_t aIndex,
         if (!family) {
             family = new FT2FontFamily(name);
             mFontFamilies.Put(name, family);
+            if (mSkipSpaceLookupCheckFamilies.Contains(name)) {
+                family->SetSkipSpaceFeatureCheck(true);
+            }
             if (mBadUnderlineFamilyNames.Contains(name)) {
                 family->SetBadUnderlineFamily();
             }
@@ -1275,14 +1278,13 @@ gfxFT2FontList::FindFontsInDir(const nsCString& aDir, FontNameCache *aFNC)
 
     struct dirent *ent = nullptr;
     while ((ent = readdir(d)) != nullptr) {
-        int namelen = strlen(ent->d_name);
-        if (namelen <= 4) {
-            // cannot be a usable font filename
+        const char *ext = strrchr(ent->d_name, '.');
+        if (!ext) {
             continue;
         }
-        const char *ext = ent->d_name + namelen - 4;
         if (strcasecmp(ext, ".ttf") == 0 ||
             strcasecmp(ext, ".otf") == 0 ||
+            strcasecmp(ext, ".woff") == 0 ||
             strcasecmp(ext, ".ttc") == 0) {
             bool isStdFont = false;
             for (unsigned int i = 0;
@@ -1292,7 +1294,7 @@ gfxFT2FontList::FindFontsInDir(const nsCString& aDir, FontNameCache *aFNC)
 
             nsCString s(aDir);
             s.Append('/');
-            s.Append(ent->d_name, namelen);
+            s.Append(ent->d_name);
 
             // Add the face(s) from this file to our font list;
             // note that if we have cached info for this file in fnc,
@@ -1318,6 +1320,9 @@ gfxFT2FontList::AppendFaceFromFontListEntry(const FontListEntry& aFLE,
         if (!family) {
             family = new FT2FontFamily(name);
             mFontFamilies.Put(name, family);
+            if (mSkipSpaceLookupCheckFamilies.Contains(name)) {
+                family->SetSkipSpaceFeatureCheck(true);
+            }
             if (mBadUnderlineFamilyNames.Contains(name)) {
                 family->SetBadUnderlineFamily();
             }
@@ -1348,12 +1353,27 @@ gfxFT2FontList::GetFontList(InfallibleTArray<FontListEntry>* retValue)
     mFontFamilies.Enumerate(AddFamilyToFontList, retValue);
 }
 
+static void
+LoadSkipSpaceLookupCheck(nsTHashtable<nsStringHashKey>& aSkipSpaceLookupCheck)
+{
+    nsAutoTArray<nsString, 5> skiplist;
+    gfxFontUtils::GetPrefsFontList("font.whitelist.skip_space_lookup_check",
+                                   skiplist);
+    uint32_t numFonts = skiplist.Length();
+    for (uint32_t i = 0; i < numFonts; i++) {
+        ToLowerCase(skiplist[i]);
+        aSkipSpaceLookupCheck.PutEntry(skiplist[i]);
+    }
+}
+
 nsresult
 gfxFT2FontList::InitFontList()
 {
     // reset font lists
     gfxPlatformFontList::InitFontList();
     
+    LoadSkipSpaceLookupCheck(mSkipSpaceLookupCheckFamilies);
+
     FindFonts();
 
     return NS_OK;

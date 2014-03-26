@@ -33,7 +33,7 @@ struct HttpChannelOpenArgs
   OptionalURIParams           apiRedirectTo;
   uint32_t                    loadFlags;
   RequestHeaderTuples         requestHeaders;
-  nsHttpAtom                  requestMethod;
+  nsCString                   requestMethod;
   OptionalInputStreamParams   uploadStream;
   bool                        uploadStreamHasHeaders;
   uint16_t                    priority;
@@ -46,6 +46,7 @@ struct HttpChannelOpenArgs
   bool                        chooseApplicationCache;
   nsCString                   appCacheClientID;
   bool                        allowSpdy;
+  OptionalFileDescriptorSet   fds;
 };
 
 struct HttpChannelConnectArgs

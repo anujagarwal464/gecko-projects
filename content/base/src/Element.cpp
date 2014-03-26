@@ -50,6 +50,7 @@
 #include "nsIDOMMutationEvent.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
@@ -91,7 +92,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsEventDispatcher.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsIControllers.h"
 #include "nsView.h"
@@ -251,14 +251,6 @@ Element::LockedStyleStates() const
   return nsEventStates();
 }
 
-static void
-nsEventStatesPropertyDtor(void *aObject, nsIAtom *aProperty,
-                          void *aPropertyValue, void *aData)
-{
-  nsEventStates *states = static_cast<nsEventStates*>(aPropertyValue);
-  delete states;
-}
-
 void
 Element::NotifyStyleStateChange(nsEventStates aStates)
 {
@@ -286,7 +278,8 @@ Element::LockStyleStates(nsEventStates aStates)
     *locks &= ~NS_EVENT_STATE_VISITED;
   }
 
-  SetProperty(nsGkAtoms::lockedStyleStates, locks, nsEventStatesPropertyDtor);
+  SetProperty(nsGkAtoms::lockedStyleStates, locks,
+              nsINode::DeleteProperty<nsEventStates>);
   SetHasLockedStyleStates();
 
   NotifyStyleStateChange(aStates);
@@ -305,7 +298,8 @@ Element::UnlockStyleStates(nsEventStates aStates)
     delete locks;
   }
   else {
-    SetProperty(nsGkAtoms::lockedStyleStates, locks, nsEventStatesPropertyDtor);
+    SetProperty(nsGkAtoms::lockedStyleStates, locks,
+                nsINode::DeleteProperty<nsEventStates>);
   }
 
   NotifyStyleStateChange(aStates);
@@ -2317,7 +2311,7 @@ Element::Describe(nsAString& aOutDescription) const
 }
 
 bool
-Element::CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
+Element::CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
                                               nsIURI** aURI) const
 {
   if (aVisitor.mEventStatus == nsEventStatus_eConsumeNoDefault ||
@@ -2335,7 +2329,7 @@ Element::CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
 }
 
 nsresult
-Element::PreHandleEventForLinks(nsEventChainPreVisitor& aVisitor)
+Element::PreHandleEventForLinks(EventChainPreVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
@@ -2396,7 +2390,7 @@ Element::PreHandleEventForLinks(nsEventChainPreVisitor& aVisitor)
 }
 
 nsresult
-Element::PostHandleEventForLinks(nsEventChainPostVisitor& aVisitor)
+Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
   // IMPORTANT: this switch and the switch below it must be kept in sync!
