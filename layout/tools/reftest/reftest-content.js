@@ -43,8 +43,6 @@ var gDebug;
 var gVerbose = false;
 
 var gCurrentTestStartTime;
-var gStartLoadTime;
-var gTotalLoadTime = 0;
 var gClearingForAssertionCheck = false;
 
 const TYPE_LOAD = 'load';  // test without a reference (just test that it does
@@ -572,10 +570,6 @@ function OnDocumentLoad(event)
         return;
     }
 
-    var loadTime = Date.now()-gStartLoadTime;
-    gTotalLoadTime = gTotalLoadTime + loadTime;
-    LogInfo("== OnDocumentLoad: load time="+loadTime+"; total load time="+gTotalLoadTime);
-
     // Collect all editable, spell-checked elements.  It may be the case that
     // not all the elements that match this selector will be spell checked: for
     // example, a textarea without a spellcheck attribute may have a parent with
@@ -744,8 +738,6 @@ function DoAssertionCheck()
 
 function LoadURI(uri)
 {
-    LogInfo("LoadURI "+uri);
-    gStartLoadTime = Date.now();
     var flags = webNavigation().LOAD_FLAGS_NONE;
     webNavigation().loadURI(uri, flags, null, null, null);
 }
@@ -761,11 +753,10 @@ function LogWarning(str)
 
 function LogInfo(str)
 {
-    var dateStr = Date.now() + ":: " + str;
     if (gVerbose) {
-        sendSyncMessage("reftest:Log", { type: "info", msg: dateStr });
+        sendSyncMessage("reftest:Log", { type: "info", msg: str });
     } else {
-        sendAsyncMessage("reftest:Log", { type: "info", msg: dateStr });
+        sendAsyncMessage("reftest:Log", { type: "info", msg: str });
     }
 }
 

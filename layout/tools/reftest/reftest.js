@@ -43,10 +43,6 @@ var gRemote = false;
 var gIgnoreWindowSize = false;
 var gTotalChunks = 0;
 var gThisChunk = 0;
-var gTotalTestTime = 0;
-var gStartTime = 0;
-var gDrawTime = 0;
-var gTotalDrawTime = 0;
 var gContainingWindow = null;
 var gURLFilterRegex = null;
 const FOCUS_FILTER_ALL_TESTS = "all";
@@ -156,7 +152,7 @@ var gRecycledCanvases = new Array();
 
 // By default we just log to stdout
 var gDumpLog = dump;
-var gVerbose = true;
+var gVerbose = false;
 
 // Only dump the sandbox once, because it doesn't depend on the
 // manifest URL (yet!).
@@ -238,7 +234,7 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
 
     var env = CC["@mozilla.org/process/environment;1"].
               getService(CI.nsIEnvironment);
-    // gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
+    gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
 
     var prefs = Components.classes["@mozilla.org/preferences-service;1"].
                 getService(Components.interfaces.nsIPrefBranch);
@@ -310,7 +306,6 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
 
 function InitAndStartRefTests()
 {
-    gStartTime = Date.now();
     /* These prefs are optional, so we don't need to spit an error to the log */
     try {
         var prefs = Components.classes["@mozilla.org/preferences-service;1"].
@@ -339,7 +334,6 @@ function InitAndStartRefTests()
                 var mfl = FileUtils.openFileOutputStream(f, FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE);
                 // Set to mirror to stdout as well as the file
                 gDumpLog = function (msg) {
-                    var datedMsg = Date.now()+"::: "+msg;
 #ifdef BOOTSTRAP
 #ifdef REFTEST_B2G
                     dump(msg);
@@ -347,9 +341,9 @@ function InitAndStartRefTests()
                     //NOTE: on android-xul, we have a libc crash if we do a dump with %7s in the string
 #endif
 #else
-                    dump(datedMsg);
+                    dump(msg);
 #endif
-                    mfl.write(datedMsg, datedMsg.length);
+                    mfl.write(msg, msg.length);
                 };
             }
             catch(e) {
@@ -1422,11 +1416,8 @@ function DoDrawWindow(ctx, x, y, w, h)
     }
 
     LogInfo("DoDrawWindow " + x + "," + y + "," + w + "," + h);
-    var drawStartTime = Date.now();
     ctx.drawWindow(gContainingWindow, x, y, w, h, "rgb(255,255,255)",
                    gDrawWindowFlags);
-    gDrawTime = Date.now() - drawStartTime;
-    gTotalDrawTime = gTotalDrawTime + gDrawTime;
 }
 
 function InitCurrentCanvasWithSnapshot()
@@ -1492,10 +1483,6 @@ function RecordResult(testRunTime, errorMsg, scriptResults)
         gSlowestTestTime = testRunTime;
         gSlowestTestURL  = gCurrentURL;
     }
-    if (testRunTime) {
-        gTotalTestTime = gTotalTestTime + testRunTime;
-    }
-    gDumpLog(" ==>> this test=" + testRunTime + "; all tests="+gTotalTestTime+"; this draw="+gDrawTime+"; all draws="+gTotalDrawTime+"; real-time="+(Date.now()-gStartTime)+"\n");
 
     // Not 'const ...' because of 'EXPECTED_*' value dependency.
     var outputs = {};
