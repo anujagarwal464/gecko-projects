@@ -178,6 +178,10 @@ ThreadStackHelper::PrepareStackBuffer(Stack& aStack) {
 void
 ThreadStackHelper::FillStackBuffer() {
 #ifdef MOZ_ENABLE_PROFILER_SPS
+  if (!mPseudoStack) {
+    return;
+  }
+
   size_t reservedSize = mMaxStackSize;
 
   // Go from front to back
