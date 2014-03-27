@@ -18,7 +18,6 @@
   "content/media/test/test_mediarecorder_record_stopms.html": "Android 2.3 only; bug 981898",
   "content/media/test/test_mediarecorder_record_timeslice.html": "Android 2.3 only; bug 981898",
   "content/media/test/test_mediarecorder_unsupported_src.html": "Android 2.3 only; bug 981898",
-  "content/media/test/test_play_events.html": "Android 2.3 only; bug 981898",
   "content/media/test/test_play_twice.html": "Android 2.3 only; bug 981898",
   "content/media/test/test_playback.html": "Android 2.3 only; bug 981898",
   "content/media/test/test_reset_src.html": "Android 2.3 only; bug 981898",
