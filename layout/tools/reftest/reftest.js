@@ -43,6 +43,11 @@ var gRemote = false;
 var gIgnoreWindowSize = false;
 var gTotalChunks = 0;
 var gThisChunk = 0;
+var gTotalTestTime = 0;
+var gStartTime = 0;
+var gDrawTime = 0;
+var gTotalDrawTime = 0;
+var gTotalSnapTime = 0;
 var gContainingWindow = null;
 var gURLFilterRegex = null;
 const FOCUS_FILTER_ALL_TESTS = "all";
@@ -152,7 +157,7 @@ var gRecycledCanvases = new Array();
 
 // By default we just log to stdout
 var gDumpLog = dump;
-var gVerbose = false;
+var gVerbose = true;
 
 // Only dump the sandbox once, because it doesn't depend on the
 // manifest URL (yet!).
@@ -191,6 +196,7 @@ function AllocateCanvas()
     var r = gBrowser.getBoundingClientRect();
     canvas.setAttribute("width", Math.ceil(r.width));
     canvas.setAttribute("height", Math.ceil(r.height));
+    LogInfo("really allocated canvas");
 
     return canvas;
 }
@@ -234,7 +240,7 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
 
     var env = CC["@mozilla.org/process/environment;1"].
               getService(CI.nsIEnvironment);
-    gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
+    // gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
 
     var prefs = Components.classes["@mozilla.org/preferences-service;1"].
                 getService(Components.interfaces.nsIPrefBranch);
@@ -306,6 +312,7 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
 
 function InitAndStartRefTests()
 {
+    gStartTime = Date.now();
     /* These prefs are optional, so we don't need to spit an error to the log */
     try {
         var prefs = Components.classes["@mozilla.org/preferences-service;1"].
@@ -334,6 +341,7 @@ function InitAndStartRefTests()
                 var mfl = FileUtils.openFileOutputStream(f, FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE);
                 // Set to mirror to stdout as well as the file
                 gDumpLog = function (msg) {
+                    var datedMsg = ((Date.now()-gStartTime)/1000)+"::: "+msg;
 #ifdef BOOTSTRAP
 #ifdef REFTEST_B2G
                     dump(msg);
@@ -341,9 +349,9 @@ function InitAndStartRefTests()
                     //NOTE: on android-xul, we have a libc crash if we do a dump with %7s in the string
 #endif
 #else
-                    dump(msg);
+                    dump(datedMsg);
 #endif
-                    mfl.write(msg, msg.length);
+                    mfl.write(datedMsg, datedMsg.length);
                 };
             }
             catch(e) {
@@ -1416,12 +1424,16 @@ function DoDrawWindow(ctx, x, y, w, h)
     }
 
     LogInfo("DoDrawWindow " + x + "," + y + "," + w + "," + h);
+    var drawStartTime = Date.now();
     ctx.drawWindow(gContainingWindow, x, y, w, h, "rgb(255,255,255)",
                    gDrawWindowFlags);
+    gDrawTime = Date.now() - drawStartTime;
+    gTotalDrawTime = gTotalDrawTime + gDrawTime;
 }
 
 function InitCurrentCanvasWithSnapshot()
 {
+    var snapStartTime = Date.now();
     LogInfo("Initializing canvas snapshot");
 
     if (gURLs[0].type == TYPE_LOAD || gURLs[0].type == TYPE_SCRIPT) {
@@ -1431,10 +1443,13 @@ function InitCurrentCanvasWithSnapshot()
 
     if (!gCurrentCanvas) {
         gCurrentCanvas = AllocateCanvas();
+        LogInfo("allocated canvas");
     }
 
     var ctx = gCurrentCanvas.getContext("2d");
     DoDrawWindow(ctx, 0, 0, gCurrentCanvas.width, gCurrentCanvas.height);
+    var snapTime = Date.now() - snapStartTime;
+    gTotalSnapTime = gTotalSnapTime + snapTime;
     return true;
 }
 
@@ -1483,6 +1498,10 @@ function RecordResult(testRunTime, errorMsg, scriptResults)
         gSlowestTestTime = testRunTime;
         gSlowestTestURL  = gCurrentURL;
     }
+    if (testRunTime) {
+        gTotalTestTime = gTotalTestTime + testRunTime;
+    }
+    gDumpLog(" ==>> this test=" + testRunTime + "; all tests="+gTotalTestTime+"; this draw="+gDrawTime+"; all draws="+gTotalDrawTime+"; real-time="+(Date.now()-gStartTime)+"\n");
 
     // Not 'const ...' because of 'EXPECTED_*' value dependency.
     var outputs = {};

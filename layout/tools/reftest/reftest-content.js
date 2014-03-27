@@ -43,6 +43,8 @@ var gDebug;
 var gVerbose = false;
 
 var gCurrentTestStartTime;
+var gStartLoadTime = 0;
+var gTotalLoadTime = 0;
 var gClearingForAssertionCheck = false;
 
 const TYPE_LOAD = 'load';  // test without a reference (just test that it does
@@ -553,6 +555,13 @@ function WaitForTestEnd(contentRootElement, inPrintMode, spellCheckedElements) {
 
 function OnDocumentLoad(event)
 {
+    if (gStartLoadTime > 0) {
+        var loadTime = Date.now()-gStartLoadTime;
+        gStartLoadTime = 0;
+        gTotalLoadTime = gTotalLoadTime + loadTime;
+        LogInfo("== OnDocumentLoad: load time="+loadTime+"; total load time="+gTotalLoadTime);
+    }
+
     var currentDoc = content.document;
     if (event.target != currentDoc)
         // Ignore load events for subframes.
@@ -738,6 +747,8 @@ function DoAssertionCheck()
 
 function LoadURI(uri)
 {
+    LogInfo("LoadURI "+uri);
+    gStartLoadTime = Date.now();
     var flags = webNavigation().LOAD_FLAGS_NONE;
     webNavigation().loadURI(uri, flags, null, null, null);
 }
@@ -753,10 +764,11 @@ function LogWarning(str)
 
 function LogInfo(str)
 {
+    var dateStr = Date.now() + ":: " + str;
     if (gVerbose) {
-        sendSyncMessage("reftest:Log", { type: "info", msg: str });
+        sendSyncMessage("reftest:Log", { type: "info", msg: dateStr });
     } else {
-        sendAsyncMessage("reftest:Log", { type: "info", msg: str });
+        sendAsyncMessage("reftest:Log", { type: "info", msg: dateStr });
     }
 }
 
