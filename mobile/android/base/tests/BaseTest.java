@@ -198,9 +198,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
                 if (urlEditText.isInputMethodTarget()) {
                     return true;
                 } else {
-                    if (urlEditText.isClickable()) {
-                        mSolo.clickOnView(urlEditText);
-                    }
+                    mSolo.clickOnView(urlEditText);
                     return false;
                 }
             }
