@@ -565,6 +565,9 @@ pref("devtools.debugger.prompt-connection", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
 
+// Disable add-on debugging
+pref("devtools.debugger.addon-enabled", false);
+
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "hex");
 
@@ -4390,8 +4393,8 @@ pref("dom.inter-app-communication-api.enabled", false);
 // The tables used for Safebrowsing phishing and malware checks.
 pref("urlclassifier.malware_table", "goog-malware-shavar,test-malware-simple");
 pref("urlclassifier.phish_table", "goog-phish-shavar,test-phish-simple");
-pref("urlclassifier.download_block_table", "");
-pref("urlclassifier.download_allow_table", "");
+pref("urlclassifier.downloadBlockTable", "");
+pref("urlclassifier.downloadAllowTable", "");
 pref("urlclassifier.disallow_completions", "test-malware-simple,test-phish-simple,goog-downloadwhite-digest256");
 
 // Turn off Spatial navigation by default.
